@@ -1,12 +1,19 @@
 use anyhow::{Context as _, Result};
+use gpui::{Image as GpuiImage, ImageFormat as GpuiImageFormat};
+use image::ImageFormat as RasterImageFormat;
 use pdf_rs::document::PDFDocument;
 use pdf_rs::objects::{ObjRefTuple, PDFNumber, PDFObject};
+use pdfium_render::prelude::*;
+use std::io::Cursor;
 use std::path::Path;
+use std::sync::Arc;
 
 use super::PageSummary;
 
 const DEFAULT_PAGE_WIDTH_PT: f32 = 595.0;
 const DEFAULT_PAGE_HEIGHT_PT: f32 = 842.0;
+const PREVIEW_RENDER_TARGET_WIDTH_PX: i32 = 1200;
+const PREVIEW_RENDER_MAX_HEIGHT_PX: i32 = 1800;
 
 pub(super) fn display_file_name(path: &Path) -> String {
     path.file_name()
@@ -31,13 +38,77 @@ pub(super) fn load_document_summary(path: &Path) -> Result<Vec<PageSummary>> {
         let (w, h) = resolve_page_size(&mut document, page_obj_ref, parent_ref);
         pages.push(PageSummary {
             index,
-            object_ref: page_obj_ref,
             width_pt: w,
             height_pt: h,
+            preview_image: None,
+            preview_failed: false,
         });
     }
 
     Ok(pages)
+}
+
+pub(super) fn load_preview_images(
+    path: &Path,
+    page_indices: &[usize],
+) -> Result<Vec<(usize, Arc<GpuiImage>)>> {
+    if page_indices.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let pdfium = Pdfium::new(
+        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./lib"))
+            .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./")))
+            .or_else(|_| Pdfium::bind_to_system_library())
+            .context("未找到 Pdfium 动态库（已尝试 ./lib、./ 与系统库）")?,
+    );
+
+    let document = pdfium
+        .load_pdf_from_file(path, None)
+        .with_context(|| format!("Pdfium 无法打开文件: {}", path.to_string_lossy()))?;
+
+    let render_config = PdfRenderConfig::new()
+        .set_target_width(PREVIEW_RENDER_TARGET_WIDTH_PX)
+        .set_maximum_height(PREVIEW_RENDER_MAX_HEIGHT_PX);
+
+    let total_pages = document.pages().len() as usize;
+    let mut previews = Vec::new();
+    let mut requested = page_indices.to_vec();
+    requested.sort_unstable();
+    requested.dedup();
+
+    for ix in requested {
+        if ix >= total_pages || ix > u16::MAX as usize {
+            continue;
+        }
+
+        let Ok(page) = document.pages().get(ix as u16) else {
+            continue;
+        };
+
+        let Ok(bitmap) = page.render_with_config(&render_config) else {
+            continue;
+        };
+
+        if let Ok(image) = bitmap_to_gpui_image(&bitmap) {
+            previews.push((ix, image));
+        }
+    }
+
+    Ok(previews)
+}
+
+fn bitmap_to_gpui_image(bitmap: &PdfBitmap) -> Result<Arc<GpuiImage>> {
+    let mut cursor = Cursor::new(Vec::new());
+    bitmap
+        .as_image()
+        .write_to(&mut cursor, RasterImageFormat::Png)
+        .context("位图编码为 PNG 失败")?;
+
+    Ok(Arc::new(GpuiImage::from_bytes(
+        GpuiImageFormat::Png,
+        cursor.into_inner(),
+    )))
 }
 
 fn resolve_page_size(

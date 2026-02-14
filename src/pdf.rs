@@ -3,24 +3,30 @@ mod utils;
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{button::*, *};
-use pdf_rs::objects::ObjRefTuple;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 
 const ZOOM_MIN: f32 = 0.6;
 const ZOOM_MAX: f32 = 2.5;
 const ZOOM_STEP: f32 = 0.1;
 const THUMB_ROW_HEIGHT: f32 = 56.0;
 const PREVIEW_ROW_PADDING: f32 = 16.0;
+const PREVIEW_PREFETCH_PAGES: usize = 2;
+const PREVIEW_CACHE_MARGIN_PAGES: usize = 4;
+const PREVIEW_BATCH_SIZE: usize = 6;
+const PREVIEW_MAX_PARALLEL_TASKS: usize = 2;
 
-use self::utils::{display_file_name, load_document_summary};
+use self::utils::{display_file_name, load_document_summary, load_preview_images};
 
 #[derive(Clone)]
 struct PageSummary {
     index: usize,
-    object_ref: ObjRefTuple,
     width_pt: f32,
     height_pt: f32,
+    preview_image: Option<Arc<Image>>,
+    preview_failed: bool,
 }
 
 pub struct PdfViewer {
@@ -31,6 +37,8 @@ pub struct PdfViewer {
     status: SharedString,
     thumbnail_scroll: VirtualListScrollHandle,
     preview_scroll: VirtualListScrollHandle,
+    preview_loading: HashSet<usize>,
+    preview_epoch: u64,
 }
 
 impl PdfViewer {
@@ -43,6 +51,8 @@ impl PdfViewer {
             status: "打开一个 PDF 文件".into(),
             thumbnail_scroll: VirtualListScrollHandle::new(),
             preview_scroll: VirtualListScrollHandle::new(),
+            preview_loading: HashSet::new(),
+            preview_epoch: 0,
         }
     }
 
@@ -62,7 +72,13 @@ impl PdfViewer {
             match picker_result {
                 Ok(Ok(Some(paths))) => {
                     if let Some(path) = paths.into_iter().next() {
-                        let parsed = load_document_summary(&path);
+                        let parsed = cx
+                            .background_executor()
+                            .spawn({
+                                let path = path.clone();
+                                async move { load_document_summary(&path) }
+                            })
+                            .await;
                         let _ = view.update(cx, |this, cx| match parsed {
                             Ok(mut pages) => {
                                 pages.sort_by_key(|p| p.index);
@@ -70,12 +86,15 @@ impl PdfViewer {
                                 this.pages = pages;
                                 this.selected_page = 0;
                                 this.zoom = 1.0;
+                                this.preview_loading.clear();
+                                this.preview_epoch = this.preview_epoch.wrapping_add(1);
                                 this.status =
-                                    format!("{} 页 | {}", this.pages.len(), display_file_name(&path))
+                                    format!("{} 页 | {} | 按需渲染", this.pages.len(), display_file_name(&path))
                                         .into();
                                 if !this.pages.is_empty() {
                                     this.thumbnail_scroll.scroll_to_item(0, ScrollStrategy::Top);
                                     this.preview_scroll.scroll_to_item(0, ScrollStrategy::Top);
+                                    this.request_preview_load_for_visible_range(0..1, cx);
                                 }
                                 cx.notify();
                             }
@@ -83,6 +102,8 @@ impl PdfViewer {
                                 this.path = Some(path.clone());
                                 this.pages.clear();
                                 this.selected_page = 0;
+                                this.preview_loading.clear();
+                                this.preview_epoch = this.preview_epoch.wrapping_add(1);
                                 this.status =
                                     format!("加载失败: {} ({})", display_file_name(&path), err)
                                         .into();
@@ -92,6 +113,8 @@ impl PdfViewer {
                     } else {
                         let _ = view.update(cx, |this, cx| {
                             this.status = "未选择文件".into();
+                            this.preview_loading.clear();
+                            this.preview_epoch = this.preview_epoch.wrapping_add(1);
                             cx.notify();
                         });
                     }
@@ -99,18 +122,24 @@ impl PdfViewer {
                 Ok(Ok(None)) => {
                     let _ = view.update(cx, |this, cx| {
                         this.status = "已取消".into();
+                        this.preview_loading.clear();
+                        this.preview_epoch = this.preview_epoch.wrapping_add(1);
                         cx.notify();
                     });
                 }
                 Ok(Err(err)) => {
                     let _ = view.update(cx, |this, cx| {
                         this.status = format!("文件选择失败: {err}").into();
+                        this.preview_loading.clear();
+                        this.preview_epoch = this.preview_epoch.wrapping_add(1);
                         cx.notify();
                     });
                 }
                 Err(err) => {
                     let _ = view.update(cx, |this, cx| {
                         this.status = format!("文件选择失败: {err}").into();
+                        this.preview_loading.clear();
+                        this.preview_epoch = this.preview_epoch.wrapping_add(1);
                         cx.notify();
                     });
                 }
@@ -188,6 +217,110 @@ impl PdfViewer {
                 .map(|page| size(px(0.), px(self.preview_row_height(page))))
                 .collect(),
         )
+    }
+
+    fn request_preview_load_for_visible_range(
+        &mut self,
+        visible_range: std::ops::Range<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        if visible_range.is_empty() || self.pages.is_empty() {
+            return;
+        }
+
+        let Some(path) = self.path.clone() else {
+            return;
+        };
+
+        let load_start = visible_range.start.saturating_sub(PREVIEW_PREFETCH_PAGES);
+        let load_end = (visible_range.end + PREVIEW_PREFETCH_PAGES).min(self.pages.len());
+
+        self.trim_preview_cache(visible_range);
+
+        if self.preview_loading.len() >= PREVIEW_MAX_PARALLEL_TASKS {
+            return;
+        }
+
+        let mut pending = Vec::new();
+        for ix in load_start..load_end {
+            let Some(page) = self.pages.get(ix) else {
+                continue;
+            };
+
+            if page.preview_image.is_none() && !page.preview_failed && !self.preview_loading.contains(&ix)
+            {
+                pending.push(ix);
+                if pending.len() >= PREVIEW_BATCH_SIZE {
+                    break;
+                }
+            }
+        }
+
+        if pending.is_empty() {
+            return;
+        }
+
+        for ix in &pending {
+            self.preview_loading.insert(*ix);
+        }
+
+        let epoch = self.preview_epoch;
+        cx.spawn(async move |view, cx| {
+            let load_result = cx
+                .background_executor()
+                .spawn(async move {
+                    let loaded = load_preview_images(&path, &pending);
+                    (pending, loaded)
+                })
+                .await;
+
+            let _ = view.update(cx, |this, cx| {
+                if this.preview_epoch != epoch {
+                    return;
+                }
+
+                let (requested_indices, loaded_result) = load_result;
+                let mut loaded_indices = HashSet::new();
+
+                match loaded_result {
+                    Ok(images) => {
+                        for (ix, image) in images {
+                            if let Some(page) = this.pages.get_mut(ix) {
+                                page.preview_image = Some(image);
+                                page.preview_failed = false;
+                                loaded_indices.insert(ix);
+                            }
+                        }
+                    }
+                    Err(_) => {}
+                }
+
+                for ix in requested_indices {
+                    this.preview_loading.remove(&ix);
+                    if !loaded_indices.contains(&ix) && let Some(page) = this.pages.get_mut(ix) {
+                        page.preview_failed = true;
+                    }
+                }
+
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn trim_preview_cache(&mut self, visible_range: std::ops::Range<usize>) {
+        if self.pages.is_empty() {
+            return;
+        }
+
+        let keep_start = visible_range.start.saturating_sub(PREVIEW_CACHE_MARGIN_PAGES);
+        let keep_end = (visible_range.end + PREVIEW_CACHE_MARGIN_PAGES).min(self.pages.len());
+
+        for (ix, page) in self.pages.iter_mut().enumerate() {
+            if ix < keep_start || ix >= keep_end {
+                page.preview_image = None;
+            }
+        }
     }
 }
 
@@ -545,6 +678,10 @@ impl Render for PdfViewer {
                                                     "preview-virtual-list",
                                                     preview_sizes.clone(),
                                                     move |viewer, visible_range, _window, cx| {
+                                                        viewer.request_preview_load_for_visible_range(
+                                                            visible_range.clone(),
+                                                            cx,
+                                                        );
                                                         visible_range
                                                             .map(|ix| {
                                                                 let Some(page) = viewer.pages.get(ix)
@@ -553,6 +690,8 @@ impl Render for PdfViewer {
                                                                 };
                                                                 let is_selected =
                                                                     ix == viewer.selected_page;
+                                                                let is_loading =
+                                                                    viewer.preview_loading.contains(&ix);
                                                                 let (preview_width, preview_height) =
                                                                     viewer.preview_card_size(page);
                                                                 div()
@@ -566,10 +705,8 @@ impl Render for PdfViewer {
                                                                         div()
                                                                             .w(px(preview_width))
                                                                             .h(px(preview_height))
-                                                                            .v_flex()
-                                                                            .items_center()
-                                                                            .justify_center()
-                                                                            .gap_2()
+                                                                            .relative()
+                                                                            .overflow_hidden()
                                                                             .rounded_lg()
                                                                             .border_1()
                                                                             .border_color(
@@ -581,67 +718,90 @@ impl Render for PdfViewer {
                                                                             )
                                                                             .bg(cx.theme().background)
                                                                             .shadow_lg()
-                                                                            .child(
-                                                                                Icon::new(
-                                                                                    IconName::File,
-                                                                                )
-                                                                                .size_8()
-                                                                                .text_color(
-                                                                                    cx.theme()
-                                                                                        .muted_foreground,
-                                                                                ),
+                                                                            .when_some(
+                                                                                page.preview_image
+                                                                                    .clone(),
+                                                                                |this, preview| {
+                                                                                    this.child(
+                                                                                        img(preview)
+                                                                                            .size_full()
+                                                                                            .object_fit(
+                                                                                                ObjectFit::Contain,
+                                                                                            ),
+                                                                                    )
+                                                                                },
+                                                                            )
+                                                                            .when(
+                                                                                page.preview_image
+                                                                                    .is_none(),
+                                                                                |this| {
+                                                                                    this.child(
+                                                                                        div()
+                                                                                            .size_full()
+                                                                                            .v_flex()
+                                                                                            .items_center()
+                                                                                            .justify_center()
+                                                                                            .gap_2()
+                                                                                            .text_color(
+                                                                                                cx.theme()
+                                                                                                    .muted_foreground,
+                                                                                            )
+                                                                                            .child(
+                                                                                                Icon::new(
+                                                                                                    IconName::File,
+                                                                                                )
+                                                                                                .size_8()
+                                                                                                .text_color(
+                                                                                                    cx.theme()
+                                                                                                        .muted_foreground,
+                                                                                                ),
+                                                                                            )
+                                                                                            .child(
+                                                                                                div()
+                                                                                                    .text_xs()
+                                                                                                    .child(
+                                                                                                        if is_loading {
+                                                                                                            "预览加载中..."
+                                                                                                        } else if page.preview_failed {
+                                                                                                            "预览加载失败"
+                                                                                                        } else {
+                                                                                                            "等待进入可见区后加载"
+                                                                                                        },
+                                                                                                    ),
+                                                                                            ),
+                                                                                    )
+                                                                                },
                                                                             )
                                                                             .child(
                                                                                 div()
-                                                                                    .text_sm()
-                                                                                    .font_semibold()
+                                                                                    .absolute()
+                                                                                    .left_2()
+                                                                                    .top_2()
+                                                                                    .px_2()
+                                                                                    .py_1()
+                                                                                    .rounded_md()
+                                                                                    .border_1()
+                                                                                    .border_color(
+                                                                                        cx.theme()
+                                                                                            .border,
+                                                                                    )
+                                                                                    .bg(
+                                                                                        cx.theme()
+                                                                                            .background
+                                                                                            .opacity(
+                                                                                                0.9,
+                                                                                            ),
+                                                                                    )
+                                                                                    .text_xs()
+                                                                                    .font_medium()
                                                                                     .text_color(
                                                                                         cx.theme()
-                                                                                            .foreground,
+                                                                                            .muted_foreground,
                                                                                     )
                                                                                     .child(format!(
-                                                                                        "Page {}",
+                                                                                        "第 {} 页",
                                                                                         page.index + 1
                                                                                     )),
-                                                                            )
-                                                                            .child(
-                                                                                div()
-                                                                                    .text_xs()
-                                                                                    .text_color(
-                                                                                        cx.theme()
-                                                                                            .muted_foreground,
-                                                                                    )
-                                                                                    .child(format!(
-                                                                                        "{:.0} x {:.0} pt",
-                                                                                        page.width_pt,
-                                                                                        page.height_pt
-                                                                                    )),
-                                                                            )
-                                                                            .child(
-                                                                                div()
-                                                                                    .text_xs()
-                                                                                    .text_color(
-                                                                                        cx.theme()
-                                                                                            .muted_foreground,
-                                                                                    )
-                                                                                    .child(format!(
-                                                                                        "obj {} {} R",
-                                                                                        page.object_ref
-                                                                                            .0,
-                                                                                        page.object_ref
-                                                                                            .1
-                                                                                    )),
-                                                                            )
-                                                                            .child(
-                                                                                div()
-                                                                                    .text_xs()
-                                                                                    .text_color(
-                                                                                        cx.theme()
-                                                                                            .muted_foreground,
-                                                                                    )
-                                                                                    .child(
-                                                                                        "pdf-rs 解析页面结构，预览为极简占位",
-                                                                                    ),
                                                                             ),
                                                                     )
                                                                     .on_click(cx.listener(
