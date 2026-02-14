@@ -773,8 +773,6 @@ impl Render for PdfViewer {
                                                                         else {
                                                                             return div().into_any_element();
                                                                         };
-                                                                        let is_loading =
-                                                                            viewer.display_loading.contains(&ix);
                                                                         let display_base_width =
                                                                             viewer.display_base_width(_window);
                                                                         let (_, display_height) =
@@ -818,28 +816,43 @@ impl Render for PdfViewer {
                                                                                                         cx.theme()
                                                                                                             .muted_foreground,
                                                                                                     )
-                                                                                                    .child(
-                                                                                                        Icon::new(
-                                                                                                            IconName::File,
-                                                                                                        )
-                                                                                                        .size_8()
-                                                                                                        .text_color(
-                                                                                                            cx.theme()
-                                                                                                                .muted_foreground,
-                                                                                                        ),
-                                                                                                    )
-                                                                                                    .child(
-                                                                                                        div()
-                                                                                                            .text_xs()
+                                                                                                    .when(
+                                                                                                        page.display_failed,
+                                                                                                        |this| {
+                                                                                                            this.child(
+                                                                                                                Icon::new(
+                                                                                                                    IconName::File,
+                                                                                                                )
+                                                                                                                .size_8()
+                                                                                                                .text_color(
+                                                                                                                    cx.theme()
+                                                                                                                        .muted_foreground,
+                                                                                                                ),
+                                                                                                            )
                                                                                                             .child(
-                                                                                                                if is_loading {
-                                                                                                                    "页面渲染中..."
-                                                                                                                } else if page.display_failed {
-                                                                                                                    "页面渲染失败"
-                                                                                                                } else {
-                                                                                                                    "等待进入可见区后渲染"
-                                                                                                                },
-                                                                                                            ),
+                                                                                                                div()
+                                                                                                                    .text_xs()
+                                                                                                                    .child(
+                                                                                                                        "页面渲染失败",
+                                                                                                                    ),
+                                                                                                            )
+                                                                                                        },
+                                                                                                    )
+                                                                                                    .when(
+                                                                                                        !page.display_failed,
+                                                                                                        |this| {
+                                                                                                            this.child(
+                                                                                                                spinner::Spinner::new()
+                                                                                                                    .large()
+                                                                                                                    .icon(Icon::new(
+                                                                                                                        IconName::LoaderCircle,
+                                                                                                                    ))
+                                                                                                                    .color(
+                                                                                                                        cx.theme()
+                                                                                                                            .muted_foreground,
+                                                                                                                    ),
+                                                                                                            )
+                                                                                                        },
                                                                                                     ),
                                                                                             )
                                                                                         },
