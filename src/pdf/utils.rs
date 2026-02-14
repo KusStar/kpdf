@@ -84,16 +84,16 @@ pub(super) fn load_document_summary(path: &Path) -> Result<Vec<PageSummary>> {
             index,
             width_pt: w,
             height_pt: h,
-            preview_image: None,
-            preview_render_width: 0,
-            preview_failed: false,
+            display_image: None,
+            display_render_width: 0,
+            display_failed: false,
         });
     }
 
     Ok(pages)
 }
 
-pub(super) fn load_preview_images(
+pub(super) fn load_display_images(
     path: &Path,
     page_indices: &[usize],
     target_width: u32,
@@ -103,7 +103,7 @@ pub(super) fn load_preview_images(
     }
 
     let render_config = PdfRenderConfig::new().set_target_width(target_width as i32);
-    let mut previews = Vec::new();
+    let mut display_images = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let file_name = display_file_name(path);
     let cache_key = document_cache_key(path);
@@ -194,7 +194,7 @@ pub(super) fn load_preview_images(
         let convert_started_at = Instant::now();
         match bitmap_to_gpui_render_image(&bitmap) {
             Ok(image) => {
-                previews.push((ix, image));
+                display_images.push((ix, image));
                 eprintln!(
                     "[pdf][render] {} p{} ok | total={}ms render={}ms upload={}ms target_width={} format=raw_bgra",
                     file_name,
@@ -219,7 +219,7 @@ pub(super) fn load_preview_images(
         }
     }
 
-    Ok(previews)
+    Ok(display_images)
 }
 
 #[allow(deprecated)]

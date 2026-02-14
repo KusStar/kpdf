@@ -14,24 +14,24 @@ const ZOOM_MAX: f32 = 2.5;
 const ZOOM_STEP: f32 = 0.1;
 const THUMB_ROW_HEIGHT: f32 = 56.0;
 const SIDEBAR_WIDTH: f32 = 228.0;
-const PREVIEW_MIN_WIDTH: f32 = 220.0;
-const PREVIEW_PREFETCH_FORWARD_PAGES: usize = 10;
-const PREVIEW_PREFETCH_BACKWARD_PAGES: usize = 1;
-const PREVIEW_SELECTED_PREFETCH_FORWARD_PAGES: usize = 6;
-const PREVIEW_CACHE_MARGIN_PAGES: usize = 20;
-const PREVIEW_BATCH_SIZE: usize = 1;
-const PREVIEW_MAX_PARALLEL_TASKS: usize = 1;
+const DISPLAY_MIN_WIDTH: f32 = 220.0;
+const DISPLAY_PREFETCH_FORWARD_PAGES: usize = 10;
+const DISPLAY_PREFETCH_BACKWARD_PAGES: usize = 1;
+const DISPLAY_SELECTED_PREFETCH_FORWARD_PAGES: usize = 6;
+const DISPLAY_CACHE_MARGIN_PAGES: usize = 20;
+const DISPLAY_BATCH_SIZE: usize = 1;
+const DISPLAY_MAX_PARALLEL_TASKS: usize = 1;
 
-use self::utils::{display_file_name, load_document_summary, load_preview_images};
+use self::utils::{display_file_name, load_document_summary, load_display_images};
 
 #[derive(Clone)]
 struct PageSummary {
     index: usize,
     width_pt: f32,
     height_pt: f32,
-    preview_image: Option<Arc<RenderImage>>,
-    preview_render_width: u32,
-    preview_failed: bool,
+    display_image: Option<Arc<RenderImage>>,
+    display_render_width: u32,
+    display_failed: bool,
 }
 
 pub struct PdfViewer {
@@ -41,11 +41,11 @@ pub struct PdfViewer {
     zoom: f32,
     status: SharedString,
     thumbnail_scroll: VirtualListScrollHandle,
-    preview_scroll: VirtualListScrollHandle,
-    preview_loading: HashSet<usize>,
-    preview_epoch: u64,
-    last_preview_visible_range: Option<std::ops::Range<usize>>,
-    last_preview_target_width: u32,
+    display_scroll: VirtualListScrollHandle,
+    display_loading: HashSet<usize>,
+    display_epoch: u64,
+    last_display_visible_range: Option<std::ops::Range<usize>>,
+    last_display_target_width: u32,
 }
 
 impl PdfViewer {
@@ -57,11 +57,11 @@ impl PdfViewer {
             zoom: 1.0,
             status: "打开一个 PDF 文件".into(),
             thumbnail_scroll: VirtualListScrollHandle::new(),
-            preview_scroll: VirtualListScrollHandle::new(),
-            preview_loading: HashSet::new(),
-            preview_epoch: 0,
-            last_preview_visible_range: None,
-            last_preview_target_width: PREVIEW_MIN_WIDTH as u32,
+            display_scroll: VirtualListScrollHandle::new(),
+            display_loading: HashSet::new(),
+            display_epoch: 0,
+            last_display_visible_range: None,
+            last_display_target_width: DISPLAY_MIN_WIDTH as u32,
         }
     }
 
@@ -95,15 +95,15 @@ impl PdfViewer {
                                 this.pages = pages;
                                 this.selected_page = 0;
                                 this.zoom = 1.0;
-                                this.preview_loading.clear();
-                                this.preview_epoch = this.preview_epoch.wrapping_add(1);
-                                this.last_preview_visible_range = None;
+                                this.display_loading.clear();
+                                this.display_epoch = this.display_epoch.wrapping_add(1);
+                                this.last_display_visible_range = None;
                                 this.status =
                                     format!("{} 页 | {} | 按需渲染", this.pages.len(), display_file_name(&path))
                                         .into();
                                 if !this.pages.is_empty() {
                                     this.thumbnail_scroll.scroll_to_item(0, ScrollStrategy::Top);
-                                    this.preview_scroll.scroll_to_item(0, ScrollStrategy::Top);
+                                    this.display_scroll.scroll_to_item(0, ScrollStrategy::Top);
                                 }
                                 cx.notify();
                             }
@@ -111,9 +111,9 @@ impl PdfViewer {
                                 this.path = Some(path.clone());
                                 this.pages.clear();
                                 this.selected_page = 0;
-                                this.preview_loading.clear();
-                                this.preview_epoch = this.preview_epoch.wrapping_add(1);
-                                this.last_preview_visible_range = None;
+                                this.display_loading.clear();
+                                this.display_epoch = this.display_epoch.wrapping_add(1);
+                                this.last_display_visible_range = None;
                                 this.status =
                                     format!("加载失败: {} ({})", display_file_name(&path), err)
                                         .into();
@@ -123,9 +123,9 @@ impl PdfViewer {
                     } else {
                         let _ = view.update(cx, |this, cx| {
                             this.status = "未选择文件".into();
-                            this.preview_loading.clear();
-                            this.preview_epoch = this.preview_epoch.wrapping_add(1);
-                            this.last_preview_visible_range = None;
+                            this.display_loading.clear();
+                            this.display_epoch = this.display_epoch.wrapping_add(1);
+                            this.last_display_visible_range = None;
                             cx.notify();
                         });
                     }
@@ -133,27 +133,27 @@ impl PdfViewer {
                 Ok(Ok(None)) => {
                     let _ = view.update(cx, |this, cx| {
                         this.status = "已取消".into();
-                        this.preview_loading.clear();
-                        this.preview_epoch = this.preview_epoch.wrapping_add(1);
-                        this.last_preview_visible_range = None;
+                        this.display_loading.clear();
+                        this.display_epoch = this.display_epoch.wrapping_add(1);
+                        this.last_display_visible_range = None;
                         cx.notify();
                     });
                 }
                 Ok(Err(err)) => {
                     let _ = view.update(cx, |this, cx| {
                         this.status = format!("文件选择失败: {err}").into();
-                        this.preview_loading.clear();
-                        this.preview_epoch = this.preview_epoch.wrapping_add(1);
-                        this.last_preview_visible_range = None;
+                        this.display_loading.clear();
+                        this.display_epoch = this.display_epoch.wrapping_add(1);
+                        this.last_display_visible_range = None;
                         cx.notify();
                     });
                 }
                 Err(err) => {
                     let _ = view.update(cx, |this, cx| {
                         this.status = format!("文件选择失败: {err}").into();
-                        this.preview_loading.clear();
-                        this.preview_epoch = this.preview_epoch.wrapping_add(1);
-                        this.last_preview_visible_range = None;
+                        this.display_loading.clear();
+                        this.display_epoch = this.display_epoch.wrapping_add(1);
+                        this.last_display_visible_range = None;
                         cx.notify();
                     });
                 }
@@ -166,7 +166,7 @@ impl PdfViewer {
         if index < self.pages.len() {
             self.selected_page = index;
             self.sync_scroll_to_selected();
-            self.request_selected_page_priority_load(cx);
+            self.request_selected_page_priority_render(cx);
             cx.notify();
         }
     }
@@ -201,7 +201,7 @@ impl PdfViewer {
     fn sync_scroll_to_selected(&mut self) {
         self.thumbnail_scroll
             .scroll_to_item(self.selected_page, ScrollStrategy::Center);
-        self.preview_scroll
+        self.display_scroll
             .scroll_to_item(self.selected_page, ScrollStrategy::Center);
     }
 
@@ -213,13 +213,13 @@ impl PdfViewer {
         )
     }
 
-    fn preview_base_width(&self, window: &Window) -> f32 {
+    fn display_base_width(&self, window: &Window) -> f32 {
         let viewport_width: f32 = window.viewport_size().width.into();
-        (viewport_width - SIDEBAR_WIDTH).max(PREVIEW_MIN_WIDTH)
+        (viewport_width - SIDEBAR_WIDTH).max(DISPLAY_MIN_WIDTH)
     }
 
-    fn preview_card_size(&self, page: &PageSummary, base_width: f32) -> (f32, f32) {
-        let width = (base_width * self.zoom).max(PREVIEW_MIN_WIDTH);
+    fn display_card_size(&self, page: &PageSummary, base_width: f32) -> (f32, f32) {
+        let width = (base_width * self.zoom).max(DISPLAY_MIN_WIDTH);
         let aspect_ratio = if page.width_pt > 1.0 {
             page.height_pt / page.width_pt
         } else {
@@ -229,68 +229,68 @@ impl PdfViewer {
         (width, height)
     }
 
-    fn preview_row_height(&self, page: &PageSummary, base_width: f32) -> f32 {
-        let (_, height) = self.preview_card_size(page, base_width);
+    fn display_row_height(&self, page: &PageSummary, base_width: f32) -> f32 {
+        let (_, height) = self.display_card_size(page, base_width);
         height
     }
 
-    fn preview_item_sizes(&self, base_width: f32) -> Rc<Vec<gpui::Size<Pixels>>> {
+    fn display_item_sizes(&self, base_width: f32) -> Rc<Vec<gpui::Size<Pixels>>> {
         Rc::new(
             self.pages
                 .iter()
-                .map(|page| size(px(0.), px(self.preview_row_height(page, base_width))))
+                .map(|page| size(px(0.), px(self.display_row_height(page, base_width))))
                 .collect(),
         )
     }
 
-    fn preview_target_width(&self, window: &Window) -> u32 {
-        let width = self.preview_base_width(window) * self.zoom * window.scale_factor();
+    fn display_target_width(&self, window: &Window) -> u32 {
+        let width = self.display_base_width(window) * self.zoom * window.scale_factor();
         width.clamp(1.0, i32::MAX as f32).round() as u32
     }
 
-    fn request_selected_page_priority_load(&mut self, cx: &mut Context<Self>) {
+    fn request_selected_page_priority_render(&mut self, cx: &mut Context<Self>) {
         if self.pages.is_empty() {
             return;
         }
 
         let selected = self.selected_page.min(self.pages.len() - 1);
-        let target_width = self.last_preview_target_width.max(PREVIEW_MIN_WIDTH as u32);
+        let target_width = self.last_display_target_width.max(DISPLAY_MIN_WIDTH as u32);
         let needs_selected = self
             .pages
             .get(selected)
-            .map(|page| page.preview_image.is_none() || page.preview_render_width < target_width)
+            .map(|page| page.display_image.is_none() || page.display_render_width < target_width)
             .unwrap_or(false);
 
         if !needs_selected {
             return;
         }
 
-        if self.preview_loading.contains(&selected) {
+        if self.display_loading.contains(&selected) {
             return;
         }
 
-        if !self.preview_loading.is_empty() {
-            self.preview_epoch = self.preview_epoch.wrapping_add(1);
-            self.preview_loading.clear();
+        if !self.display_loading.is_empty() {
+            self.display_epoch = self.display_epoch.wrapping_add(1);
+            self.display_loading.clear();
         }
 
         let visible_range = selected..(selected + 1).min(self.pages.len());
-        self.last_preview_visible_range = Some(visible_range.clone());
-        self.trim_preview_cache(visible_range);
+        self.last_display_visible_range = Some(visible_range.clone());
+        self.trim_display_cache(visible_range);
 
         let load_end =
-            (selected + 1 + PREVIEW_SELECTED_PREFETCH_FORWARD_PAGES).min(self.pages.len());
-        let load_start = selected.saturating_sub(PREVIEW_PREFETCH_BACKWARD_PAGES);
+            (selected + 1 + DISPLAY_SELECTED_PREFETCH_FORWARD_PAGES).min(self.pages.len());
+        let load_start = selected.saturating_sub(DISPLAY_PREFETCH_BACKWARD_PAGES);
 
         let mut candidate_order = Vec::with_capacity(load_end.saturating_sub(load_start));
         candidate_order.push(selected);
         candidate_order.extend((selected + 1)..load_end);
         candidate_order.extend(load_start..selected);
 
-        self.request_preview_load_from_candidates(candidate_order, target_width, cx);
+        self.request_display_load_from_candidates(candidate_order, target_width, cx);
     }
 
-    fn request_preview_load_from_candidates(
+    fn request_display_load_from_candidates(
         &mut self,
         candidate_order: Vec<usize>,
         target_width: u32,
@@ -304,7 +304,7 @@ impl PdfViewer {
             return;
         };
 
-        if self.preview_loading.len() >= PREVIEW_MAX_PARALLEL_TASKS {
+        if self.display_loading.len() >= DISPLAY_MAX_PARALLEL_TASKS {
             return;
         }
 
@@ -319,10 +319,10 @@ impl PdfViewer {
                 continue;
             };
 
-            let needs_render = page.preview_image.is_none() || page.preview_render_width < target_width;
-            if needs_render && !page.preview_failed && !self.preview_loading.contains(&ix) {
+            let needs_render = page.display_image.is_none() || page.display_render_width < target_width;
+            if needs_render && !page.display_failed && !self.display_loading.contains(&ix) {
                 pending.push(ix);
-                if pending.len() >= PREVIEW_BATCH_SIZE {
+                if pending.len() >= DISPLAY_BATCH_SIZE {
                     break;
                 }
             }
@@ -333,21 +333,21 @@ impl PdfViewer {
         }
 
         for ix in &pending {
-            self.preview_loading.insert(*ix);
+            self.display_loading.insert(*ix);
         }
 
-        let epoch = self.preview_epoch;
+        let epoch = self.display_epoch;
         cx.spawn(async move |view, cx| {
             let load_result = cx
                 .background_executor()
                 .spawn(async move {
-                    let loaded = load_preview_images(&path, &pending, target_width);
+                    let loaded = load_display_images(&path, &pending, target_width);
                     (pending, target_width, loaded)
                 })
                 .await;
 
             let _ = view.update(cx, |this, cx| {
-                if this.preview_epoch != epoch {
+                if this.display_epoch != epoch {
                     return;
                 }
 
@@ -358,9 +358,9 @@ impl PdfViewer {
                     Ok(images) => {
                         for (ix, image) in images {
                             if let Some(page) = this.pages.get_mut(ix) {
-                                page.preview_image = Some(image);
-                                page.preview_render_width = loaded_target_width;
-                                page.preview_failed = false;
+                                page.display_image = Some(image);
+                                page.display_render_width = loaded_target_width;
+                                page.display_failed = false;
                                 loaded_indices.insert(ix);
                             }
                         }
@@ -369,14 +369,14 @@ impl PdfViewer {
                 }
 
                 for ix in requested_indices {
-                    this.preview_loading.remove(&ix);
+                    this.display_loading.remove(&ix);
                     if !loaded_indices.contains(&ix) && let Some(page) = this.pages.get_mut(ix) {
-                        page.preview_failed = true;
+                        page.display_failed = true;
                     }
                 }
 
-                if let Some(range) = this.last_preview_visible_range.clone() {
-                    this.request_preview_load_for_visible_range(range, loaded_target_width, cx);
+                if let Some(range) = this.last_display_visible_range.clone() {
+                    this.request_display_load_for_visible_range(range, loaded_target_width, cx);
                 }
                 cx.notify();
             });
@@ -384,7 +384,7 @@ impl PdfViewer {
         .detach();
     }
 
-    fn request_preview_load_for_visible_range(
+    fn request_display_load_for_visible_range(
         &mut self,
         visible_range: std::ops::Range<usize>,
         target_width: u32,
@@ -396,11 +396,11 @@ impl PdfViewer {
 
         let load_start = visible_range
             .start
-            .saturating_sub(PREVIEW_PREFETCH_BACKWARD_PAGES);
-        let load_end = (visible_range.end + PREVIEW_PREFETCH_FORWARD_PAGES).min(self.pages.len());
-        self.last_preview_visible_range = Some(visible_range.clone());
+            .saturating_sub(DISPLAY_PREFETCH_BACKWARD_PAGES);
+        let load_end = (visible_range.end + DISPLAY_PREFETCH_FORWARD_PAGES).min(self.pages.len());
+        self.last_display_visible_range = Some(visible_range.clone());
 
-        self.trim_preview_cache(visible_range.clone());
+        self.trim_display_cache(visible_range.clone());
 
         let mut candidate_order = Vec::with_capacity(load_end.saturating_sub(load_start));
         candidate_order.extend(visible_range.clone());
@@ -411,21 +411,21 @@ impl PdfViewer {
             candidate_order.insert(0, self.selected_page);
         }
 
-        self.request_preview_load_from_candidates(candidate_order, target_width, cx);
+        self.request_display_load_from_candidates(candidate_order, target_width, cx);
     }
 
-    fn trim_preview_cache(&mut self, visible_range: std::ops::Range<usize>) {
+    fn trim_display_cache(&mut self, visible_range: std::ops::Range<usize>) {
         if self.pages.is_empty() {
             return;
         }
 
-        let keep_start = visible_range.start.saturating_sub(PREVIEW_CACHE_MARGIN_PAGES);
-        let keep_end = (visible_range.end + PREVIEW_CACHE_MARGIN_PAGES).min(self.pages.len());
+        let keep_start = visible_range.start.saturating_sub(DISPLAY_CACHE_MARGIN_PAGES);
+        let keep_end = (visible_range.end + DISPLAY_CACHE_MARGIN_PAGES).min(self.pages.len());
         let selected = self.selected_page.min(self.pages.len().saturating_sub(1));
-        let selected_keep_start = selected.saturating_sub(PREVIEW_CACHE_MARGIN_PAGES);
+        let selected_keep_start = selected.saturating_sub(DISPLAY_CACHE_MARGIN_PAGES);
         let selected_keep_end =
-            (selected + 1 + PREVIEW_CACHE_MARGIN_PAGES).min(self.pages.len());
-        let loading_indices = self.preview_loading.clone();
+            (selected + 1 + DISPLAY_CACHE_MARGIN_PAGES).min(self.pages.len());
+        let loading_indices = self.display_loading.clone();
 
         for (ix, page) in self.pages.iter_mut().enumerate() {
             let in_visible_keep_window = ix >= keep_start && ix < keep_end;
@@ -433,8 +433,8 @@ impl PdfViewer {
             let in_flight = loading_indices.contains(&ix);
 
             if !in_visible_keep_window && !in_selected_keep_window && !in_flight {
-                page.preview_image = None;
-                page.preview_render_width = 0;
+                page.display_image = None;
+                page.display_render_width = 0;
             }
         }
     }
@@ -456,10 +456,10 @@ impl Render for PdfViewer {
             .map(|p| display_file_name(p))
             .unwrap_or_else(|| "未打开文件".to_string());
         let zoom_label: SharedString = format!("{:.0}%", self.zoom * 100.0).into();
-        self.last_preview_target_width = self.preview_target_width(window);
-        let preview_base_width = self.preview_base_width(window);
+        self.last_display_target_width = self.display_target_width(window);
+        let display_base_width = self.display_base_width(window);
         let thumbnail_sizes = self.thumbnail_item_sizes();
-        let preview_sizes = self.preview_item_sizes(preview_base_width);
+        let display_sizes = self.display_item_sizes(display_base_width);
 
         window_border().child(
             div()
@@ -797,12 +797,12 @@ impl Render for PdfViewer {
                                                     .child(
                                                         v_virtual_list(
                                                             cx.entity(),
-                                                            "preview-virtual-list",
-                                                            preview_sizes.clone(),
+                                                            "display-virtual-list",
+                                                            display_sizes.clone(),
                                                             move |viewer, visible_range, _window, cx| {
                                                                 let target_width =
-                                                                    viewer.preview_target_width(_window);
-                                                                viewer.request_preview_load_for_visible_range(
+                                                                    viewer.display_target_width(_window);
+                                                                viewer.request_display_load_for_visible_range(
                                                                     visible_range.clone(),
                                                                     target_width,
                                                                     cx,
@@ -814,28 +814,28 @@ impl Render for PdfViewer {
                                                                             return div().into_any_element();
                                                                         };
                                                                         let is_loading =
-                                                                            viewer.preview_loading.contains(&ix);
-                                                                        let preview_base_width =
-                                                                            viewer.preview_base_width(_window);
-                                                                        let (_, preview_height) =
-                                                                            viewer.preview_card_size(page, preview_base_width);
+                                                                            viewer.display_loading.contains(&ix);
+                                                                        let display_base_width =
+                                                                            viewer.display_base_width(_window);
+                                                                        let (_, display_height) =
+                                                                            viewer.display_card_size(page, display_base_width);
                                                                         div()
-                                                                            .id(("preview-row", ix))
+                                                                            .id(("display-row", ix))
                                                                             .w_full()
                                                                             .h_full()
                                                                             .child(
                                                                                 div()
                                                                                     .w_full()
-                                                                                    .h(px(preview_height))
+                                                                                    .h(px(display_height))
                                                                                     .relative()
                                                                                     .overflow_hidden()
                                                                                     .bg(cx.theme().background)
                                                                                     .when_some(
-                                                                                        page.preview_image
+                                                                                        page.display_image
                                                                                             .clone(),
-                                                                                        |this, preview| {
+                                                                                        |this, display_image| {
                                                                                             this.child(
-                                                                                                img(preview)
+                                                                                                img(display_image)
                                                                                                     .size_full()
                                                                                                     .object_fit(
                                                                                                         ObjectFit::Contain,
@@ -844,7 +844,7 @@ impl Render for PdfViewer {
                                                                                         },
                                                                                     )
                                                                                     .when(
-                                                                                        page.preview_image
+                                                                                        page.display_image
                                                                                             .is_none(),
                                                                                         |this| {
                                                                                             this.child(
@@ -873,11 +873,11 @@ impl Render for PdfViewer {
                                                                                                             .text_xs()
                                                                                                             .child(
                                                                                                                 if is_loading {
-                                                                                                                    "预览加载中..."
-                                                                                                                } else if page.preview_failed {
-                                                                                                                    "预览加载失败"
+                                                                                                                    "页面渲染中..."
+                                                                                                                } else if page.display_failed {
+                                                                                                                    "页面渲染失败"
                                                                                                                 } else {
-                                                                                                                    "等待进入可见区后加载"
+                                                                                                                    "等待进入可见区后渲染"
                                                                                                                 },
                                                                                                             ),
                                                                                                     ),
@@ -921,11 +921,11 @@ impl Render for PdfViewer {
                                                                     .collect::<Vec<_>>()
                                                             },
                                                         )
-                                                        .track_scroll(&self.preview_scroll)
+                                                        .track_scroll(&self.display_scroll)
                                                         .into_any_element(),
                                                     )
                                                     .child(
-                                                        Scrollbar::vertical(&self.preview_scroll)
+                                                        Scrollbar::vertical(&self.display_scroll)
                                                             .scrollbar_show(ScrollbarShow::Always),
                                                     ),
                                             )
