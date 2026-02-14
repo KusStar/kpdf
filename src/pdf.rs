@@ -15,10 +15,6 @@ const ZOOM_STEP: f32 = 0.1;
 const THUMB_ROW_HEIGHT: f32 = 56.0;
 const SIDEBAR_WIDTH: f32 = 228.0;
 const DISPLAY_MIN_WIDTH: f32 = 220.0;
-const DISPLAY_PREFETCH_FORWARD_PAGES: usize = 10;
-const DISPLAY_PREFETCH_BACKWARD_PAGES: usize = 1;
-const DISPLAY_SELECTED_PREFETCH_FORWARD_PAGES: usize = 6;
-const DISPLAY_CACHE_MARGIN_PAGES: usize = 20;
 const DISPLAY_BATCH_SIZE: usize = 1;
 const DISPLAY_MAX_PARALLEL_TASKS: usize = 1;
 
@@ -43,6 +39,7 @@ pub struct PdfViewer {
     thumbnail_scroll: VirtualListScrollHandle,
     display_scroll: VirtualListScrollHandle,
     display_loading: HashSet<usize>,
+    display_inflight_tasks: usize,
     display_epoch: u64,
     last_display_visible_range: Option<std::ops::Range<usize>>,
     last_display_target_width: u32,
@@ -59,6 +56,7 @@ impl PdfViewer {
             thumbnail_scroll: VirtualListScrollHandle::new(),
             display_scroll: VirtualListScrollHandle::new(),
             display_loading: HashSet::new(),
+            display_inflight_tasks: 0,
             display_epoch: 0,
             last_display_visible_range: None,
             last_display_target_width: DISPLAY_MIN_WIDTH as u32,
@@ -96,6 +94,7 @@ impl PdfViewer {
                                 this.selected_page = 0;
                                 this.zoom = 1.0;
                                 this.display_loading.clear();
+                                this.display_inflight_tasks = 0;
                                 this.display_epoch = this.display_epoch.wrapping_add(1);
                                 this.last_display_visible_range = None;
                                 this.status = format!(
@@ -115,6 +114,7 @@ impl PdfViewer {
                                 this.pages.clear();
                                 this.selected_page = 0;
                                 this.display_loading.clear();
+                                this.display_inflight_tasks = 0;
                                 this.display_epoch = this.display_epoch.wrapping_add(1);
                                 this.last_display_visible_range = None;
                                 this.status =
@@ -127,6 +127,7 @@ impl PdfViewer {
                         let _ = view.update(cx, |this, cx| {
                             this.status = "未选择文件".into();
                             this.display_loading.clear();
+                            this.display_inflight_tasks = 0;
                             this.display_epoch = this.display_epoch.wrapping_add(1);
                             this.last_display_visible_range = None;
                             cx.notify();
@@ -137,6 +138,7 @@ impl PdfViewer {
                     let _ = view.update(cx, |this, cx| {
                         this.status = "已取消".into();
                         this.display_loading.clear();
+                        this.display_inflight_tasks = 0;
                         this.display_epoch = this.display_epoch.wrapping_add(1);
                         this.last_display_visible_range = None;
                         cx.notify();
@@ -146,6 +148,7 @@ impl PdfViewer {
                     let _ = view.update(cx, |this, cx| {
                         this.status = format!("文件选择失败: {err}").into();
                         this.display_loading.clear();
+                        this.display_inflight_tasks = 0;
                         this.display_epoch = this.display_epoch.wrapping_add(1);
                         this.last_display_visible_range = None;
                         cx.notify();
@@ -155,6 +158,7 @@ impl PdfViewer {
                     let _ = view.update(cx, |this, cx| {
                         this.status = format!("文件选择失败: {err}").into();
                         this.display_loading.clear();
+                        this.display_inflight_tasks = 0;
                         this.display_epoch = this.display_epoch.wrapping_add(1);
                         this.last_display_visible_range = None;
                         cx.notify();
@@ -169,7 +173,6 @@ impl PdfViewer {
         if index < self.pages.len() {
             self.selected_page = index;
             self.sync_scroll_to_selected();
-            self.request_selected_page_priority_render(cx);
             cx.notify();
         }
     }
@@ -251,48 +254,6 @@ impl PdfViewer {
         width.clamp(1.0, i32::MAX as f32).round() as u32
     }
 
-    fn request_selected_page_priority_render(&mut self, cx: &mut Context<Self>) {
-        if self.pages.is_empty() {
-            return;
-        }
-
-        let selected = self.selected_page.min(self.pages.len() - 1);
-        let target_width = self.last_display_target_width.max(DISPLAY_MIN_WIDTH as u32);
-        let needs_selected = self
-            .pages
-            .get(selected)
-            .map(|page| page.display_image.is_none() || page.display_render_width < target_width)
-            .unwrap_or(false);
-
-        if !needs_selected {
-            return;
-        }
-
-        if self.display_loading.contains(&selected) {
-            return;
-        }
-
-        if !self.display_loading.is_empty() {
-            self.display_epoch = self.display_epoch.wrapping_add(1);
-            self.display_loading.clear();
-        }
-
-        let visible_range = selected..(selected + 1).min(self.pages.len());
-        self.last_display_visible_range = Some(visible_range.clone());
-        self.trim_display_cache(visible_range);
-
-        let load_end =
-            (selected + 1 + DISPLAY_SELECTED_PREFETCH_FORWARD_PAGES).min(self.pages.len());
-        let load_start = selected.saturating_sub(DISPLAY_PREFETCH_BACKWARD_PAGES);
-
-        let mut candidate_order = Vec::with_capacity(load_end.saturating_sub(load_start));
-        candidate_order.push(selected);
-        candidate_order.extend((selected + 1)..load_end);
-        candidate_order.extend(load_start..selected);
-
-        self.request_display_load_from_candidates(candidate_order, target_width, cx);
-    }
-
     fn request_display_load_from_candidates(
         &mut self,
         candidate_order: Vec<usize>,
@@ -307,7 +268,7 @@ impl PdfViewer {
             return;
         };
 
-        if self.display_loading.len() >= DISPLAY_MAX_PARALLEL_TASKS {
+        if self.display_inflight_tasks >= DISPLAY_MAX_PARALLEL_TASKS {
             return;
         }
 
@@ -324,7 +285,7 @@ impl PdfViewer {
 
             let needs_render =
                 page.display_image.is_none() || page.display_render_width < target_width;
-            if needs_render && !page.display_failed && !self.display_loading.contains(&ix) {
+            if needs_render && !page.display_failed {
                 pending.push(ix);
                 if pending.len() >= DISPLAY_BATCH_SIZE {
                     break;
@@ -339,6 +300,7 @@ impl PdfViewer {
         for ix in &pending {
             self.display_loading.insert(*ix);
         }
+        self.display_inflight_tasks = self.display_inflight_tasks.saturating_add(1);
 
         let epoch = self.display_epoch;
         cx.spawn(async move |view, cx| {
@@ -351,6 +313,7 @@ impl PdfViewer {
                 .await;
 
             let _ = view.update(cx, |this, cx| {
+                this.display_inflight_tasks = this.display_inflight_tasks.saturating_sub(1);
                 if this.display_epoch != epoch {
                     return;
                 }
@@ -380,10 +343,6 @@ impl PdfViewer {
                         page.display_failed = true;
                     }
                 }
-
-                if let Some(range) = this.last_display_visible_range.clone() {
-                    this.request_display_load_for_visible_range(range, loaded_target_width, cx);
-                }
                 cx.notify();
             });
         })
@@ -400,50 +359,26 @@ impl PdfViewer {
             return;
         }
 
-        let load_start = visible_range
-            .start
-            .saturating_sub(DISPLAY_PREFETCH_BACKWARD_PAGES);
-        let load_end = (visible_range.end + DISPLAY_PREFETCH_FORWARD_PAGES).min(self.pages.len());
+        if self.display_inflight_tasks == 0 && !self.display_loading.is_empty() {
+            self.display_loading.clear();
+        }
+
+        if self.selected_page < visible_range.start || self.selected_page >= visible_range.end {
+            self.selected_page = visible_range.start.min(self.pages.len().saturating_sub(1));
+        }
+
         self.last_display_visible_range = Some(visible_range.clone());
 
         self.trim_display_cache(visible_range.clone());
 
-        let mut candidate_order = Vec::with_capacity(load_end.saturating_sub(load_start));
+        let mut candidate_order = Vec::with_capacity(visible_range.len());
         candidate_order.extend(visible_range.clone());
-        candidate_order.extend(visible_range.end..load_end);
-        candidate_order.extend(load_start..visible_range.start);
-        if self.selected_page < self.pages.len() {
-            candidate_order.retain(|&ix| ix != self.selected_page);
-            candidate_order.insert(0, self.selected_page);
-        }
 
         self.request_display_load_from_candidates(candidate_order, target_width, cx);
     }
 
     fn trim_display_cache(&mut self, visible_range: std::ops::Range<usize>) {
-        if self.pages.is_empty() {
-            return;
-        }
-
-        let keep_start = visible_range
-            .start
-            .saturating_sub(DISPLAY_CACHE_MARGIN_PAGES);
-        let keep_end = (visible_range.end + DISPLAY_CACHE_MARGIN_PAGES).min(self.pages.len());
-        let selected = self.selected_page.min(self.pages.len().saturating_sub(1));
-        let selected_keep_start = selected.saturating_sub(DISPLAY_CACHE_MARGIN_PAGES);
-        let selected_keep_end = (selected + 1 + DISPLAY_CACHE_MARGIN_PAGES).min(self.pages.len());
-        let loading_indices = self.display_loading.clone();
-
-        for (ix, page) in self.pages.iter_mut().enumerate() {
-            let in_visible_keep_window = ix >= keep_start && ix < keep_end;
-            let in_selected_keep_window = ix >= selected_keep_start && ix < selected_keep_end;
-            let in_flight = loading_indices.contains(&ix);
-
-            if !in_visible_keep_window && !in_selected_keep_window && !in_flight {
-                page.display_image = None;
-                page.display_render_width = 0;
-            }
-        }
+        let _ = visible_range;
     }
 }
 
