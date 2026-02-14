@@ -17,6 +17,7 @@ const SIDEBAR_WIDTH: f32 = 228.0;
 const PREVIEW_MIN_WIDTH: f32 = 220.0;
 const PREVIEW_PREFETCH_FORWARD_PAGES: usize = 10;
 const PREVIEW_PREFETCH_BACKWARD_PAGES: usize = 1;
+const PREVIEW_SELECTED_PREFETCH_FORWARD_PAGES: usize = 6;
 const PREVIEW_CACHE_MARGIN_PAGES: usize = 20;
 const PREVIEW_BATCH_SIZE: usize = 1;
 const PREVIEW_MAX_PARALLEL_TASKS: usize = 1;
@@ -28,7 +29,7 @@ struct PageSummary {
     index: usize,
     width_pt: f32,
     height_pt: f32,
-    preview_image: Option<Arc<Image>>,
+    preview_image: Option<Arc<RenderImage>>,
     preview_render_width: u32,
     preview_failed: bool,
 }
@@ -44,6 +45,7 @@ pub struct PdfViewer {
     preview_loading: HashSet<usize>,
     preview_epoch: u64,
     last_preview_visible_range: Option<std::ops::Range<usize>>,
+    last_preview_target_width: u32,
 }
 
 impl PdfViewer {
@@ -59,6 +61,7 @@ impl PdfViewer {
             preview_loading: HashSet::new(),
             preview_epoch: 0,
             last_preview_visible_range: None,
+            last_preview_target_width: PREVIEW_MIN_WIDTH as u32,
         }
     }
 
@@ -163,6 +166,7 @@ impl PdfViewer {
         if index < self.pages.len() {
             self.selected_page = index;
             self.sync_scroll_to_selected();
+            self.request_selected_page_priority_load(cx);
             cx.notify();
         }
     }
@@ -244,13 +248,55 @@ impl PdfViewer {
         width.clamp(1.0, i32::MAX as f32).round() as u32
     }
 
-    fn request_preview_load_for_visible_range(
+    fn request_selected_page_priority_load(&mut self, cx: &mut Context<Self>) {
+        if self.pages.is_empty() {
+            return;
+        }
+
+        let selected = self.selected_page.min(self.pages.len() - 1);
+        let target_width = self.last_preview_target_width.max(PREVIEW_MIN_WIDTH as u32);
+        let needs_selected = self
+            .pages
+            .get(selected)
+            .map(|page| page.preview_image.is_none() || page.preview_render_width < target_width)
+            .unwrap_or(false);
+
+        if !needs_selected {
+            return;
+        }
+
+        if self.preview_loading.contains(&selected) {
+            return;
+        }
+
+        if !self.preview_loading.is_empty() {
+            self.preview_epoch = self.preview_epoch.wrapping_add(1);
+            self.preview_loading.clear();
+        }
+
+        let visible_range = selected..(selected + 1).min(self.pages.len());
+        self.last_preview_visible_range = Some(visible_range.clone());
+        self.trim_preview_cache(visible_range);
+
+        let load_end =
+            (selected + 1 + PREVIEW_SELECTED_PREFETCH_FORWARD_PAGES).min(self.pages.len());
+        let load_start = selected.saturating_sub(PREVIEW_PREFETCH_BACKWARD_PAGES);
+
+        let mut candidate_order = Vec::with_capacity(load_end.saturating_sub(load_start));
+        candidate_order.push(selected);
+        candidate_order.extend((selected + 1)..load_end);
+        candidate_order.extend(load_start..selected);
+
+        self.request_preview_load_from_candidates(candidate_order, target_width, cx);
+    }
+
+    fn request_preview_load_from_candidates(
         &mut self,
-        visible_range: std::ops::Range<usize>,
+        candidate_order: Vec<usize>,
         target_width: u32,
         cx: &mut Context<Self>,
     ) {
-        if visible_range.is_empty() || self.pages.is_empty() {
+        if candidate_order.is_empty() || self.pages.is_empty() {
             return;
         }
 
@@ -258,25 +304,17 @@ impl PdfViewer {
             return;
         };
 
-        let load_start = visible_range
-            .start
-            .saturating_sub(PREVIEW_PREFETCH_BACKWARD_PAGES);
-        let load_end = (visible_range.end + PREVIEW_PREFETCH_FORWARD_PAGES).min(self.pages.len());
-        self.last_preview_visible_range = Some(visible_range.clone());
-
-        self.trim_preview_cache(visible_range.clone());
-
         if self.preview_loading.len() >= PREVIEW_MAX_PARALLEL_TASKS {
             return;
         }
 
-        let mut candidate_order = Vec::with_capacity(load_end.saturating_sub(load_start));
-        candidate_order.extend(visible_range.clone());
-        candidate_order.extend(visible_range.end..load_end);
-        candidate_order.extend(load_start..visible_range.start);
-
         let mut pending = Vec::new();
+        let mut seen = HashSet::new();
         for ix in candidate_order {
+            if !seen.insert(ix) {
+                continue;
+            }
+
             let Some(page) = self.pages.get(ix) else {
                 continue;
             };
@@ -346,6 +384,36 @@ impl PdfViewer {
         .detach();
     }
 
+    fn request_preview_load_for_visible_range(
+        &mut self,
+        visible_range: std::ops::Range<usize>,
+        target_width: u32,
+        cx: &mut Context<Self>,
+    ) {
+        if visible_range.is_empty() || self.pages.is_empty() {
+            return;
+        }
+
+        let load_start = visible_range
+            .start
+            .saturating_sub(PREVIEW_PREFETCH_BACKWARD_PAGES);
+        let load_end = (visible_range.end + PREVIEW_PREFETCH_FORWARD_PAGES).min(self.pages.len());
+        self.last_preview_visible_range = Some(visible_range.clone());
+
+        self.trim_preview_cache(visible_range.clone());
+
+        let mut candidate_order = Vec::with_capacity(load_end.saturating_sub(load_start));
+        candidate_order.extend(visible_range.clone());
+        candidate_order.extend(visible_range.end..load_end);
+        candidate_order.extend(load_start..visible_range.start);
+        if self.selected_page >= load_start && self.selected_page < load_end {
+            candidate_order.retain(|&ix| ix != self.selected_page);
+            candidate_order.insert(0, self.selected_page);
+        }
+
+        self.request_preview_load_from_candidates(candidate_order, target_width, cx);
+    }
+
     fn trim_preview_cache(&mut self, visible_range: std::ops::Range<usize>) {
         if self.pages.is_empty() {
             return;
@@ -379,6 +447,7 @@ impl Render for PdfViewer {
             .map(|p| display_file_name(p))
             .unwrap_or_else(|| "未打开文件".to_string());
         let zoom_label: SharedString = format!("{:.0}%", self.zoom * 100.0).into();
+        self.last_preview_target_width = self.preview_target_width(window);
         let preview_base_width = self.preview_base_width(window);
         let thumbnail_sizes = self.thumbnail_item_sizes();
         let preview_sizes = self.preview_item_sizes(preview_base_width);
