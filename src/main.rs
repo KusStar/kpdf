@@ -1,9 +1,9 @@
-mod pdf;
+mod pdf_viewer;
 
 use gpui::*;
 use gpui_component::*;
 use gpui_component_assets::Assets;
-use pdf::PdfViewer;
+use pdf_viewer::PdfViewer;
 
 fn main() {
     let app = Application::new().with_assets(Assets);
