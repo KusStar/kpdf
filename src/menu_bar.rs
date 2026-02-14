@@ -226,6 +226,19 @@ impl PdfViewer {
                             .gap_2()
                             .when(page_count > 0, |this| {
                                 this.child(
+                                    Button::new("first-page")
+                                        .ghost()
+                                        .small()
+                                        .disabled(self.active_page == 0)
+                                        .icon(
+                                            Icon::new(IconName::ChevronUp)
+                                                .text_color(cx.theme().foreground),
+                                        )
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.select_page(0, cx);
+                                        })),
+                                )
+                                .child(
                                     Button::new("prev-page")
                                         .ghost()
                                         .small()
@@ -255,6 +268,19 @@ impl PdfViewer {
                                         )
                                         .on_click(cx.listener(|this, _, _, cx| {
                                             this.next_page(cx);
+                                        })),
+                                )
+                                .child(
+                                    Button::new("last-page")
+                                        .ghost()
+                                        .small()
+                                        .disabled(self.active_page + 1 >= page_count)
+                                        .icon(
+                                            Icon::new(IconName::ChevronDown)
+                                                .text_color(cx.theme().foreground),
+                                        )
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.select_page(page_count.saturating_sub(1), cx);
                                         })),
                                 )
                             }),
