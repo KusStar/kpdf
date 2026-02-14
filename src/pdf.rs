@@ -406,7 +406,7 @@ impl PdfViewer {
         candidate_order.extend(visible_range.clone());
         candidate_order.extend(visible_range.end..load_end);
         candidate_order.extend(load_start..visible_range.start);
-        if self.selected_page >= load_start && self.selected_page < load_end {
+        if self.selected_page < self.pages.len() {
             candidate_order.retain(|&ix| ix != self.selected_page);
             candidate_order.insert(0, self.selected_page);
         }
@@ -421,9 +421,18 @@ impl PdfViewer {
 
         let keep_start = visible_range.start.saturating_sub(PREVIEW_CACHE_MARGIN_PAGES);
         let keep_end = (visible_range.end + PREVIEW_CACHE_MARGIN_PAGES).min(self.pages.len());
+        let selected = self.selected_page.min(self.pages.len().saturating_sub(1));
+        let selected_keep_start = selected.saturating_sub(PREVIEW_CACHE_MARGIN_PAGES);
+        let selected_keep_end =
+            (selected + 1 + PREVIEW_CACHE_MARGIN_PAGES).min(self.pages.len());
+        let loading_indices = self.preview_loading.clone();
 
         for (ix, page) in self.pages.iter_mut().enumerate() {
-            if ix < keep_start || ix >= keep_end {
+            let in_visible_keep_window = ix >= keep_start && ix < keep_end;
+            let in_selected_keep_window = ix >= selected_keep_start && ix < selected_keep_end;
+            let in_flight = loading_indices.contains(&ix);
+
+            if !in_visible_keep_window && !in_selected_keep_window && !in_flight {
                 page.preview_image = None;
                 page.preview_render_width = 0;
             }
