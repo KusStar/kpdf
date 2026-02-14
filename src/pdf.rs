@@ -23,6 +23,7 @@ const DISPLAY_MAX_PARALLEL_TASKS: usize = 1;
 const DISPLAY_SCROLL_SYNC_DELAY_MS: u64 = 140;
 const MAX_RECENT_FILES: usize = 12;
 const RECENT_POPUP_CLOSE_DELAY_MS: u64 = 120;
+const RECENT_FILES_TREE: &str = "recent_files";
 
 use self::utils::{display_file_name, load_display_images, load_document_summary};
 
@@ -41,6 +42,7 @@ pub struct PdfViewer {
     pages: Vec<PageSummary>,
     selected_page: usize,
     active_page: usize,
+    recent_store: Option<sled::Tree>,
     recent_files: Vec<PathBuf>,
     recent_popup_open: bool,
     recent_popup_trigger_hovered: bool,
@@ -62,12 +64,19 @@ pub struct PdfViewer {
 
 impl PdfViewer {
     pub fn new() -> Self {
+        let recent_store = Self::open_recent_files_store();
+        let recent_files = recent_store
+            .as_ref()
+            .map(Self::load_recent_files_from_store)
+            .unwrap_or_default();
+
         Self {
             path: None,
             pages: Vec::new(),
             selected_page: 0,
             active_page: 0,
-            recent_files: Vec::new(),
+            recent_store,
+            recent_files,
             recent_popup_open: false,
             recent_popup_trigger_hovered: false,
             recent_popup_panel_hovered: false,
@@ -85,6 +94,45 @@ impl PdfViewer {
             last_display_scroll_offset: None,
             suppress_display_scroll_sync_once: false,
         }
+    }
+
+    fn open_recent_files_store() -> Option<sled::Tree> {
+        let db_path = Self::recent_files_db_path();
+        if let Some(parent) = db_path.parent() {
+            if std::fs::create_dir_all(parent).is_err() {
+                return None;
+            }
+        }
+
+        let db = sled::open(db_path).ok()?;
+        db.open_tree(RECENT_FILES_TREE).ok()
+    }
+
+    fn recent_files_db_path() -> PathBuf {
+        if let Some(app_data) = std::env::var_os("APPDATA") {
+            return PathBuf::from(app_data).join("kpdf").join("recent_files_db");
+        }
+
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(".kpdf").join("recent_files_db");
+        }
+
+        PathBuf::from(".kpdf").join("recent_files_db")
+    }
+
+    fn load_recent_files_from_store(store: &sled::Tree) -> Vec<PathBuf> {
+        store
+            .iter()
+            .filter_map(|entry| {
+                let (_, value) = entry.ok()?;
+                let path_str = String::from_utf8(value.to_vec()).ok()?;
+                if path_str.is_empty() {
+                    return None;
+                }
+                Some(PathBuf::from(path_str))
+            })
+            .take(MAX_RECENT_FILES)
+            .collect()
     }
 
     fn open_pdf_dialog(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -156,6 +204,7 @@ impl PdfViewer {
     fn open_recent_pdf(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         if !path.exists() {
             self.recent_files.retain(|p| p != &path);
+            self.persist_recent_files();
             self.status = format!("文件不存在: {}", path.display()).into();
             cx.notify();
             return;
@@ -227,6 +276,27 @@ impl PdfViewer {
         self.recent_files.retain(|p| p != path);
         self.recent_files.insert(0, path.clone());
         self.recent_files.truncate(MAX_RECENT_FILES);
+        self.persist_recent_files();
+    }
+
+    fn persist_recent_files(&self) {
+        let Some(store) = self.recent_store.as_ref() else {
+            return;
+        };
+
+        if store.clear().is_err() {
+            return;
+        }
+
+        for (ix, path) in self.recent_files.iter().take(MAX_RECENT_FILES).enumerate() {
+            let key = (ix as u32).to_be_bytes();
+            let value = path.to_string_lossy();
+            if store.insert(key, value.as_bytes()).is_err() {
+                return;
+            }
+        }
+
+        let _ = store.flush();
     }
 
     fn recent_popup_open(&self) -> bool {
