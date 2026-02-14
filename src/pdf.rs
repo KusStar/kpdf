@@ -12,7 +12,8 @@ const ZOOM_MIN: f32 = 0.6;
 const ZOOM_MAX: f32 = 2.5;
 const ZOOM_STEP: f32 = 0.1;
 const THUMB_ROW_HEIGHT: f32 = 56.0;
-const PREVIEW_ROW_PADDING: f32 = 16.0;
+const SIDEBAR_WIDTH: f32 = 228.0;
+const PREVIEW_MIN_WIDTH: f32 = 220.0;
 const PREVIEW_PREFETCH_PAGES: usize = 2;
 const PREVIEW_CACHE_MARGIN_PAGES: usize = 4;
 const PREVIEW_BATCH_SIZE: usize = 6;
@@ -198,23 +199,32 @@ impl PdfViewer {
         )
     }
 
-    fn preview_card_size(&self, page: &PageSummary) -> (f32, f32) {
-        let scale = 0.5 * self.zoom;
-        let width = (page.width_pt * scale).clamp(220.0, 1200.0);
-        let height = (page.height_pt * scale).clamp(260.0, 1600.0);
+    fn preview_base_width(&self, window: &Window) -> f32 {
+        let viewport_width: f32 = window.viewport_size().width.into();
+        (viewport_width - SIDEBAR_WIDTH).max(PREVIEW_MIN_WIDTH)
+    }
+
+    fn preview_card_size(&self, page: &PageSummary, base_width: f32) -> (f32, f32) {
+        let width = (base_width * self.zoom).max(PREVIEW_MIN_WIDTH);
+        let aspect_ratio = if page.width_pt > 1.0 {
+            page.height_pt / page.width_pt
+        } else {
+            1.4
+        };
+        let height = width * aspect_ratio;
         (width, height)
     }
 
-    fn preview_row_height(&self, page: &PageSummary) -> f32 {
-        let (_, height) = self.preview_card_size(page);
-        height + PREVIEW_ROW_PADDING * 2.0
+    fn preview_row_height(&self, page: &PageSummary, base_width: f32) -> f32 {
+        let (_, height) = self.preview_card_size(page, base_width);
+        height
     }
 
-    fn preview_item_sizes(&self) -> Rc<Vec<gpui::Size<Pixels>>> {
+    fn preview_item_sizes(&self, base_width: f32) -> Rc<Vec<gpui::Size<Pixels>>> {
         Rc::new(
             self.pages
                 .iter()
-                .map(|page| size(px(0.), px(self.preview_row_height(page))))
+                .map(|page| size(px(0.), px(self.preview_row_height(page, base_width))))
                 .collect(),
         )
     }
@@ -340,8 +350,9 @@ impl Render for PdfViewer {
             .map(|p| display_file_name(p))
             .unwrap_or_else(|| "未打开文件".to_string());
         let zoom_label: SharedString = format!("{:.0}%", self.zoom * 100.0).into();
+        let preview_base_width = self.preview_base_width(window);
         let thumbnail_sizes = self.thumbnail_item_sizes();
-        let preview_sizes = self.preview_item_sizes();
+        let preview_sizes = self.preview_item_sizes(preview_base_width);
 
         window_border().child(
             div()
@@ -688,36 +699,23 @@ impl Render for PdfViewer {
                                                                 else {
                                                                     return div().into_any_element();
                                                                 };
-                                                                let is_selected =
-                                                                    ix == viewer.selected_page;
                                                                 let is_loading =
                                                                     viewer.preview_loading.contains(&ix);
-                                                                let (preview_width, preview_height) =
-                                                                    viewer.preview_card_size(page);
+                                                                let preview_base_width =
+                                                                    viewer.preview_base_width(_window);
+                                                                let (_, preview_height) =
+                                                                    viewer.preview_card_size(page, preview_base_width);
                                                                 div()
                                                                     .id(("preview-row", ix))
                                                                     .w_full()
                                                                     .h_full()
-                                                                    .py(px(PREVIEW_ROW_PADDING))
-                                                                    .flex()
-                                                                    .justify_center()
                                                                     .child(
                                                                         div()
-                                                                            .w(px(preview_width))
+                                                                            .w_full()
                                                                             .h(px(preview_height))
                                                                             .relative()
                                                                             .overflow_hidden()
-                                                                            .rounded_lg()
-                                                                            .border_1()
-                                                                            .border_color(
-                                                                                if is_selected {
-                                                                                    cx.theme().accent
-                                                                                } else {
-                                                                                    cx.theme().border
-                                                                                },
-                                                                            )
                                                                             .bg(cx.theme().background)
-                                                                            .shadow_lg()
                                                                             .when_some(
                                                                                 page.preview_image
                                                                                     .clone(),
@@ -780,11 +778,6 @@ impl Render for PdfViewer {
                                                                                     .px_2()
                                                                                     .py_1()
                                                                                     .rounded_md()
-                                                                                    .border_1()
-                                                                                    .border_color(
-                                                                                        cx.theme()
-                                                                                            .border,
-                                                                                    )
                                                                                     .bg(
                                                                                         cx.theme()
                                                                                             .background
