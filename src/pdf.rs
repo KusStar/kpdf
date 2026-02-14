@@ -49,7 +49,6 @@ pub struct PdfViewer {
     recent_popup_panel_hovered: bool,
     recent_popup_hover_epoch: u64,
     zoom: f32,
-    status: SharedString,
     thumbnail_scroll: VirtualListScrollHandle,
     display_scroll: VirtualListScrollHandle,
     display_loading: HashSet<usize>,
@@ -82,7 +81,6 @@ impl PdfViewer {
             recent_popup_panel_hovered: false,
             recent_popup_hover_epoch: 0,
             zoom: 1.0,
-            status: "打开一个 PDF 文件".into(),
             thumbnail_scroll: VirtualListScrollHandle::new(),
             display_scroll: VirtualListScrollHandle::new(),
             display_loading: HashSet::new(),
@@ -137,8 +135,6 @@ impl PdfViewer {
 
     fn open_pdf_dialog(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         self.close_recent_popup(cx);
-        self.status = "选择 PDF 文件...".into();
-        cx.notify();
 
         let picker = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -157,7 +153,6 @@ impl PdfViewer {
                         });
                     } else {
                         let _ = view.update(cx, |this, cx| {
-                            this.status = "未选择文件".into();
                             this.display_loading.clear();
                             this.display_inflight_tasks = 0;
                             this.display_epoch = this.display_epoch.wrapping_add(1);
@@ -168,7 +163,6 @@ impl PdfViewer {
                 }
                 Ok(Ok(None)) => {
                     let _ = view.update(cx, |this, cx| {
-                        this.status = "已取消".into();
                         this.display_loading.clear();
                         this.display_inflight_tasks = 0;
                         this.display_epoch = this.display_epoch.wrapping_add(1);
@@ -178,7 +172,7 @@ impl PdfViewer {
                 }
                 Ok(Err(err)) => {
                     let _ = view.update(cx, |this, cx| {
-                        this.status = format!("文件选择失败: {err}").into();
+                        let _ = err;
                         this.display_loading.clear();
                         this.display_inflight_tasks = 0;
                         this.display_epoch = this.display_epoch.wrapping_add(1);
@@ -188,7 +182,7 @@ impl PdfViewer {
                 }
                 Err(err) => {
                     let _ = view.update(cx, |this, cx| {
-                        this.status = format!("文件选择失败: {err}").into();
+                        let _ = err;
                         this.display_loading.clear();
                         this.display_inflight_tasks = 0;
                         this.display_epoch = this.display_epoch.wrapping_add(1);
@@ -205,7 +199,6 @@ impl PdfViewer {
         if !path.exists() {
             self.recent_files.retain(|p| p != &path);
             self.persist_recent_files();
-            self.status = format!("文件不存在: {}", path.display()).into();
             cx.notify();
             return;
         }
@@ -214,7 +207,6 @@ impl PdfViewer {
     }
 
     fn open_pdf_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.status = format!("加载中: {}", display_file_name(&path)).into();
         self.display_loading.clear();
         self.display_inflight_tasks = 0;
         self.display_epoch = self.display_epoch.wrapping_add(1);
@@ -243,12 +235,6 @@ impl PdfViewer {
                     this.display_epoch = this.display_epoch.wrapping_add(1);
                     this.last_display_visible_range = None;
                     this.remember_recent_file(&path);
-                    this.status = format!(
-                        "{} 页 | {}",
-                        this.pages.len(),
-                        display_file_name(&path)
-                    )
-                    .into();
                     if !this.pages.is_empty() {
                         this.thumbnail_scroll.scroll_to_item(0, ScrollStrategy::Top);
                         this.display_scroll.scroll_to_item(0, ScrollStrategy::Top);
@@ -264,7 +250,7 @@ impl PdfViewer {
                     this.display_inflight_tasks = 0;
                     this.display_epoch = this.display_epoch.wrapping_add(1);
                     this.last_display_visible_range = None;
-                    this.status = format!("加载失败: {} ({})", display_file_name(&path), err).into();
+                    let _ = err;
                     cx.notify();
                 }
             });
@@ -1132,19 +1118,6 @@ impl Render for PdfViewer {
                                 .v_flex()
                                 .overflow_hidden()
                                 .bg(cx.theme().muted)
-                                .child(
-                                    div()
-                                        .h_8()
-                                        .w_full()
-                                        .px_4()
-                                        .flex()
-                                        .items_center()
-                                        .border_b_1()
-                                        .border_color(cx.theme().border)
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(self.status.clone()),
-                                )
                                 .child(
                                     div()
                                         .flex_1()
