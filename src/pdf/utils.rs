@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use gpui::{Image as GpuiImage, ImageFormat as GpuiImageFormat};
 use image::ImageFormat as RasterImageFormat;
 use pdf_rs::document::PDFDocument;
@@ -6,14 +6,29 @@ use pdf_rs::objects::{ObjRefTuple, PDFNumber, PDFObject};
 use pdfium_render::prelude::*;
 use std::io::Cursor;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use super::PageSummary;
 
 const DEFAULT_PAGE_WIDTH_PT: f32 = 595.0;
 const DEFAULT_PAGE_HEIGHT_PT: f32 = 842.0;
-const PREVIEW_RENDER_TARGET_WIDTH_PX: i32 = 1200;
-const PREVIEW_RENDER_MAX_HEIGHT_PX: i32 = 1800;
+static PDFIUM_INSTANCE: OnceLock<Result<Pdfium, String>> = OnceLock::new();
+
+fn shared_pdfium() -> Result<&'static Pdfium> {
+    match PDFIUM_INSTANCE.get_or_init(|| init_pdfium().map_err(|err| format!("{err:#}"))) {
+        Ok(pdfium) => Ok(pdfium),
+        Err(message) => Err(anyhow!("{message}")),
+    }
+}
+
+fn init_pdfium() -> Result<Pdfium> {
+    let bindings = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./lib"))
+        .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./")))
+        .or_else(|_| Pdfium::bind_to_system_library())
+        .context("未找到 Pdfium 动态库（已尝试 ./lib、./ 与系统库）")?;
+
+    Ok(Pdfium::new(bindings))
+}
 
 pub(super) fn display_file_name(path: &Path) -> String {
     path.file_name()
@@ -41,6 +56,7 @@ pub(super) fn load_document_summary(path: &Path) -> Result<Vec<PageSummary>> {
             width_pt: w,
             height_pt: h,
             preview_image: None,
+            preview_render_width: 0,
             preview_failed: false,
         });
     }
@@ -51,31 +67,28 @@ pub(super) fn load_document_summary(path: &Path) -> Result<Vec<PageSummary>> {
 pub(super) fn load_preview_images(
     path: &Path,
     page_indices: &[usize],
+    target_width: u32,
 ) -> Result<Vec<(usize, Arc<GpuiImage>)>> {
     if page_indices.is_empty() {
         return Ok(Vec::new());
     }
 
-    let pdfium = Pdfium::new(
-        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./lib"))
-            .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./")))
-            .or_else(|_| Pdfium::bind_to_system_library())
-            .context("未找到 Pdfium 动态库（已尝试 ./lib、./ 与系统库）")?,
-    );
+    let pdfium = shared_pdfium()?;
 
     let document = pdfium
         .load_pdf_from_file(path, None)
         .with_context(|| format!("Pdfium 无法打开文件: {}", path.to_string_lossy()))?;
 
-    let render_config = PdfRenderConfig::new()
-        .set_target_width(PREVIEW_RENDER_TARGET_WIDTH_PX)
-        .set_maximum_height(PREVIEW_RENDER_MAX_HEIGHT_PX);
+    let render_config = PdfRenderConfig::new().set_target_width(target_width as i32);
 
     let total_pages = document.pages().len() as usize;
     let mut previews = Vec::new();
-    let mut requested = page_indices.to_vec();
-    requested.sort_unstable();
-    requested.dedup();
+    let mut seen = std::collections::HashSet::new();
+    let requested: Vec<usize> = page_indices
+        .iter()
+        .copied()
+        .filter(|ix| seen.insert(*ix))
+        .collect();
 
     for ix in requested {
         if ix >= total_pages || ix > u16::MAX as usize {
