@@ -36,6 +36,7 @@ pub struct PdfViewer {
     path: Option<PathBuf>,
     pages: Vec<PageSummary>,
     selected_page: usize,
+    active_page: usize,
     zoom: f32,
     status: SharedString,
     thumbnail_scroll: VirtualListScrollHandle,
@@ -47,6 +48,7 @@ pub struct PdfViewer {
     last_display_target_width: u32,
     display_scroll_sync_epoch: u64,
     last_display_scroll_offset: Option<Point<Pixels>>,
+    suppress_display_scroll_sync_once: bool,
 }
 
 impl PdfViewer {
@@ -55,6 +57,7 @@ impl PdfViewer {
             path: None,
             pages: Vec::new(),
             selected_page: 0,
+            active_page: 0,
             zoom: 1.0,
             status: "打开一个 PDF 文件".into(),
             thumbnail_scroll: VirtualListScrollHandle::new(),
@@ -66,6 +69,7 @@ impl PdfViewer {
             last_display_target_width: DISPLAY_MIN_WIDTH as u32,
             display_scroll_sync_epoch: 0,
             last_display_scroll_offset: None,
+            suppress_display_scroll_sync_once: false,
         }
     }
 
@@ -98,6 +102,7 @@ impl PdfViewer {
                                 this.path = Some(path.clone());
                                 this.pages = pages;
                                 this.selected_page = 0;
+                                this.active_page = 0;
                                 this.zoom = 1.0;
                                 this.display_loading.clear();
                                 this.display_inflight_tasks = 0;
@@ -119,6 +124,7 @@ impl PdfViewer {
                                 this.path = Some(path.clone());
                                 this.pages.clear();
                                 this.selected_page = 0;
+                                this.active_page = 0;
                                 this.display_loading.clear();
                                 this.display_inflight_tasks = 0;
                                 this.display_epoch = this.display_epoch.wrapping_add(1);
@@ -178,20 +184,21 @@ impl PdfViewer {
     fn select_page(&mut self, index: usize, cx: &mut Context<Self>) {
         if index < self.pages.len() {
             self.selected_page = index;
+            self.active_page = index;
             self.sync_scroll_to_selected();
             cx.notify();
         }
     }
 
     fn prev_page(&mut self, cx: &mut Context<Self>) {
-        if self.selected_page > 0 {
-            self.select_page(self.selected_page - 1, cx);
+        if self.active_page > 0 {
+            self.select_page(self.active_page - 1, cx);
         }
     }
 
     fn next_page(&mut self, cx: &mut Context<Self>) {
-        if self.selected_page + 1 < self.pages.len() {
-            self.select_page(self.selected_page + 1, cx);
+        if self.active_page + 1 < self.pages.len() {
+            self.select_page(self.active_page + 1, cx);
         }
     }
 
@@ -211,6 +218,7 @@ impl PdfViewer {
     }
 
     fn sync_scroll_to_selected(&mut self) {
+        self.suppress_display_scroll_sync_once = true;
         self.thumbnail_scroll
             .scroll_to_item(self.selected_page, ScrollStrategy::Center);
         self.display_scroll
@@ -231,9 +239,17 @@ impl PdfViewer {
                     return;
                 }
 
-                let index = this.selected_page.min(this.pages.len().saturating_sub(1));
+                let next_active = this
+                    .last_display_visible_range
+                    .as_ref()
+                    .map(|range| range.start.min(this.pages.len().saturating_sub(1)))
+                    .unwrap_or_else(|| this.active_page.min(this.pages.len().saturating_sub(1)));
+                if this.active_page != next_active {
+                    this.active_page = next_active;
+                }
+
                 this.thumbnail_scroll
-                    .scroll_to_item(index, ScrollStrategy::Center);
+                    .scroll_to_item(next_active, ScrollStrategy::Center);
                 cx.notify();
             });
         })
@@ -249,6 +265,10 @@ impl PdfViewer {
         self.last_display_scroll_offset = Some(offset);
 
         if has_changed && !self.pages.is_empty() {
+            if self.suppress_display_scroll_sync_once {
+                self.suppress_display_scroll_sync_once = false;
+                return;
+            }
             self.schedule_thumbnail_sync_after_display_scroll(cx);
         }
     }
@@ -405,12 +425,6 @@ impl PdfViewer {
             self.display_loading.clear();
         }
 
-        let next_selected = visible_range.start.min(self.pages.len().saturating_sub(1));
-        if self.selected_page != next_selected {
-            self.selected_page = next_selected;
-            cx.notify();
-        }
-
         self.last_display_visible_range = Some(visible_range.clone());
 
         self.trim_display_cache(visible_range.clone());
@@ -434,7 +448,7 @@ impl Render for PdfViewer {
         let current_page_num = if page_count == 0 {
             0
         } else {
-            self.selected_page + 1
+            self.active_page + 1
         };
         let file_name = self
             .path
@@ -566,7 +580,7 @@ impl Render for PdfViewer {
                                     Button::new("prev-page")
                                         .ghost()
                                         .small()
-                                        .disabled(page_count == 0 || self.selected_page == 0)
+                                        .disabled(page_count == 0 || self.active_page == 0)
                                         .icon(
                                             Icon::new(IconName::ChevronLeft)
                                                 .text_color(cx.theme().foreground),
@@ -586,7 +600,7 @@ impl Render for PdfViewer {
                                         .ghost()
                                         .small()
                                         .disabled(
-                                            page_count == 0 || self.selected_page + 1 >= page_count,
+                                            page_count == 0 || self.active_page + 1 >= page_count,
                                         )
                                         .icon(
                                             Icon::new(IconName::ChevronRight)
@@ -688,7 +702,7 @@ impl Render for PdfViewer {
                                                                 let Some(_page) = viewer.pages.get(ix) else {
                                                                     return div().into_any_element();
                                                                 };
-                                                                let is_selected = ix == viewer.selected_page;
+                                                                let is_selected = ix == viewer.active_page;
                                                                 div()
                                                                     .px_2()
                                                                     .py_1()
