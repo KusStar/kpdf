@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 const ZOOM_MIN: f32 = 0.6;
 const ZOOM_MAX: f32 = 2.5;
@@ -17,6 +18,7 @@ const SIDEBAR_WIDTH: f32 = 228.0;
 const DISPLAY_MIN_WIDTH: f32 = 220.0;
 const DISPLAY_BATCH_SIZE: usize = 1;
 const DISPLAY_MAX_PARALLEL_TASKS: usize = 1;
+const DISPLAY_SCROLL_SYNC_DELAY_MS: u64 = 140;
 
 use self::utils::{display_file_name, load_display_images, load_document_summary};
 
@@ -43,6 +45,8 @@ pub struct PdfViewer {
     display_epoch: u64,
     last_display_visible_range: Option<std::ops::Range<usize>>,
     last_display_target_width: u32,
+    display_scroll_sync_epoch: u64,
+    last_display_scroll_offset: Option<Point<Pixels>>,
 }
 
 impl PdfViewer {
@@ -60,6 +64,8 @@ impl PdfViewer {
             display_epoch: 0,
             last_display_visible_range: None,
             last_display_target_width: DISPLAY_MIN_WIDTH as u32,
+            display_scroll_sync_epoch: 0,
+            last_display_scroll_offset: None,
         }
     }
 
@@ -209,6 +215,42 @@ impl PdfViewer {
             .scroll_to_item(self.selected_page, ScrollStrategy::Center);
         self.display_scroll
             .scroll_to_item(self.selected_page, ScrollStrategy::Center);
+    }
+
+    fn schedule_thumbnail_sync_after_display_scroll(&mut self, cx: &mut Context<Self>) {
+        self.display_scroll_sync_epoch = self.display_scroll_sync_epoch.wrapping_add(1);
+        let sync_epoch = self.display_scroll_sync_epoch;
+
+        cx.spawn(async move |view, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(DISPLAY_SCROLL_SYNC_DELAY_MS))
+                .await;
+
+            let _ = view.update(cx, |this, cx| {
+                if this.display_scroll_sync_epoch != sync_epoch || this.pages.is_empty() {
+                    return;
+                }
+
+                let index = this.selected_page.min(this.pages.len().saturating_sub(1));
+                this.thumbnail_scroll
+                    .scroll_to_item(index, ScrollStrategy::Center);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn on_display_scroll_offset_changed(&mut self, cx: &mut Context<Self>) {
+        let offset = self.display_scroll.offset();
+        let has_changed = self
+            .last_display_scroll_offset
+            .map(|last| last != offset)
+            .unwrap_or(false);
+        self.last_display_scroll_offset = Some(offset);
+
+        if has_changed && !self.pages.is_empty() {
+            self.schedule_thumbnail_sync_after_display_scroll(cx);
+        }
     }
 
     fn thumbnail_item_sizes(&self) -> Rc<Vec<gpui::Size<Pixels>>> {
@@ -363,8 +405,10 @@ impl PdfViewer {
             self.display_loading.clear();
         }
 
-        if self.selected_page < visible_range.start || self.selected_page >= visible_range.end {
-            self.selected_page = visible_range.start.min(self.pages.len().saturating_sub(1));
+        let next_selected = visible_range.start.min(self.pages.len().saturating_sub(1));
+        if self.selected_page != next_selected {
+            self.selected_page = next_selected;
+            cx.notify();
         }
 
         self.last_display_visible_range = Some(visible_range.clone());
@@ -399,6 +443,7 @@ impl Render for PdfViewer {
             .unwrap_or_else(|| "未打开文件".to_string());
         let zoom_label: SharedString = format!("{:.0}%", self.zoom * 100.0).into();
         self.last_display_target_width = self.display_target_width(window);
+        self.on_display_scroll_offset_changed(cx);
         let display_base_width = self.display_base_width(window);
         let thumbnail_sizes = self.thumbnail_item_sizes();
         let display_sizes = self.display_item_sizes(display_base_width);
