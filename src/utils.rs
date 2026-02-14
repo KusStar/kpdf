@@ -131,11 +131,11 @@ pub(super) fn load_display_images(
         });
     }
 
-    eprintln!(
-        "[pdf][document] {} {}",
-        file_name,
-        if cache_hit { "cache_hit" } else { "cache_miss" }
-    );
+    // eprintln!(
+    //     "[pdf][document] {} {}",
+    //     file_name,
+    //     if cache_hit { "cache_hit" } else { "cache_miss" }
+    // );
 
     let document = &cached_document_guard
         .as_ref()
@@ -198,15 +198,15 @@ pub(super) fn load_display_images(
         match bitmap_to_gpui_render_image(&bitmap) {
             Ok(image) => {
                 display_images.push((ix, image));
-                eprintln!(
-                    "[pdf][render] {} p{} ok | total={}ms render={}ms upload={}ms target_width={} format=raw_bgra",
-                    file_name,
-                    page_num,
-                    started_at.elapsed().as_millis(),
-                    render_elapsed_ms,
-                    convert_started_at.elapsed().as_millis(),
-                    target_width
-                );
+                // eprintln!(
+                //     "[pdf][render] {} p{} ok | total={}ms render={}ms upload={}ms target_width={} format=raw_bgra",
+                //     file_name,
+                //     page_num,
+                //     started_at.elapsed().as_millis(),
+                //     render_elapsed_ms,
+                //     convert_started_at.elapsed().as_millis(),
+                //     target_width
+                // );
             }
             Err(err) => {
                 eprintln!(

@@ -10,7 +10,7 @@ mod utils;
 use gpui::*;
 use gpui_component::{button::*, *};
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,6 +31,7 @@ const DISPLAY_SCROLL_SYNC_DELAY_MS: u64 = 140;
 const MAX_RECENT_FILES: usize = 12;
 const RECENT_POPUP_CLOSE_DELAY_MS: u64 = 120;
 const RECENT_FILES_TREE: &str = "recent_files";
+const FILE_POSITIONS_TREE: &str = "file_positions";
 
 use self::utils::{display_file_name, load_display_images, load_document_summary};
 
@@ -53,6 +54,7 @@ pub struct PdfViewer {
     selected_page: usize,
     active_page: usize,
     recent_store: Option<sled::Tree>,
+    position_store: Option<sled::Tree>,
     recent_files: Vec<PathBuf>,
     recent_popup_open: bool,
     recent_popup_trigger_hovered: bool,
@@ -73,11 +75,12 @@ pub struct PdfViewer {
     display_scroll_sync_epoch: u64,
     last_display_scroll_offset: Option<Point<Pixels>>,
     suppress_display_scroll_sync_once: bool,
+    last_saved_position: Option<(PathBuf, usize)>,
 }
 
 impl PdfViewer {
     pub fn new() -> Self {
-        let recent_store = Self::open_recent_files_store();
+        let (recent_store, position_store) = Self::open_persistent_stores();
         let recent_files = recent_store
             .as_ref()
             .map(Self::load_recent_files_from_store)
@@ -89,6 +92,7 @@ impl PdfViewer {
             selected_page: 0,
             active_page: 0,
             recent_store,
+            position_store,
             recent_files,
             recent_popup_open: false,
             recent_popup_trigger_hovered: false,
@@ -109,6 +113,7 @@ impl PdfViewer {
             display_scroll_sync_epoch: 0,
             last_display_scroll_offset: None,
             suppress_display_scroll_sync_once: false,
+            last_saved_position: None,
         }
     }
 
@@ -131,16 +136,53 @@ impl PdfViewer {
         self.reset_display_render_state();
     }
 
-    fn open_recent_files_store() -> Option<sled::Tree> {
+    fn open_persistent_stores() -> (Option<sled::Tree>, Option<sled::Tree>) {
         let db_path = Self::recent_files_db_path();
         if let Some(parent) = db_path.parent() {
             if std::fs::create_dir_all(parent).is_err() {
-                return None;
+                eprintln!("[store] create dir failed: {}", parent.to_string_lossy());
+                return (None, None);
             }
         }
 
-        let db = sled::open(db_path).ok()?;
-        db.open_tree(RECENT_FILES_TREE).ok()
+        let db = match sled::open(&db_path) {
+            Ok(db) => db,
+            Err(err) => {
+                eprintln!(
+                    "[store] open db failed: {} | {}",
+                    db_path.to_string_lossy(),
+                    err
+                );
+                return (None, None);
+            }
+        };
+
+        let recent_store = match db.open_tree(RECENT_FILES_TREE) {
+            Ok(tree) => Some(tree),
+            Err(err) => {
+                eprintln!("[store] open tree failed: {} | {}", RECENT_FILES_TREE, err);
+                None
+            }
+        };
+        let position_store = match db.open_tree(FILE_POSITIONS_TREE) {
+            Ok(tree) => Some(tree),
+            Err(err) => {
+                eprintln!(
+                    "[store] open tree failed: {} | {}",
+                    FILE_POSITIONS_TREE, err
+                );
+                None
+            }
+        };
+
+        eprintln!(
+            "[store] init recent={} positions={} path={}",
+            recent_store.is_some(),
+            position_store.is_some(),
+            db_path.to_string_lossy()
+        );
+
+        (recent_store, position_store)
     }
 
     fn recent_files_db_path() -> PathBuf {
@@ -249,14 +291,43 @@ impl PdfViewer {
                     pages.sort_by_key(|p| p.index);
                     this.path = Some(path.clone());
                     this.pages = pages;
-                    this.selected_page = 0;
-                    this.active_page = 0;
+                    let restored_page = this.load_saved_file_position(&path);
+                    match restored_page {
+                        Some(page_index) => {
+                            eprintln!(
+                                "[position] restore hit: {} -> page {}",
+                                path.display(),
+                                page_index + 1
+                            );
+                        }
+                        None => {
+                            eprintln!("[position] restore miss: {}", path.display());
+                        }
+                    }
+                    let restored_page = restored_page.unwrap_or(0);
+                    let initial_page = restored_page.min(this.pages.len().saturating_sub(1));
+                    if initial_page != restored_page {
+                        eprintln!(
+                            "[position] restore clamp: {} requested={} available_max={}",
+                            path.display(),
+                            restored_page + 1,
+                            initial_page + 1
+                        );
+                    }
+                    this.selected_page = initial_page;
+                    this.active_page = initial_page;
                     this.zoom = 1.0;
                     this.reset_page_render_state();
                     this.remember_recent_file(&path);
                     if !this.pages.is_empty() {
-                        this.thumbnail_scroll.scroll_to_item(0, ScrollStrategy::Top);
-                        this.display_scroll.scroll_to_item(0, ScrollStrategy::Top);
+                        let strategy = if initial_page == 0 {
+                            ScrollStrategy::Top
+                        } else {
+                            ScrollStrategy::Center
+                        };
+                        this.suppress_display_scroll_sync_once = true;
+                        this.thumbnail_scroll.scroll_to_item(initial_page, strategy);
+                        this.display_scroll.scroll_to_item(initial_page, strategy);
                     }
                     cx.notify();
                 }
@@ -299,6 +370,90 @@ impl PdfViewer {
         }
 
         let _ = store.flush();
+    }
+
+    fn file_position_key(path: &Path) -> Vec<u8> {
+        path.canonicalize()
+            .unwrap_or_else(|_| path.to_path_buf())
+            .to_string_lossy()
+            .into_owned()
+            .into_bytes()
+    }
+
+    fn load_saved_file_position(&self, path: &Path) -> Option<usize> {
+        let store = self.position_store.as_ref()?;
+        let value = store.get(Self::file_position_key(path)).ok().flatten()?;
+        if value.len() != 8 {
+            return None;
+        }
+
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(value.as_ref());
+        usize::try_from(u64::from_be_bytes(bytes)).ok()
+    }
+
+    fn save_file_position(&mut self, path: &Path, page_index: usize) {
+        let Some(store) = self.position_store.as_ref() else {
+            eprintln!(
+                "[position] save skipped (no store): {} -> page {}",
+                path.display(),
+                page_index + 1
+            );
+            return;
+        };
+
+        let page_bytes = (page_index as u64).to_be_bytes();
+        match store.insert(Self::file_position_key(path), page_bytes.as_slice()) {
+            Ok(_) => {
+                self.last_saved_position = Some((path.to_path_buf(), page_index));
+                match store.flush() {
+                    Ok(_) => {
+                        eprintln!(
+                            "[position] save ok: {} -> page {}",
+                            path.display(),
+                            page_index + 1
+                        );
+                    }
+                    Err(err) => {
+                        eprintln!(
+                            "[position] save flush failed: {} -> page {} | {}",
+                            path.display(),
+                            page_index + 1,
+                            err
+                        );
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!(
+                    "[position] save failed: {} -> page {} | {}",
+                    path.display(),
+                    page_index + 1,
+                    err
+                );
+            }
+        }
+    }
+
+    fn persist_current_file_position(&mut self) {
+        if self.pages.is_empty() {
+            return;
+        }
+        let Some(path) = self.path.clone() else {
+            return;
+        };
+
+        let page_index = self.active_page.min(self.pages.len().saturating_sub(1));
+        if self
+            .last_saved_position
+            .as_ref()
+            .map(|(saved_path, saved_index)| saved_path == &path && *saved_index == page_index)
+            .unwrap_or(false)
+        {
+            return;
+        }
+
+        self.save_file_position(&path, page_index);
     }
 
     fn recent_popup_open(&self) -> bool {
@@ -379,6 +534,7 @@ impl PdfViewer {
             self.selected_page = index;
             self.active_page = index;
             self.sync_scroll_to_selected();
+            self.persist_current_file_position();
             cx.notify();
         }
     }
@@ -439,6 +595,7 @@ impl PdfViewer {
                     .unwrap_or_else(|| this.active_page.min(this.pages.len().saturating_sub(1)));
                 if this.active_page != next_active {
                     this.active_page = next_active;
+                    this.persist_current_file_position();
                 }
 
                 this.thumbnail_scroll

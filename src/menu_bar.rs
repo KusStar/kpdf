@@ -16,6 +16,15 @@ impl PdfViewer {
         zoom_label: SharedString,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let recent_files_with_positions: Vec<(PathBuf, Option<usize>)> = recent_files
+            .iter()
+            .cloned()
+            .map(|path| {
+                let last_seen = self.load_saved_file_position(&path);
+                (path, last_seen)
+            })
+            .collect();
+
         div()
             .h_10()
             .w_full()
@@ -56,7 +65,8 @@ impl PdfViewer {
                             )
                             .content({
                                 let viewer = cx.entity();
-                                let recent_files = recent_files.clone();
+                                let recent_files_with_positions =
+                                    recent_files_with_positions.clone();
                                 move |_, _window, cx| {
                                     div()
                                         .id("open-pdf-popup")
@@ -95,7 +105,7 @@ impl PdfViewer {
                                                 }),
                                         )
                                         .child(div().h(px(1.)).my_1().bg(cx.theme().border))
-                                        .when(recent_files.is_empty(), |this| {
+                                        .when(recent_files_with_positions.is_empty(), |this| {
                                             this.child(
                                                 div()
                                                     .px_2()
@@ -105,15 +115,23 @@ impl PdfViewer {
                                                     .child("暂无最近文件"),
                                             )
                                         })
-                                        .when(!recent_files.is_empty(), |this| {
+                                        .when(!recent_files_with_positions.is_empty(), |this| {
                                             this.children(
-                                                recent_files
+                                                recent_files_with_positions
                                                     .iter()
                                                     .enumerate()
-                                                    .map(|(ix, path)| {
+                                                    .map(|(ix, (path, last_seen_page))| {
                                                         let path = path.clone();
                                                         let file_name = display_file_name(&path);
                                                         let path_text = path.display().to_string();
+                                                        let last_seen_text = last_seen_page.map(
+                                                            |page_index| {
+                                                                format!(
+                                                                    "上次看到：第 {} 页",
+                                                                    page_index + 1
+                                                                )
+                                                            },
+                                                        );
                                                         div()
                                                             .id(("recent-pdf", ix))
                                                             .w_full()
@@ -162,6 +180,22 @@ impl PdfViewer {
                                                                                     .muted_foreground,
                                                                             )
                                                                             .child(path_text),
+                                                                    )
+                                                                    .when_some(
+                                                                        last_seen_text,
+                                                                        |this, label| {
+                                                                            this.child(
+                                                                                div()
+                                                                                    .w_full()
+                                                                                    .whitespace_normal()
+                                                                                    .text_xs()
+                                                                                    .text_color(
+                                                                                        cx.theme()
+                                                                                            .muted_foreground,
+                                                                                    )
+                                                                                    .child(label),
+                                                                            )
+                                                                        },
                                                                     ),
                                                             )
                                                             .on_click({
