@@ -1,7 +1,6 @@
 mod utils;
 
 use gpui::prelude::FluentBuilder as _;
-use gpui::{InteractiveElement as _, StatefulInteractiveElement as _};
 use gpui::*;
 use gpui_component::popover::Popover;
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
@@ -15,8 +14,12 @@ use std::time::Duration;
 const ZOOM_MIN: f32 = 0.6;
 const ZOOM_MAX: f32 = 2.5;
 const ZOOM_STEP: f32 = 0.1;
-const THUMB_ROW_HEIGHT: f32 = 56.0;
 const SIDEBAR_WIDTH: f32 = 228.0;
+const THUMB_MIN_WIDTH: f32 = 96.0;
+const THUMB_HORIZONTAL_PADDING: f32 = 16.0;
+const THUMB_VERTICAL_PADDING: f32 = 8.0;
+const THUMB_BATCH_SIZE: usize = 1;
+const THUMB_MAX_PARALLEL_TASKS: usize = 1;
 const DISPLAY_MIN_WIDTH: f32 = 220.0;
 const DISPLAY_BATCH_SIZE: usize = 1;
 const DISPLAY_MAX_PARALLEL_TASKS: usize = 1;
@@ -32,6 +35,9 @@ struct PageSummary {
     index: usize,
     width_pt: f32,
     height_pt: f32,
+    thumbnail_image: Option<Arc<RenderImage>>,
+    thumbnail_render_width: u32,
+    thumbnail_failed: bool,
     display_image: Option<Arc<RenderImage>>,
     display_render_width: u32,
     display_failed: bool,
@@ -51,6 +57,10 @@ pub struct PdfViewer {
     zoom: f32,
     thumbnail_scroll: VirtualListScrollHandle,
     display_scroll: VirtualListScrollHandle,
+    thumbnail_loading: HashSet<usize>,
+    thumbnail_inflight_tasks: usize,
+    thumbnail_epoch: u64,
+    last_thumbnail_visible_range: Option<std::ops::Range<usize>>,
     display_loading: HashSet<usize>,
     display_inflight_tasks: usize,
     display_epoch: u64,
@@ -83,6 +93,10 @@ impl PdfViewer {
             zoom: 1.0,
             thumbnail_scroll: VirtualListScrollHandle::new(),
             display_scroll: VirtualListScrollHandle::new(),
+            thumbnail_loading: HashSet::new(),
+            thumbnail_inflight_tasks: 0,
+            thumbnail_epoch: 0,
+            last_thumbnail_visible_range: None,
             display_loading: HashSet::new(),
             display_inflight_tasks: 0,
             display_epoch: 0,
@@ -92,6 +106,25 @@ impl PdfViewer {
             last_display_scroll_offset: None,
             suppress_display_scroll_sync_once: false,
         }
+    }
+
+    fn reset_thumbnail_render_state(&mut self) {
+        self.thumbnail_loading.clear();
+        self.thumbnail_inflight_tasks = 0;
+        self.thumbnail_epoch = self.thumbnail_epoch.wrapping_add(1);
+        self.last_thumbnail_visible_range = None;
+    }
+
+    fn reset_display_render_state(&mut self) {
+        self.display_loading.clear();
+        self.display_inflight_tasks = 0;
+        self.display_epoch = self.display_epoch.wrapping_add(1);
+        self.last_display_visible_range = None;
+    }
+
+    fn reset_page_render_state(&mut self) {
+        self.reset_thumbnail_render_state();
+        self.reset_display_render_state();
     }
 
     fn open_recent_files_store() -> Option<sled::Tree> {
@@ -153,40 +186,28 @@ impl PdfViewer {
                         });
                     } else {
                         let _ = view.update(cx, |this, cx| {
-                            this.display_loading.clear();
-                            this.display_inflight_tasks = 0;
-                            this.display_epoch = this.display_epoch.wrapping_add(1);
-                            this.last_display_visible_range = None;
+                            this.reset_page_render_state();
                             cx.notify();
                         });
                     }
                 }
                 Ok(Ok(None)) => {
                     let _ = view.update(cx, |this, cx| {
-                        this.display_loading.clear();
-                        this.display_inflight_tasks = 0;
-                        this.display_epoch = this.display_epoch.wrapping_add(1);
-                        this.last_display_visible_range = None;
+                        this.reset_page_render_state();
                         cx.notify();
                     });
                 }
                 Ok(Err(err)) => {
                     let _ = view.update(cx, |this, cx| {
                         let _ = err;
-                        this.display_loading.clear();
-                        this.display_inflight_tasks = 0;
-                        this.display_epoch = this.display_epoch.wrapping_add(1);
-                        this.last_display_visible_range = None;
+                        this.reset_page_render_state();
                         cx.notify();
                     });
                 }
                 Err(err) => {
                     let _ = view.update(cx, |this, cx| {
                         let _ = err;
-                        this.display_loading.clear();
-                        this.display_inflight_tasks = 0;
-                        this.display_epoch = this.display_epoch.wrapping_add(1);
-                        this.last_display_visible_range = None;
+                        this.reset_page_render_state();
                         cx.notify();
                     });
                 }
@@ -207,10 +228,7 @@ impl PdfViewer {
     }
 
     fn open_pdf_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.display_loading.clear();
-        self.display_inflight_tasks = 0;
-        self.display_epoch = self.display_epoch.wrapping_add(1);
-        self.last_display_visible_range = None;
+        self.reset_page_render_state();
         cx.notify();
 
         cx.spawn(async move |view, cx| {
@@ -230,10 +248,7 @@ impl PdfViewer {
                     this.selected_page = 0;
                     this.active_page = 0;
                     this.zoom = 1.0;
-                    this.display_loading.clear();
-                    this.display_inflight_tasks = 0;
-                    this.display_epoch = this.display_epoch.wrapping_add(1);
-                    this.last_display_visible_range = None;
+                    this.reset_page_render_state();
                     this.remember_recent_file(&path);
                     if !this.pages.is_empty() {
                         this.thumbnail_scroll.scroll_to_item(0, ScrollStrategy::Top);
@@ -246,10 +261,7 @@ impl PdfViewer {
                     this.pages.clear();
                     this.selected_page = 0;
                     this.active_page = 0;
-                    this.display_loading.clear();
-                    this.display_inflight_tasks = 0;
-                    this.display_epoch = this.display_epoch.wrapping_add(1);
-                    this.last_display_visible_range = None;
+                    this.reset_page_render_state();
                     let _ = err;
                     cx.notify();
                 }
@@ -450,12 +462,159 @@ impl PdfViewer {
         }
     }
 
+    fn thumbnail_base_width(&self) -> f32 {
+        (SIDEBAR_WIDTH - THUMB_HORIZONTAL_PADDING).max(THUMB_MIN_WIDTH)
+    }
+
+    fn thumbnail_card_size(&self, page: &PageSummary) -> (f32, f32) {
+        let width = self.thumbnail_base_width();
+        let aspect_ratio = if page.width_pt > 1.0 {
+            page.height_pt / page.width_pt
+        } else {
+            1.4
+        };
+        let height = width * aspect_ratio;
+        (width, height)
+    }
+
+    fn thumbnail_row_height(&self, page: &PageSummary) -> f32 {
+        let (_, height) = self.thumbnail_card_size(page);
+        height + THUMB_VERTICAL_PADDING
+    }
+
     fn thumbnail_item_sizes(&self) -> Rc<Vec<gpui::Size<Pixels>>> {
         Rc::new(
-            (0..self.pages.len())
-                .map(|_| size(px(0.), px(THUMB_ROW_HEIGHT)))
+            self.pages
+                .iter()
+                .map(|page| size(px(0.), px(self.thumbnail_row_height(page))))
                 .collect(),
         )
+    }
+
+    fn thumbnail_target_width(&self, window: &Window) -> u32 {
+        let width = self.thumbnail_base_width() * window.scale_factor();
+        width.clamp(1.0, i32::MAX as f32).round() as u32
+    }
+
+    fn request_thumbnail_load_from_candidates(
+        &mut self,
+        candidate_order: Vec<usize>,
+        target_width: u32,
+        cx: &mut Context<Self>,
+    ) {
+        if candidate_order.is_empty() || self.pages.is_empty() {
+            return;
+        }
+
+        let Some(path) = self.path.clone() else {
+            return;
+        };
+
+        if self.thumbnail_inflight_tasks >= THUMB_MAX_PARALLEL_TASKS {
+            return;
+        }
+
+        let mut pending = Vec::new();
+        let mut seen = HashSet::new();
+        for ix in candidate_order {
+            if !seen.insert(ix) {
+                continue;
+            }
+
+            let Some(page) = self.pages.get(ix) else {
+                continue;
+            };
+
+            let needs_render =
+                page.thumbnail_image.is_none() || page.thumbnail_render_width < target_width;
+            if needs_render && !page.thumbnail_failed {
+                pending.push(ix);
+                if pending.len() >= THUMB_BATCH_SIZE {
+                    break;
+                }
+            }
+        }
+
+        if pending.is_empty() {
+            return;
+        }
+
+        for ix in &pending {
+            self.thumbnail_loading.insert(*ix);
+        }
+        self.thumbnail_inflight_tasks = self.thumbnail_inflight_tasks.saturating_add(1);
+
+        let epoch = self.thumbnail_epoch;
+        cx.spawn(async move |view, cx| {
+            let load_result = cx
+                .background_executor()
+                .spawn(async move {
+                    let loaded = load_display_images(&path, &pending, target_width);
+                    (pending, target_width, loaded)
+                })
+                .await;
+
+            let _ = view.update(cx, |this, cx| {
+                this.thumbnail_inflight_tasks = this.thumbnail_inflight_tasks.saturating_sub(1);
+                if this.thumbnail_epoch != epoch {
+                    return;
+                }
+
+                let (requested_indices, loaded_target_width, loaded_result) = load_result;
+                let mut loaded_indices = HashSet::new();
+
+                match loaded_result {
+                    Ok(images) => {
+                        for (ix, image) in images {
+                            if let Some(page) = this.pages.get_mut(ix) {
+                                page.thumbnail_image = Some(image);
+                                page.thumbnail_render_width = loaded_target_width;
+                                page.thumbnail_failed = false;
+                                loaded_indices.insert(ix);
+                            }
+                        }
+                    }
+                    Err(_) => {}
+                }
+
+                for ix in requested_indices {
+                    this.thumbnail_loading.remove(&ix);
+                    if !loaded_indices.contains(&ix)
+                        && let Some(page) = this.pages.get_mut(ix)
+                    {
+                        page.thumbnail_failed = true;
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn request_thumbnail_load_for_visible_range(
+        &mut self,
+        visible_range: std::ops::Range<usize>,
+        target_width: u32,
+        cx: &mut Context<Self>,
+    ) {
+        if visible_range.is_empty() || self.pages.is_empty() {
+            return;
+        }
+
+        if self.thumbnail_inflight_tasks == 0 && !self.thumbnail_loading.is_empty() {
+            self.thumbnail_loading.clear();
+        }
+
+        self.last_thumbnail_visible_range = Some(visible_range.clone());
+        self.trim_thumbnail_cache(visible_range.clone());
+
+        let mut candidate_order = Vec::with_capacity(visible_range.len());
+        candidate_order.extend(visible_range.clone());
+        self.request_thumbnail_load_from_candidates(candidate_order, target_width, cx);
+    }
+
+    fn trim_thumbnail_cache(&mut self, visible_range: std::ops::Range<usize>) {
+        let _ = visible_range;
     }
 
     fn display_base_width(&self, window: &Window) -> f32 {
@@ -1046,47 +1205,167 @@ impl Render for PdfViewer {
                                                     "thumb-virtual-list",
                                                     thumbnail_sizes.clone(),
                                                     move |viewer, visible_range, _window, cx| {
+                                                        let target_width =
+                                                            viewer.thumbnail_target_width(_window);
+                                                        viewer
+                                                            .request_thumbnail_load_for_visible_range(
+                                                                visible_range.clone(),
+                                                                target_width,
+                                                                cx,
+                                                            );
                                                         visible_range
                                                             .map(|ix| {
-                                                                let Some(_page) = viewer.pages.get(ix) else {
+                                                                let Some(page) = viewer.pages.get(ix) else {
                                                                     return div().into_any_element();
                                                                 };
+                                                                let (_, thumb_height) =
+                                                                    viewer.thumbnail_card_size(page);
                                                                 let is_selected = ix == viewer.active_page;
                                                                 div()
+                                                                    .id(("thumb-row", ix))
                                                                     .px_2()
                                                                     .py_1()
+                                                                    .rounded_md()
+                                                                    .when(is_selected, |this| {
+                                                                        this.bg(
+                                                                            cx.theme()
+                                                                                .secondary
+                                                                                .opacity(0.55),
+                                                                        )
+                                                                    })
+                                                                    .hover(|this| {
+                                                                        this.bg(
+                                                                            cx.theme()
+                                                                                .secondary
+                                                                                .opacity(0.35),
+                                                                        )
+                                                                    })
+                                                                    .active(|this| {
+                                                                        this.bg(
+                                                                            cx.theme()
+                                                                                .secondary
+                                                                                .opacity(0.6),
+                                                                        )
+                                                                    })
                                                                     .child(
-                                                                        Button::new(("thumb", ix))
-                                                                            .ghost()
-                                                                            .small()
+                                                                        div()
                                                                             .w_full()
-                                                                            .selected(is_selected)
-                                                                            .child(
-                                                                                div()
-                                                                                    .w_full()
-                                                                                    .v_flex()
-                                                                                    .items_start()
-                                                                                    .gap_1()
-                                                                                    .child(
+                                                                            .h(px(thumb_height))
+                                                                            .relative()
+                                                                            .overflow_hidden()
+                                                                            .rounded_md()
+                                                                            .border_1()
+                                                                            .border_color(
+                                                                                if is_selected {
+                                                                                    cx.theme()
+                                                                                        .foreground
+                                                                                } else {
+                                                                                    cx.theme()
+                                                                                        .sidebar_border
+                                                                                },
+                                                                            )
+                                                                            .bg(cx.theme().background)
+                                                                            .when_some(
+                                                                                page.thumbnail_image
+                                                                                    .clone(),
+                                                                                |this, thumbnail_image| {
+                                                                                    this.child(
+                                                                                        img(
+                                                                                            thumbnail_image,
+                                                                                        )
+                                                                                        .size_full()
+                                                                                        .object_fit(
+                                                                                            ObjectFit::Contain,
+                                                                                        ),
+                                                                                    )
+                                                                                },
+                                                                            )
+                                                                            .when(
+                                                                                page.thumbnail_image
+                                                                                    .is_none(),
+                                                                                |this| {
+                                                                                    this.child(
                                                                                         div()
-                                                                                            .text_sm()
-                                                                                            .font_medium()
+                                                                                            .size_full()
+                                                                                            .v_flex()
+                                                                                            .items_center()
+                                                                                            .justify_center()
+                                                                                            .gap_2()
                                                                                             .text_color(
                                                                                                 cx.theme()
-                                                                                                    .sidebar_foreground,
+                                                                                                    .muted_foreground,
                                                                                             )
-                                                                                            .child(format!(
-                                                                                                "第 {} 页",
-                                                                                                ix + 1
-                                                                                            )),
-                                                                                    ),
-                                                                            )
-                                                                            .on_click(cx.listener(
-                                                                                move |this, _, _, cx| {
-                                                                                    this.select_page(ix, cx);
+                                                                                            .when(
+                                                                                                page.thumbnail_failed,
+                                                                                                |this| {
+                                                                                                    this.child(
+                                                                                                        Icon::new(
+                                                                                                            IconName::File,
+                                                                                                        )
+                                                                                                        .size_5()
+                                                                                                        .text_color(
+                                                                                                            cx.theme()
+                                                                                                                .muted_foreground,
+                                                                                                        ),
+                                                                                                    )
+                                                                                                    .child(
+                                                                                                        div()
+                                                                                                            .text_xs()
+                                                                                                            .child(
+                                                                                                                "缩略图失败",
+                                                                                                            ),
+                                                                                                    )
+                                                                                                },
+                                                                                            )
+                                                                                            .when(
+                                                                                                !page.thumbnail_failed,
+                                                                                                |this| {
+                                                                                                    this.child(
+                                                                                                        spinner::Spinner::new()
+                                                                                                            .large()
+                                                                                                            .icon(Icon::new(
+                                                                                                                IconName::LoaderCircle,
+                                                                                                            ))
+                                                                                                            .color(
+                                                                                                                cx.theme()
+                                                                                                                    .muted_foreground,
+                                                                                                            ),
+                                                                                                    )
+                                                                                                },
+                                                                                            ),
+                                                                                    )
                                                                                 },
-                                                                            )),
+                                                                            )
+                                                                            .child(
+                                                                                div()
+                                                                                    .absolute()
+                                                                                    .left_1()
+                                                                                    .top_1()
+                                                                                    .px_1()
+                                                                                    .rounded_sm()
+                                                                                    .bg(
+                                                                                        cx.theme()
+                                                                                            .background
+                                                                                            .opacity(0.9),
+                                                                                    )
+                                                                                    .text_xs()
+                                                                                    .font_medium()
+                                                                                    .text_color(
+                                                                                        cx.theme()
+                                                                                            .muted_foreground,
+                                                                                    )
+                                                                                    .child(format!(
+                                                                                        "{}",
+                                                                                        page.index + 1
+                                                                                    )),
+                                                                            ),
                                                                     )
+                                                                    .cursor_pointer()
+                                                                    .on_click(cx.listener(
+                                                                        move |this, _, _, cx| {
+                                                                            this.select_page(ix, cx);
+                                                                        },
+                                                                    ))
                                                                     .into_any_element()
                                                             })
                                                             .collect::<Vec<_>>()

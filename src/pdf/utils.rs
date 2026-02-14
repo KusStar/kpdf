@@ -84,6 +84,9 @@ pub(super) fn load_document_summary(path: &Path) -> Result<Vec<PageSummary>> {
             index,
             width_pt: w,
             height_pt: h,
+            thumbnail_image: None,
+            thumbnail_render_width: 0,
+            thumbnail_failed: false,
             display_image: None,
             display_render_width: 0,
             display_failed: false,
@@ -232,7 +235,9 @@ fn bitmap_to_gpui_render_image(bitmap: &PdfBitmap) -> Result<Arc<GpuiRenderImage
 
     let format = bitmap.format().unwrap_or(PdfBitmapFormat::BGRA);
     let mut bytes = match format {
-        PdfBitmapFormat::BGRA | PdfBitmapFormat::BGRx | PdfBitmapFormat::BRGx => bitmap.as_raw_bytes(),
+        PdfBitmapFormat::BGRA | PdfBitmapFormat::BGRx | PdfBitmapFormat::BRGx => {
+            bitmap.as_raw_bytes()
+        }
         _ => rgba_to_bgra(bitmap.as_rgba_bytes()),
     };
 
