@@ -186,34 +186,44 @@ impl PdfViewer {
                             }),
                     )
                     .child(
-                        Button::new("prev-page")
-                            .ghost()
-                            .small()
-                            .disabled(page_count == 0 || self.active_page == 0)
-                            .icon(
-                                Icon::new(IconName::ChevronLeft).text_color(cx.theme().foreground),
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.prev_page(cx);
-                            })),
-                    )
-                    .child(
                         div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(format!("{} / {}", current_page_num, page_count)),
-                    )
-                    .child(
-                        Button::new("next-page")
-                            .ghost()
-                            .small()
-                            .disabled(page_count == 0 || self.active_page + 1 >= page_count)
-                            .icon(
-                                Icon::new(IconName::ChevronRight).text_color(cx.theme().foreground),
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.next_page(cx);
-                            })),
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .when(page_count > 0, |this| {
+                                this.child(
+                                    Button::new("prev-page")
+                                        .ghost()
+                                        .small()
+                                        .disabled(self.active_page == 0)
+                                        .icon(
+                                            Icon::new(IconName::ChevronLeft)
+                                                .text_color(cx.theme().foreground),
+                                        )
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.prev_page(cx);
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(format!("{} / {}", current_page_num, page_count)),
+                                )
+                                .child(
+                                    Button::new("next-page")
+                                        .ghost()
+                                        .small()
+                                        .disabled(self.active_page + 1 >= page_count)
+                                        .icon(
+                                            Icon::new(IconName::ChevronRight)
+                                                .text_color(cx.theme().foreground),
+                                        )
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.next_page(cx);
+                                        })),
+                                )
+                            }),
                     ),
             )
             .child(
