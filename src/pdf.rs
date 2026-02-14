@@ -1,7 +1,9 @@
 mod utils;
 
 use gpui::prelude::FluentBuilder as _;
+use gpui::{InteractiveElement as _, StatefulInteractiveElement as _};
 use gpui::*;
+use gpui_component::popover::Popover;
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use gpui_component::{button::*, *};
 use std::collections::HashSet;
@@ -19,6 +21,8 @@ const DISPLAY_MIN_WIDTH: f32 = 220.0;
 const DISPLAY_BATCH_SIZE: usize = 1;
 const DISPLAY_MAX_PARALLEL_TASKS: usize = 1;
 const DISPLAY_SCROLL_SYNC_DELAY_MS: u64 = 140;
+const MAX_RECENT_FILES: usize = 12;
+const RECENT_POPUP_CLOSE_DELAY_MS: u64 = 120;
 
 use self::utils::{display_file_name, load_display_images, load_document_summary};
 
@@ -37,6 +41,11 @@ pub struct PdfViewer {
     pages: Vec<PageSummary>,
     selected_page: usize,
     active_page: usize,
+    recent_files: Vec<PathBuf>,
+    recent_popup_open: bool,
+    recent_popup_trigger_hovered: bool,
+    recent_popup_panel_hovered: bool,
+    recent_popup_hover_epoch: u64,
     zoom: f32,
     status: SharedString,
     thumbnail_scroll: VirtualListScrollHandle,
@@ -58,6 +67,11 @@ impl PdfViewer {
             pages: Vec::new(),
             selected_page: 0,
             active_page: 0,
+            recent_files: Vec::new(),
+            recent_popup_open: false,
+            recent_popup_trigger_hovered: false,
+            recent_popup_panel_hovered: false,
+            recent_popup_hover_epoch: 0,
             zoom: 1.0,
             status: "打开一个 PDF 文件".into(),
             thumbnail_scroll: VirtualListScrollHandle::new(),
@@ -74,6 +88,7 @@ impl PdfViewer {
     }
 
     fn open_pdf_dialog(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        self.close_recent_popup(cx);
         self.status = "选择 PDF 文件...".into();
         cx.notify();
 
@@ -89,51 +104,8 @@ impl PdfViewer {
             match picker_result {
                 Ok(Ok(Some(paths))) => {
                     if let Some(path) = paths.into_iter().next() {
-                        let parsed = cx
-                            .background_executor()
-                            .spawn({
-                                let path = path.clone();
-                                async move { load_document_summary(&path) }
-                            })
-                            .await;
-                        let _ = view.update(cx, |this, cx| match parsed {
-                            Ok(mut pages) => {
-                                pages.sort_by_key(|p| p.index);
-                                this.path = Some(path.clone());
-                                this.pages = pages;
-                                this.selected_page = 0;
-                                this.active_page = 0;
-                                this.zoom = 1.0;
-                                this.display_loading.clear();
-                                this.display_inflight_tasks = 0;
-                                this.display_epoch = this.display_epoch.wrapping_add(1);
-                                this.last_display_visible_range = None;
-                                this.status = format!(
-                                    "{} 页 | {} | 按需渲染",
-                                    this.pages.len(),
-                                    display_file_name(&path)
-                                )
-                                .into();
-                                if !this.pages.is_empty() {
-                                    this.thumbnail_scroll.scroll_to_item(0, ScrollStrategy::Top);
-                                    this.display_scroll.scroll_to_item(0, ScrollStrategy::Top);
-                                }
-                                cx.notify();
-                            }
-                            Err(err) => {
-                                this.path = Some(path.clone());
-                                this.pages.clear();
-                                this.selected_page = 0;
-                                this.active_page = 0;
-                                this.display_loading.clear();
-                                this.display_inflight_tasks = 0;
-                                this.display_epoch = this.display_epoch.wrapping_add(1);
-                                this.last_display_visible_range = None;
-                                this.status =
-                                    format!("加载失败: {} ({})", display_file_name(&path), err)
-                                        .into();
-                                cx.notify();
-                            }
+                        let _ = view.update(cx, |this, cx| {
+                            this.open_pdf_path(path, cx);
                         });
                     } else {
                         let _ = view.update(cx, |this, cx| {
@@ -179,6 +151,155 @@ impl PdfViewer {
             }
         })
         .detach();
+    }
+
+    fn open_recent_pdf(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if !path.exists() {
+            self.recent_files.retain(|p| p != &path);
+            self.status = format!("文件不存在: {}", path.display()).into();
+            cx.notify();
+            return;
+        }
+
+        self.open_pdf_path(path, cx);
+    }
+
+    fn open_pdf_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.status = format!("加载中: {}", display_file_name(&path)).into();
+        self.display_loading.clear();
+        self.display_inflight_tasks = 0;
+        self.display_epoch = self.display_epoch.wrapping_add(1);
+        self.last_display_visible_range = None;
+        cx.notify();
+
+        cx.spawn(async move |view, cx| {
+            let parsed = cx
+                .background_executor()
+                .spawn({
+                    let path = path.clone();
+                    async move { load_document_summary(&path) }
+                })
+                .await;
+
+            let _ = view.update(cx, |this, cx| match parsed {
+                Ok(mut pages) => {
+                    pages.sort_by_key(|p| p.index);
+                    this.path = Some(path.clone());
+                    this.pages = pages;
+                    this.selected_page = 0;
+                    this.active_page = 0;
+                    this.zoom = 1.0;
+                    this.display_loading.clear();
+                    this.display_inflight_tasks = 0;
+                    this.display_epoch = this.display_epoch.wrapping_add(1);
+                    this.last_display_visible_range = None;
+                    this.remember_recent_file(&path);
+                    this.status = format!(
+                        "{} 页 | {}",
+                        this.pages.len(),
+                        display_file_name(&path)
+                    )
+                    .into();
+                    if !this.pages.is_empty() {
+                        this.thumbnail_scroll.scroll_to_item(0, ScrollStrategy::Top);
+                        this.display_scroll.scroll_to_item(0, ScrollStrategy::Top);
+                    }
+                    cx.notify();
+                }
+                Err(err) => {
+                    this.path = Some(path.clone());
+                    this.pages.clear();
+                    this.selected_page = 0;
+                    this.active_page = 0;
+                    this.display_loading.clear();
+                    this.display_inflight_tasks = 0;
+                    this.display_epoch = this.display_epoch.wrapping_add(1);
+                    this.last_display_visible_range = None;
+                    this.status = format!("加载失败: {} ({})", display_file_name(&path), err).into();
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn remember_recent_file(&mut self, path: &PathBuf) {
+        self.recent_files.retain(|p| p != path);
+        self.recent_files.insert(0, path.clone());
+        self.recent_files.truncate(MAX_RECENT_FILES);
+    }
+
+    fn recent_popup_open(&self) -> bool {
+        self.recent_popup_open
+    }
+
+    fn set_recent_popup_trigger_hovered(&mut self, hovered: bool, cx: &mut Context<Self>) {
+        if self.recent_popup_trigger_hovered != hovered {
+            self.recent_popup_trigger_hovered = hovered;
+            self.update_recent_popup_visibility(cx);
+        }
+    }
+
+    fn set_recent_popup_panel_hovered(&mut self, hovered: bool, cx: &mut Context<Self>) {
+        if self.recent_popup_panel_hovered != hovered {
+            self.recent_popup_panel_hovered = hovered;
+            self.update_recent_popup_visibility(cx);
+        }
+    }
+
+    fn update_recent_popup_visibility(&mut self, cx: &mut Context<Self>) {
+        if self.recent_popup_trigger_hovered || self.recent_popup_panel_hovered {
+            self.recent_popup_hover_epoch = self.recent_popup_hover_epoch.wrapping_add(1);
+            if !self.recent_popup_open {
+                self.recent_popup_open = true;
+                cx.notify();
+            }
+            return;
+        }
+
+        self.recent_popup_hover_epoch = self.recent_popup_hover_epoch.wrapping_add(1);
+        let close_epoch = self.recent_popup_hover_epoch;
+
+        cx.spawn(async move |view, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(RECENT_POPUP_CLOSE_DELAY_MS))
+                .await;
+
+            let _ = view.update(cx, |this, cx| {
+                if this.recent_popup_hover_epoch != close_epoch {
+                    return;
+                }
+                if this.recent_popup_trigger_hovered || this.recent_popup_panel_hovered {
+                    return;
+                }
+                if this.recent_popup_open {
+                    this.recent_popup_open = false;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn close_recent_popup(&mut self, cx: &mut Context<Self>) {
+        self.recent_popup_hover_epoch = self.recent_popup_hover_epoch.wrapping_add(1);
+
+        let mut has_changed = false;
+        if self.recent_popup_trigger_hovered {
+            self.recent_popup_trigger_hovered = false;
+            has_changed = true;
+        }
+        if self.recent_popup_panel_hovered {
+            self.recent_popup_panel_hovered = false;
+            has_changed = true;
+        }
+        if self.recent_popup_open {
+            self.recent_popup_open = false;
+            has_changed = true;
+        }
+        if has_changed {
+            cx.notify();
+        }
     }
 
     fn select_page(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -450,6 +571,8 @@ impl Render for PdfViewer {
         } else {
             self.active_page + 1
         };
+        let recent_popup_open = self.recent_popup_open();
+        let recent_files = self.recent_files.clone();
         let file_name = self
             .path
             .as_ref()
@@ -565,16 +688,186 @@ impl Render for PdfViewer {
                                 .items_center()
                                 .gap_2()
                                 .child(
-                                    Button::new("open-pdf")
-                                        .small()
-                                        .icon(
-                                            Icon::new(IconName::FolderOpen)
-                                                .text_color(cx.theme().foreground),
+                                    Popover::new("open-pdf-popover")
+                                        .anchor(Corner::TopLeft)
+                                        .appearance(false)
+                                        .overlay_closable(false)
+                                        .open(recent_popup_open)
+                                        .trigger(
+                                            Button::new("open-pdf")
+                                                .small()
+                                                .icon(
+                                                    Icon::new(IconName::FolderOpen)
+                                                        .text_color(cx.theme().foreground),
+                                                )
+                                                .label("打开")
+                                                .on_hover({
+                                                    let viewer = cx.entity();
+                                                    move |hovered, _, cx| {
+                                                        let _ = viewer.update(cx, |this, cx| {
+                                                            this.set_recent_popup_trigger_hovered(
+                                                                *hovered, cx,
+                                                            );
+                                                        });
+                                                    }
+                                                }),
                                         )
-                                        .label("打开")
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.open_pdf_dialog(window, cx);
-                                        })),
+                                        .content({
+                                            let viewer = cx.entity();
+                                            let recent_files = recent_files.clone();
+                                            move |_, _window, cx| {
+                                                div()
+                                                    .id("open-pdf-popup")
+                                                    .relative()
+                                                    .top(px(-1.))
+                                                    .w(px(340.))
+                                                    .v_flex()
+                                                    .gap_1()
+                                                    .popover_style(cx)
+                                                    .p_2()
+                                                    .on_hover({
+                                                        let viewer = viewer.clone();
+                                                        move |hovered, _, cx| {
+                                                            let _ = viewer.update(cx, |this, cx| {
+                                                                this.set_recent_popup_panel_hovered(
+                                                                    *hovered, cx,
+                                                                );
+                                                            });
+                                                        }
+                                                    })
+                                                    .child(
+                                                        Button::new("open-pdf-dialog")
+                                                            .small()
+                                                            .w_full()
+                                                            .icon(
+                                                                Icon::new(IconName::FolderOpen)
+                                                                    .text_color(
+                                                                        cx.theme().foreground,
+                                                                    ),
+                                                            )
+                                                            .label("选择文件...")
+                                                            .on_click({
+                                                                let viewer = viewer.clone();
+                                                                move |_, window, cx| {
+                                                                    let _ = viewer.update(
+                                                                        cx,
+                                                                        |this, cx| {
+                                                                            this.close_recent_popup(
+                                                                                cx,
+                                                                            );
+                                                                            this.open_pdf_dialog(
+                                                                                window, cx,
+                                                                            );
+                                                                        },
+                                                                    );
+                                                                }
+                                                            }),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .h(px(1.))
+                                                            .my_1()
+                                                            .bg(cx.theme().border),
+                                                    )
+                                                    .when(recent_files.is_empty(), |this| {
+                                                        this.child(
+                                                            div()
+                                                                .px_2()
+                                                                .py_1()
+                                                                .text_xs()
+                                                                .text_color(
+                                                                    cx.theme().muted_foreground,
+                                                                )
+                                                                .child("暂无最近文件"),
+                                                        )
+                                                    })
+                                                    .when(!recent_files.is_empty(), |this| {
+                                                        this.children(
+                                                            recent_files
+                                                                .iter()
+                                                                .enumerate()
+                                                                .map(|(ix, path)| {
+                                                                    let path = path.clone();
+                                                                    let file_name =
+                                                                        display_file_name(&path);
+                                                                    let path_text = path
+                                                                        .display()
+                                                                        .to_string();
+                                                                    div()
+                                                                        .id(("recent-pdf", ix))
+                                                                        .w_full()
+                                                                        .rounded_md()
+                                                                        .px_2()
+                                                                        .py_1()
+                                                                        .cursor_pointer()
+                                                                        .hover(|this| {
+                                                                            this.bg(
+                                                                                cx.theme()
+                                                                                    .secondary
+                                                                                    .opacity(0.6),
+                                                                            )
+                                                                        })
+                                                                        .active(|this| {
+                                                                            this.bg(
+                                                                                cx.theme()
+                                                                                    .secondary
+                                                                                    .opacity(0.9),
+                                                                            )
+                                                                        })
+                                                                        .child(
+                                                                            div()
+                                                                                .w_full()
+                                                                                .v_flex()
+                                                                                .items_start()
+                                                                                .gap_1()
+                                                                                .child(
+                                                                                    div()
+                                                                                        .w_full()
+                                                                                        .whitespace_normal()
+                                                                                        .text_sm()
+                                                                                        .text_color(
+                                                                                            cx.theme()
+                                                                                                .popover_foreground,
+                                                                                        )
+                                                                                        .child(
+                                                                                            file_name,
+                                                                                        ),
+                                                                                )
+                                                                                .child(
+                                                                                    div()
+                                                                                        .w_full()
+                                                                                        .whitespace_normal()
+                                                                                        .text_xs()
+                                                                                        .text_color(
+                                                                                            cx.theme()
+                                                                                                .muted_foreground,
+                                                                                        )
+                                                                                        .child(
+                                                                                            path_text,
+                                                                                        ),
+                                                                                ),
+                                                                        )
+                                                                        .on_click({
+                                                                            let viewer =
+                                                                                viewer.clone();
+                                                                            move |_, _, cx| {
+                                                                                let _ = viewer
+                                                                                    .update(
+                                                                                        cx,
+                                                                                        |this, cx| {
+                                                                                            this.close_recent_popup(cx);
+                                                                                            this.open_recent_pdf(path.clone(), cx);
+                                                                                        },
+                                                                                    );
+                                                                            }
+                                                                        })
+                                                                        .into_any_element()
+                                                                })
+                                                                .collect::<Vec<_>>(),
+                                                        )
+                                                    })
+                                            }
+                                        }),
                                 )
                                 .child(
                                     Button::new("prev-page")
