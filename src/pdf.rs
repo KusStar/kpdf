@@ -2,8 +2,8 @@ mod utils;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
-use gpui_component::{button::*, *};
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
+use gpui_component::{button::*, *};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -22,7 +22,7 @@ const DISPLAY_CACHE_MARGIN_PAGES: usize = 20;
 const DISPLAY_BATCH_SIZE: usize = 1;
 const DISPLAY_MAX_PARALLEL_TASKS: usize = 1;
 
-use self::utils::{display_file_name, load_document_summary, load_display_images};
+use self::utils::{display_file_name, load_display_images, load_document_summary};
 
 #[derive(Clone)]
 struct PageSummary {
@@ -98,9 +98,12 @@ impl PdfViewer {
                                 this.display_loading.clear();
                                 this.display_epoch = this.display_epoch.wrapping_add(1);
                                 this.last_display_visible_range = None;
-                                this.status =
-                                    format!("{} 页 | {} | 按需渲染", this.pages.len(), display_file_name(&path))
-                                        .into();
+                                this.status = format!(
+                                    "{} 页 | {} | 按需渲染",
+                                    this.pages.len(),
+                                    display_file_name(&path)
+                                )
+                                .into();
                                 if !this.pages.is_empty() {
                                     this.thumbnail_scroll.scroll_to_item(0, ScrollStrategy::Top);
                                     this.display_scroll.scroll_to_item(0, ScrollStrategy::Top);
@@ -319,7 +322,8 @@ impl PdfViewer {
                 continue;
             };
 
-            let needs_render = page.display_image.is_none() || page.display_render_width < target_width;
+            let needs_render =
+                page.display_image.is_none() || page.display_render_width < target_width;
             if needs_render && !page.display_failed && !self.display_loading.contains(&ix) {
                 pending.push(ix);
                 if pending.len() >= DISPLAY_BATCH_SIZE {
@@ -370,7 +374,9 @@ impl PdfViewer {
 
                 for ix in requested_indices {
                     this.display_loading.remove(&ix);
-                    if !loaded_indices.contains(&ix) && let Some(page) = this.pages.get_mut(ix) {
+                    if !loaded_indices.contains(&ix)
+                        && let Some(page) = this.pages.get_mut(ix)
+                    {
                         page.display_failed = true;
                     }
                 }
@@ -419,12 +425,13 @@ impl PdfViewer {
             return;
         }
 
-        let keep_start = visible_range.start.saturating_sub(DISPLAY_CACHE_MARGIN_PAGES);
+        let keep_start = visible_range
+            .start
+            .saturating_sub(DISPLAY_CACHE_MARGIN_PAGES);
         let keep_end = (visible_range.end + DISPLAY_CACHE_MARGIN_PAGES).min(self.pages.len());
         let selected = self.selected_page.min(self.pages.len().saturating_sub(1));
         let selected_keep_start = selected.saturating_sub(DISPLAY_CACHE_MARGIN_PAGES);
-        let selected_keep_end =
-            (selected + 1 + DISPLAY_CACHE_MARGIN_PAGES).min(self.pages.len());
+        let selected_keep_end = (selected + 1 + DISPLAY_CACHE_MARGIN_PAGES).min(self.pages.len());
         let loading_indices = self.display_loading.clone();
 
         for (ix, page) in self.pages.iter_mut().enumerate() {
@@ -687,59 +694,77 @@ impl Render for PdfViewer {
                                 })
                                 .when(page_count > 0, |this| {
                                     this.child(
-                                        v_virtual_list(
-                                            cx.entity(),
-                                            "thumb-virtual-list",
-                                            thumbnail_sizes.clone(),
-                                            move |viewer, visible_range, _window, cx| {
-                                                visible_range
-                                                    .map(|ix| {
-                                                        let Some(_page) = viewer.pages.get(ix) else {
-                                                            return div().into_any_element();
-                                                        };
-                                                        let is_selected = ix == viewer.selected_page;
-                                                        div()
-                                                            .px_2()
-                                                            .py_1()
-                                                            .child(
-                                                                Button::new(("thumb", ix))
-                                                                    .ghost()
-                                                                    .small()
-                                                                    .w_full()
-                                                                    .selected(is_selected)
+                                        div()
+                                            .relative()
+                                            .size_full()
+                                            .child(
+                                                v_virtual_list(
+                                                    cx.entity(),
+                                                    "thumb-virtual-list",
+                                                    thumbnail_sizes.clone(),
+                                                    move |viewer, visible_range, _window, cx| {
+                                                        visible_range
+                                                            .map(|ix| {
+                                                                let Some(_page) = viewer.pages.get(ix) else {
+                                                                    return div().into_any_element();
+                                                                };
+                                                                let is_selected = ix == viewer.selected_page;
+                                                                div()
+                                                                    .px_2()
+                                                                    .py_1()
                                                                     .child(
-                                                                        div()
+                                                                        Button::new(("thumb", ix))
+                                                                            .ghost()
+                                                                            .small()
                                                                             .w_full()
-                                                                            .v_flex()
-                                                                            .items_start()
-                                                                            .gap_1()
+                                                                            .selected(is_selected)
                                                                             .child(
                                                                                 div()
-                                                                                    .text_sm()
-                                                                                    .font_medium()
-                                                                                    .text_color(
-                                                                                        cx.theme()
-                                                                                            .sidebar_foreground,
-                                                                                    )
-                                                                                    .child(format!(
-                                                                                        "第 {} 页",
-                                                                                        ix + 1
-                                                                                    )),
-                                                                            ),
+                                                                                    .w_full()
+                                                                                    .v_flex()
+                                                                                    .items_start()
+                                                                                    .gap_1()
+                                                                                    .child(
+                                                                                        div()
+                                                                                            .text_sm()
+                                                                                            .font_medium()
+                                                                                            .text_color(
+                                                                                                cx.theme()
+                                                                                                    .sidebar_foreground,
+                                                                                            )
+                                                                                            .child(format!(
+                                                                                                "第 {} 页",
+                                                                                                ix + 1
+                                                                                            )),
+                                                                                    ),
+                                                                            )
+                                                                            .on_click(cx.listener(
+                                                                                move |this, _, _, cx| {
+                                                                                    this.select_page(ix, cx);
+                                                                                },
+                                                                            )),
                                                                     )
-                                                                    .on_click(cx.listener(
-                                                                        move |this, _, _, cx| {
-                                                                            this.select_page(ix, cx);
-                                                                        },
-                                                                    )),
-                                                            )
-                                                            .into_any_element()
-                                                    })
-                                                    .collect::<Vec<_>>()
-                                            },
-                                        )
-                                        .track_scroll(&self.thumbnail_scroll)
-                                        .into_any_element(),
+                                                                    .into_any_element()
+                                                            })
+                                                            .collect::<Vec<_>>()
+                                                    },
+                                                )
+                                                .track_scroll(&self.thumbnail_scroll)
+                                                .into_any_element(),
+                                            )
+                                            .child(
+                                                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .child(
+                                                Scrollbar::vertical(&self.thumbnail_scroll)
+                                                    .scrollbar_show(ScrollbarShow::Always),
+                    ),
+                                            )
+                                            .into_any_element(),
                                     )
                                 }),
                         )
@@ -925,8 +950,15 @@ impl Render for PdfViewer {
                                                         .into_any_element(),
                                                     )
                                                     .child(
+                                                        div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .bottom_0().child(
                                                         Scrollbar::vertical(&self.display_scroll)
                                                             .scrollbar_show(ScrollbarShow::Always),
+                                                            ),
                                                     ),
                                             )
                                         }),
