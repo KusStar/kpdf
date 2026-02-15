@@ -1,5 +1,6 @@
-mod pdf_viewer;
+pub mod i18n;
 mod icons;
+mod pdf_viewer;
 
 use gpui::*;
 use gpui_component::*;

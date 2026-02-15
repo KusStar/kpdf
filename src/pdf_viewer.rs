@@ -7,6 +7,7 @@ mod thumbnail_list;
 #[path = "utils.rs"]
 mod utils;
 
+use crate::i18n::{I18n, Language};
 use gpui::*;
 use gpui_component::{button::*, *};
 use std::collections::HashSet;
@@ -49,6 +50,7 @@ struct PageSummary {
 }
 
 pub struct PdfViewer {
+    language: Language,
     path: Option<PathBuf>,
     pages: Vec<PageSummary>,
     selected_page: usize,
@@ -80,6 +82,7 @@ pub struct PdfViewer {
 
 impl PdfViewer {
     pub fn new() -> Self {
+        let language = Language::detect();
         let (recent_store, position_store) = Self::open_persistent_stores();
         let recent_files = recent_store
             .as_ref()
@@ -87,6 +90,7 @@ impl PdfViewer {
             .unwrap_or_default();
 
         Self {
+            language,
             path: None,
             pages: Vec::new(),
             selected_page: 0,
@@ -115,6 +119,10 @@ impl PdfViewer {
             suppress_display_scroll_sync_once: false,
             last_saved_position: None,
         }
+    }
+
+    fn i18n(&self) -> I18n {
+        I18n::new(self.language)
     }
 
     fn reset_thumbnail_render_state(&mut self) {
@@ -219,7 +227,7 @@ impl PdfViewer {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("Open PDF".into()),
+            prompt: Some(self.i18n().open_pdf_prompt().into()),
         });
 
         cx.spawn(async move |view, cx| {
@@ -276,13 +284,14 @@ impl PdfViewer {
     fn open_pdf_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.reset_page_render_state();
         cx.notify();
+        let language = self.language;
 
         cx.spawn(async move |view, cx| {
             let parsed = cx
                 .background_executor()
                 .spawn({
                     let path = path.clone();
-                    async move { load_document_summary(&path) }
+                    async move { load_document_summary(&path, language) }
                 })
                 .await;
 
@@ -704,13 +713,14 @@ impl PdfViewer {
             self.thumbnail_loading.insert(*ix);
         }
         self.thumbnail_inflight_tasks = self.thumbnail_inflight_tasks.saturating_add(1);
+        let language = self.language;
 
         let epoch = self.thumbnail_epoch;
         cx.spawn(async move |view, cx| {
             let load_result = cx
                 .background_executor()
                 .spawn(async move {
-                    let loaded = load_display_images(&path, &pending, target_width);
+                    let loaded = load_display_images(&path, &pending, target_width, language);
                     (pending, target_width, loaded)
                 })
                 .await;
@@ -869,13 +879,14 @@ impl PdfViewer {
             self.display_loading.insert(*ix);
         }
         self.display_inflight_tasks = self.display_inflight_tasks.saturating_add(1);
+        let language = self.language;
 
         let epoch = self.display_epoch;
         cx.spawn(async move |view, cx| {
             let load_result = cx
                 .background_executor()
                 .spawn(async move {
-                    let loaded = load_display_images(&path, &pending, target_width);
+                    let loaded = load_display_images(&path, &pending, target_width, language);
                     (pending, target_width, loaded)
                 })
                 .await;
@@ -962,7 +973,7 @@ impl Render for PdfViewer {
             .path
             .as_ref()
             .map(|p| display_file_name(p))
-            .unwrap_or_else(|| "未打开文件".to_string());
+            .unwrap_or_else(|| self.i18n().file_not_opened().to_string());
         let zoom_label: SharedString = format!("{:.0}%", self.zoom * 100.0).into();
 
         self.last_display_target_width = self.display_target_width(window);

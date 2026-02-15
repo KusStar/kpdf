@@ -13,6 +13,7 @@ impl PdfViewer {
         display_panel_width: f32,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let i18n = self.i18n();
         div()
             .h_full()
             .flex_1()
@@ -44,7 +45,7 @@ impl PdfViewer {
                                     div()
                                         .text_sm()
                                         .text_color(cx.theme().muted_foreground)
-                                        .child("点击上方“打开”选择 PDF"),
+                                        .child(i18n.no_document_hint()),
                                 ),
                         )
                     })
@@ -127,9 +128,7 @@ impl PdfViewer {
                                                                                 .child(
                                                                                     div()
                                                                                         .text_xs()
-                                                                                        .child(
-                                                                                            "页面渲染失败",
-                                                                                        ),
+                                                                                        .child(i18n.page_render_failed()),
                                                                                 )
                                                                             })
                                                                             .when(!page.display_failed, |this| {
@@ -168,10 +167,11 @@ impl PdfViewer {
                                                                             cx.theme()
                                                                                 .muted_foreground,
                                                                         )
-                                                                        .child(format!(
-                                                                            "第 {} 页",
-                                                                            page.index + 1
-                                                                        )),
+                                                                        .child(
+                                                                            i18n.page_badge(
+                                                                                page.index + 1,
+                                                                            ),
+                                                                        ),
                                                                 ),
                                                         )
                                                         .on_click(cx.listener(

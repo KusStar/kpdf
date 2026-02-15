@@ -18,6 +18,7 @@ impl PdfViewer {
         zoom_label: SharedString,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let i18n = self.i18n();
         let recent_files_with_positions: Vec<(PathBuf, Option<usize>)> = recent_files
             .iter()
             .cloned()
@@ -55,7 +56,7 @@ impl PdfViewer {
                                         Icon::new(IconName::FolderOpen)
                                             .text_color(cx.theme().foreground),
                                     )
-                                    .label("打开")
+                                    .label(i18n.open_button())
                                     .on_hover({
                                         let viewer = cx.entity();
                                         move |hovered, _, cx| {
@@ -95,7 +96,7 @@ impl PdfViewer {
                                                     Icon::new(IconName::FolderOpen)
                                                         .text_color(cx.theme().foreground),
                                                 )
-                                                .label("选择文件...")
+                                                .label(i18n.choose_file_button())
                                                 .on_click({
                                                     let viewer = viewer.clone();
                                                     move |_, window, cx| {
@@ -114,7 +115,7 @@ impl PdfViewer {
                                                     .py_1()
                                                     .text_xs()
                                                     .text_color(cx.theme().muted_foreground)
-                                                    .child("暂无最近文件"),
+                                                    .child(i18n.no_recent_files()),
                                             )
                                         })
                                         .when(!recent_files_with_positions.is_empty(), |this| {
@@ -126,14 +127,10 @@ impl PdfViewer {
                                                         let path = path.clone();
                                                         let file_name = display_file_name(&path);
                                                         let path_text = path.display().to_string();
-                                                        let last_seen_text = last_seen_page.map(
-                                                            |page_index| {
-                                                                format!(
-                                                                    "上次看到：第 {} 页",
-                                                                    page_index + 1
-                                                                )
-                                                            },
-                                                        );
+                                                        let last_seen_text = last_seen_page
+                                                            .map(|page_index| {
+                                                                i18n.last_seen_page(page_index + 1)
+                                                            });
                                                         div()
                                                             .id(("recent-pdf", ix))
                                                             .w_full()
@@ -306,7 +303,7 @@ impl PdfViewer {
                         Button::new("zoom-reset")
                             .ghost()
                             .small()
-                            .label("默认")
+                            .label(i18n.zoom_reset_button())
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.zoom_reset(cx);
                             })),

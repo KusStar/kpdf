@@ -1,3 +1,4 @@
+use crate::i18n::{I18n, Language};
 use anyhow::{Context as _, Result, anyhow};
 use gpui::RenderImage as GpuiRenderImage;
 use image::{Frame as RasterFrame, RgbaImage};
@@ -28,18 +29,19 @@ struct CachedPdfDocument {
     document: PdfDocument<'static>,
 }
 
-fn shared_pdfium() -> Result<&'static Pdfium> {
-    match PDFIUM_INSTANCE.get_or_init(|| init_pdfium().map_err(|err| format!("{err:#}"))) {
+fn shared_pdfium(language: Language) -> Result<&'static Pdfium> {
+    match PDFIUM_INSTANCE.get_or_init(|| init_pdfium(language).map_err(|err| format!("{err:#}"))) {
         Ok(pdfium) => Ok(pdfium),
         Err(message) => Err(anyhow!("{message}")),
     }
 }
 
-fn init_pdfium() -> Result<Pdfium> {
+fn init_pdfium(language: Language) -> Result<Pdfium> {
+    let i18n = I18n::new(language);
     let bindings = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./lib"))
         .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./")))
         .or_else(|_| Pdfium::bind_to_system_library())
-        .context("未找到 Pdfium 动态库（已尝试 ./lib、./ 与系统库）")?;
+        .context(i18n.pdfium_not_found())?;
 
     Ok(Pdfium::new(bindings))
 }
@@ -65,9 +67,10 @@ pub(super) fn display_file_name(path: &Path) -> String {
         .unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
-pub(super) fn load_document_summary(path: &Path) -> Result<Vec<PageSummary>> {
-    let mut document = PDFDocument::open(path.to_path_buf())
-        .with_context(|| format!("无法打开文件: {}", path.to_string_lossy()))?;
+pub(super) fn load_document_summary(path: &Path, language: Language) -> Result<Vec<PageSummary>> {
+    let i18n = I18n::new(language);
+    let mut document =
+        PDFDocument::open(path.to_path_buf()).with_context(|| i18n.cannot_open_file(path))?;
     let page_ids = document.get_page_ids();
     let mut pages = Vec::with_capacity(document.get_page_num());
     let mut page_refs = Vec::with_capacity(page_ids.len());
@@ -100,6 +103,7 @@ pub(super) fn load_display_images(
     path: &Path,
     page_indices: &[usize],
     target_width: u32,
+    language: Language,
 ) -> Result<Vec<(usize, Arc<GpuiRenderImage>)>> {
     if page_indices.is_empty() {
         return Ok(Vec::new());
@@ -110,9 +114,10 @@ pub(super) fn load_display_images(
     let mut seen = std::collections::HashSet::new();
     let file_name = display_file_name(path);
     let cache_key = document_cache_key(path);
+    let i18n = I18n::new(language);
     let mut cached_document_guard = document_cache()
         .lock()
-        .map_err(|_| anyhow!("Pdfium 文档缓存锁已中毒"))?;
+        .map_err(|_| anyhow!(i18n.pdfium_cache_lock_poisoned()))?;
 
     let cache_hit = cached_document_guard
         .as_ref()
@@ -120,10 +125,10 @@ pub(super) fn load_display_images(
         .unwrap_or(false);
 
     if !cache_hit {
-        let pdfium = shared_pdfium()?;
+        let pdfium = shared_pdfium(language)?;
         let document = pdfium
             .load_pdf_from_file(&cache_key.canonical_path, None)
-            .with_context(|| format!("Pdfium 无法打开文件: {}", path.to_string_lossy()))?;
+            .with_context(|| i18n.pdfium_cannot_open_file(path))?;
 
         *cached_document_guard = Some(CachedPdfDocument {
             key: cache_key,
@@ -195,7 +200,7 @@ pub(super) fn load_display_images(
         let render_elapsed_ms = render_started_at.elapsed().as_millis();
 
         let convert_started_at = Instant::now();
-        match bitmap_to_gpui_render_image(&bitmap) {
+        match bitmap_to_gpui_render_image(&bitmap, language) {
             Ok(image) => {
                 display_images.push((ix, image));
                 // eprintln!(
@@ -226,11 +231,15 @@ pub(super) fn load_display_images(
 }
 
 #[allow(deprecated)]
-fn bitmap_to_gpui_render_image(bitmap: &PdfBitmap) -> Result<Arc<GpuiRenderImage>> {
+fn bitmap_to_gpui_render_image(
+    bitmap: &PdfBitmap,
+    language: Language,
+) -> Result<Arc<GpuiRenderImage>> {
+    let i18n = I18n::new(language);
     let width = bitmap.width() as u32;
     let height = bitmap.height() as u32;
     if width == 0 || height == 0 {
-        return Err(anyhow!("位图尺寸无效: {}x{}", width, height));
+        return Err(anyhow!(i18n.invalid_bitmap_size(width, height)));
     }
 
     let format = bitmap.format().unwrap_or(PdfBitmapFormat::BGRA);
@@ -245,11 +254,7 @@ fn bitmap_to_gpui_render_image(bitmap: &PdfBitmap) -> Result<Arc<GpuiRenderImage
     if bytes.len() != expected_len {
         bytes = rgba_to_bgra(bitmap.as_rgba_bytes());
         if bytes.len() != expected_len {
-            return Err(anyhow!(
-                "位图数据长度异常: got={}, expected={}",
-                bytes.len(),
-                expected_len
-            ));
+            return Err(anyhow!(i18n.bitmap_len_mismatch(bytes.len(), expected_len)));
         }
     }
 
@@ -260,7 +265,7 @@ fn bitmap_to_gpui_render_image(bitmap: &PdfBitmap) -> Result<Arc<GpuiRenderImage
     }
 
     let buffer = RgbaImage::from_raw(width, height, bytes)
-        .ok_or_else(|| anyhow!("无法创建图像缓冲区: {}x{}", width, height))?;
+        .ok_or_else(|| anyhow!(i18n.cannot_create_image_buffer(width, height)))?;
     let frame = RasterFrame::new(buffer);
 
     Ok(Arc::new(GpuiRenderImage::new([frame])))

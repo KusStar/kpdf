@@ -12,6 +12,7 @@ impl PdfViewer {
         thumbnail_sizes: Rc<Vec<gpui::Size<Pixels>>>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let i18n = self.i18n();
         div()
             .h_full()
             .w(px(SIDEBAR_WIDTH))
@@ -30,7 +31,7 @@ impl PdfViewer {
                         .justify_center()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child("暂无页面"),
+                        .child(i18n.no_pages()),
                 )
             })
             .when(page_count > 0, |this| {
@@ -120,7 +121,9 @@ impl PdfViewer {
                                                                         .child(
                                                                             div()
                                                                                 .text_xs()
-                                                                                .child("缩略图失败"),
+                                                                                .child(
+                                                                                    i18n.thumbnail_render_failed(),
+                                                                                ),
                                                                         )
                                                                     })
                                                                     .when(!page.thumbnail_failed, |this| {
