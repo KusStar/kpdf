@@ -34,6 +34,9 @@ const MAX_RECENT_FILES: usize = 12;
 const RECENT_POPUP_CLOSE_DELAY_MS: u64 = 120;
 const RECENT_FILES_TREE: &str = "recent_files";
 const FILE_POSITIONS_TREE: &str = "file_positions";
+const WINDOW_SIZE_TREE: &str = "window_size";
+const WINDOW_SIZE_KEY_WIDTH: &str = "width";
+const WINDOW_SIZE_KEY_HEIGHT: &str = "height";
 #[cfg(target_os = "macos")]
 const TITLE_BAR_CONTENT_LEFT_PADDING: f32 = 80.0;
 #[cfg(not(target_os = "macos"))]
@@ -62,6 +65,8 @@ pub struct PdfViewer {
     active_page: usize,
     recent_store: Option<sled::Tree>,
     position_store: Option<sled::Tree>,
+    window_size_store: Option<sled::Tree>,
+    last_window_size: Option<(f32, f32)>,
     recent_files: Vec<PathBuf>,
     recent_popup_open: bool,
     recent_popup_trigger_hovered: bool,
@@ -88,7 +93,7 @@ pub struct PdfViewer {
 impl PdfViewer {
     pub fn new() -> Self {
         let language = Language::detect();
-        let (recent_store, position_store) = Self::open_persistent_stores();
+        let (recent_store, position_store, window_size_store) = Self::open_persistent_stores();
         let recent_files = recent_store
             .as_ref()
             .map(Self::load_recent_files_from_store)
@@ -102,6 +107,8 @@ impl PdfViewer {
             active_page: 0,
             recent_store,
             position_store,
+            window_size_store,
+            last_window_size: None,
             recent_files,
             recent_popup_open: false,
             recent_popup_trigger_hovered: false,
@@ -149,12 +156,12 @@ impl PdfViewer {
         self.reset_display_render_state();
     }
 
-    fn open_persistent_stores() -> (Option<sled::Tree>, Option<sled::Tree>) {
+    fn open_persistent_stores() -> (Option<sled::Tree>, Option<sled::Tree>, Option<sled::Tree>) {
         let db_path = Self::recent_files_db_path();
         if let Some(parent) = db_path.parent() {
             if std::fs::create_dir_all(parent).is_err() {
                 eprintln!("[store] create dir failed: {}", parent.to_string_lossy());
-                return (None, None);
+                return (None, None, None);
             }
         }
 
@@ -166,7 +173,7 @@ impl PdfViewer {
                     db_path.to_string_lossy(),
                     err
                 );
-                return (None, None);
+                return (None, None, None);
             }
         };
 
@@ -187,15 +194,26 @@ impl PdfViewer {
                 None
             }
         };
+        let window_size_store = match db.open_tree(WINDOW_SIZE_TREE) {
+            Ok(tree) => Some(tree),
+            Err(err) => {
+                eprintln!(
+                    "[store] open tree failed: {} | {}",
+                    WINDOW_SIZE_TREE, err
+                );
+                None
+            }
+        };
 
         eprintln!(
-            "[store] init recent={} positions={} path={}",
+            "[store] init recent={} positions={} window_size={} path={}",
             recent_store.is_some(),
             position_store.is_some(),
+            window_size_store.is_some(),
             db_path.to_string_lossy()
         );
 
-        (recent_store, position_store)
+        (recent_store, position_store, window_size_store)
     }
 
     fn recent_files_db_path() -> PathBuf {
@@ -469,6 +487,36 @@ impl PdfViewer {
         }
 
         self.save_file_position(&path, page_index);
+    }
+
+    fn load_saved_window_size(&self) -> Option<(f32, f32)> {
+        let store = self.window_size_store.as_ref()?;
+        let width_bytes = store.get(WINDOW_SIZE_KEY_WIDTH).ok().flatten()?;
+        let height_bytes = store.get(WINDOW_SIZE_KEY_HEIGHT).ok().flatten()?;
+        if width_bytes.len() != 4 || height_bytes.len() != 4 {
+            return None;
+        }
+        let width = f32::from_be_bytes(width_bytes.as_ref().try_into().ok()?);
+        let height = f32::from_be_bytes(height_bytes.as_ref().try_into().ok()?);
+        if width <= 0.0 || height <= 0.0 {
+            return None;
+        }
+        Some((width, height))
+    }
+
+    fn save_window_size(&self, width: f32, height: f32) {
+        let Some(store) = self.window_size_store.as_ref() else {
+            return;
+        };
+        let width_bytes = width.to_be_bytes();
+        let height_bytes = height.to_be_bytes();
+        if store.insert(WINDOW_SIZE_KEY_WIDTH, width_bytes.as_slice()).is_err() {
+            eprintln!("[window_size] save width failed");
+        }
+        if store.insert(WINDOW_SIZE_KEY_HEIGHT, height_bytes.as_slice()).is_err() {
+            eprintln!("[window_size] save height failed");
+        }
+        let _ = store.flush();
     }
 
     fn recent_popup_open(&self) -> bool {
@@ -966,6 +1014,13 @@ impl PdfViewer {
 impl Render for PdfViewer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         window.set_rem_size(cx.theme().font_size);
+
+        let bounds = window.bounds();
+        let current_size = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+        if self.last_window_size != Some(current_size) {
+            self.last_window_size = Some(current_size);
+            self.save_window_size(current_size.0, current_size.1);
+        }
 
         let page_count = self.pages.len();
         let current_page_num = if page_count == 0 {
