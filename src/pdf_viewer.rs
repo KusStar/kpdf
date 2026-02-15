@@ -287,6 +287,7 @@ impl PdfViewer {
     }
 
     fn open_pdf_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        eprintln!("[pdf][open] open_pdf_path called: {}", path.display());
         self.reset_page_render_state();
         cx.notify();
         let language = self.language;

@@ -1,9 +1,7 @@
 use crate::i18n::{I18n, Language};
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{anyhow, Context as _, Result};
 use gpui::RenderImage as GpuiRenderImage;
 use image::{Frame as RasterFrame, RgbaImage};
-use pdf_rs::document::PDFDocument;
-use pdf_rs::objects::{ObjRefTuple, PDFNumber, PDFObject};
 use pdfium_render::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -12,8 +10,6 @@ use std::time::SystemTime;
 
 use super::PageSummary;
 
-const DEFAULT_PAGE_WIDTH_PT: f32 = 595.0;
-const DEFAULT_PAGE_HEIGHT_PT: f32 = 842.0;
 static PDFIUM_INSTANCE: OnceLock<Result<Pdfium, String>> = OnceLock::new();
 static PDFIUM_DOCUMENT_CACHE: OnceLock<Mutex<Option<CachedPdfDocument>>> = OnceLock::new();
 
@@ -38,11 +34,36 @@ fn shared_pdfium(language: Language) -> Result<&'static Pdfium> {
 
 fn init_pdfium(language: Language) -> Result<Pdfium> {
     let i18n = I18n::new(language);
-    let bindings = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./lib"))
-        .or_else(|_| Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./")))
-        .or_else(|_| Pdfium::bind_to_system_library())
-        .context(i18n.pdfium_not_found())?;
 
+    eprintln!("[pdfium] starting init...");
+
+    let lib_path = "./lib";
+    eprintln!("[pdfium] trying path: {}", lib_path);
+    let bindings = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(lib_path));
+    match &bindings {
+        Ok(_) => eprintln!("[pdfium] loaded from {}", lib_path),
+        Err(e) => eprintln!("[pdfium] {} failed: {}", lib_path, e),
+    }
+    let bindings = bindings.or_else(|_| {
+        eprintln!("[pdfium] trying path: ./");
+        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
+    });
+    match &bindings {
+        Ok(_) => eprintln!("[pdfium] loaded from ./"),
+        Err(e) => eprintln!("[pdfium] ./ failed: {}", e),
+    }
+    let bindings = bindings.or_else(|_| {
+        eprintln!("[pdfium] trying system library");
+        Pdfium::bind_to_system_library()
+    });
+    match &bindings {
+        Ok(_) => eprintln!("[pdfium] loaded from system"),
+        Err(e) => eprintln!("[pdfium] system failed: {}", e),
+    }
+
+    let bindings = bindings.context(i18n.pdfium_not_found())?;
+
+    eprintln!("[pdfium] init success!");
     Ok(Pdfium::new(bindings))
 }
 
@@ -69,24 +90,31 @@ pub(super) fn display_file_name(path: &Path) -> String {
 
 pub(super) fn load_document_summary(path: &Path, language: Language) -> Result<Vec<PageSummary>> {
     let i18n = I18n::new(language);
-    let mut document =
-        PDFDocument::open(path.to_path_buf()).with_context(|| i18n.cannot_open_file(path))?;
-    let page_ids = document.get_page_ids();
-    let mut pages = Vec::with_capacity(document.get_page_num());
-    let mut page_refs = Vec::with_capacity(page_ids.len());
+    eprintln!("[pdf][load] opening: {}", path.display());
 
-    for (ix, page_id) in page_ids.into_iter().enumerate() {
-        if let Some(page) = document.get_page(page_id) {
-            page_refs.push((ix, page.get_page_obj_ref(), page.get_parent_obj_ref()));
-        }
-    }
+    let pdfium = shared_pdfium(language)?;
+    eprintln!("[pdf][load] pdfium loaded");
 
-    for (index, page_obj_ref, parent_ref) in page_refs {
-        let (w, h) = resolve_page_size(&mut document, page_obj_ref, parent_ref);
+    let document = pdfium
+        .load_pdf_from_file(path, None)
+        .with_context(|| i18n.pdfium_cannot_open_file(path))?;
+    eprintln!(
+        "[pdf][load] document loaded, pages: {}",
+        document.pages().len()
+    );
+
+    let total_pages = document.pages().len() as usize;
+    let mut pages = Vec::with_capacity(total_pages);
+
+    for ix in 0..total_pages {
+        let page = document.pages().get(ix as u16)?;
+        let width_pt = page.width().value as f32;
+        let height_pt = page.height().value as f32;
+
         pages.push(PageSummary {
-            index,
-            width_pt: w,
-            height_pt: h,
+            index: ix,
+            width_pt,
+            height_pt,
             thumbnail_image: None,
             thumbnail_render_width: 0,
             thumbnail_failed: false,
@@ -96,6 +124,7 @@ pub(super) fn load_document_summary(path: &Path, language: Language) -> Result<V
         });
     }
 
+    eprintln!("[pdf][load] summary loaded, {} pages", pages.len());
     Ok(pages)
 }
 
@@ -108,6 +137,12 @@ pub(super) fn load_display_images(
     if page_indices.is_empty() {
         return Ok(Vec::new());
     }
+
+    eprintln!(
+        "[pdf][render] loading {} pages, target_width={}",
+        page_indices.len(),
+        target_width
+    );
 
     let render_config = PdfRenderConfig::new().set_target_width(target_width as i32);
     let mut display_images = Vec::new();
@@ -276,103 +311,4 @@ fn rgba_to_bgra(mut rgba: Vec<u8>) -> Vec<u8> {
         pixel.swap(0, 2);
     }
     rgba
-}
-
-fn resolve_page_size(
-    document: &mut PDFDocument,
-    page_obj_ref: ObjRefTuple,
-    page_parent_ref: Option<ObjRefTuple>,
-) -> (f32, f32) {
-    let mut parent = page_parent_ref;
-    if let Some(page_obj) = read_object(document, page_obj_ref) {
-        if let Some(page_dict) = as_dictionary(&page_obj) {
-            if let Some(media_box) = page_dict
-                .get("MediaBox")
-                .and_then(|obj| resolve_media_box(document, obj))
-            {
-                return media_box;
-            }
-            if parent.is_none() {
-                parent = page_dict.get("Parent").and_then(resolve_object_ref);
-            }
-        }
-    }
-
-    while let Some(parent_ref) = parent {
-        let Some(parent_obj) = read_object(document, parent_ref) else {
-            break;
-        };
-
-        let Some(parent_dict) = as_dictionary(&parent_obj) else {
-            break;
-        };
-
-        if let Some(media_box) = parent_dict
-            .get("MediaBox")
-            .and_then(|obj| resolve_media_box(document, obj))
-        {
-            return media_box;
-        }
-
-        parent = parent_dict.get("Parent").and_then(resolve_object_ref);
-    }
-
-    (DEFAULT_PAGE_WIDTH_PT, DEFAULT_PAGE_HEIGHT_PT)
-}
-
-fn read_object(document: &mut PDFDocument, obj_ref: ObjRefTuple) -> Option<PDFObject> {
-    document.read_object_with_ref(obj_ref).ok().flatten()
-}
-
-fn as_dictionary(object: &PDFObject) -> Option<&pdf_rs::objects::Dictionary> {
-    match object {
-        PDFObject::Dict(dict) => Some(dict),
-        PDFObject::IndirectObject(_, _, inner) => inner.as_dict(),
-        _ => None,
-    }
-}
-
-fn resolve_object_ref(object: &PDFObject) -> Option<ObjRefTuple> {
-    match object {
-        PDFObject::ObjectRef(num, generation) => Some((*num, *generation)),
-        PDFObject::IndirectObject(_, _, inner) => resolve_object_ref(inner),
-        _ => None,
-    }
-}
-
-fn resolve_media_box(document: &mut PDFDocument, object: &PDFObject) -> Option<(f32, f32)> {
-    match object {
-        PDFObject::Array(values) => media_box_from_array(values.as_slice()),
-        PDFObject::ObjectRef(obj_num, obj_gen) => read_object(document, (*obj_num, *obj_gen))
-            .and_then(|obj| resolve_media_box(document, &obj)),
-        PDFObject::IndirectObject(_, _, inner) => resolve_media_box(document, inner),
-        _ => None,
-    }
-}
-
-fn media_box_from_array(values: &[PDFObject]) -> Option<(f32, f32)> {
-    if values.len() != 4 {
-        return None;
-    }
-
-    let left = values[0].as_number().map(number_as_f32)?;
-    let bottom = values[1].as_number().map(number_as_f32)?;
-    let right = values[2].as_number().map(number_as_f32)?;
-    let top = values[3].as_number().map(number_as_f32)?;
-
-    let width = (right - left).abs();
-    let height = (top - bottom).abs();
-    if width > 1.0 && height > 1.0 {
-        Some((width, height))
-    } else {
-        None
-    }
-}
-
-fn number_as_f32(number: &PDFNumber) -> f32 {
-    match number {
-        PDFNumber::Signed(v) => *v as f32,
-        PDFNumber::Unsigned(v) => *v as f32,
-        PDFNumber::Real(v) => *v as f32,
-    }
 }
