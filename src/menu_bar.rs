@@ -304,7 +304,7 @@ impl PdfViewer {
                         Button::new("zoom-reset")
                             .ghost()
                             .small()
-                            .label("适配")
+                            .label("默认")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.zoom_reset(cx);
                             })),

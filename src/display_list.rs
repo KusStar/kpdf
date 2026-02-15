@@ -10,6 +10,7 @@ impl PdfViewer {
         &self,
         page_count: usize,
         display_sizes: Rc<Vec<gpui::Size<Pixels>>>,
+        display_panel_width: f32,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         div()
@@ -22,11 +23,14 @@ impl PdfViewer {
                 div()
                     .flex_1()
                     .w_full()
+                    .v_flex()
+                    .items_center()
                     .overflow_hidden()
                     .when(page_count == 0, |this| {
                         this.child(
                             div()
-                                .size_full()
+                                .h_full()
+                                .w(px(display_panel_width))
                                 .v_flex()
                                 .items_center()
                                 .justify_center()
@@ -47,8 +51,9 @@ impl PdfViewer {
                     .when(page_count > 0, |this| {
                         this.child(
                             div()
+                                .h_full()
+                                .w(px(display_panel_width))
                                 .relative()
-                                .size_full()
                                 .child(
                                     v_virtual_list(
                                         cx.entity(),

@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 const ZOOM_MIN: f32 = 0.6;
-const ZOOM_MAX: f32 = 2.5;
+const ZOOM_MAX: f32 = 1.0;
 const ZOOM_STEP: f32 = 0.1;
 const SIDEBAR_WIDTH: f32 = 228.0;
 const THUMB_MIN_WIDTH: f32 = 96.0;
@@ -778,13 +778,22 @@ impl PdfViewer {
         let _ = visible_range;
     }
 
-    fn display_base_width(&self, window: &Window) -> f32 {
+    fn display_available_width(&self, window: &Window) -> f32 {
         let viewport_width: f32 = window.viewport_size().width.into();
         (viewport_width - SIDEBAR_WIDTH).max(DISPLAY_MIN_WIDTH)
     }
 
+    fn display_panel_width(&self, window: &Window) -> f32 {
+        let available_width = self.display_available_width(window);
+        (available_width * self.zoom).clamp(DISPLAY_MIN_WIDTH, available_width)
+    }
+
+    fn display_base_width(&self, window: &Window) -> f32 {
+        self.display_panel_width(window)
+    }
+
     fn display_card_size(&self, page: &PageSummary, base_width: f32) -> (f32, f32) {
-        let width = (base_width * self.zoom).max(DISPLAY_MIN_WIDTH);
+        let width = base_width.max(DISPLAY_MIN_WIDTH);
         let aspect_ratio = if page.width_pt > 1.0 {
             page.height_pt / page.width_pt
         } else {
@@ -809,7 +818,7 @@ impl PdfViewer {
     }
 
     fn display_target_width(&self, window: &Window) -> u32 {
-        let width = self.display_base_width(window) * self.zoom * window.scale_factor();
+        let width = self.display_panel_width(window) * window.scale_factor();
         width.clamp(1.0, i32::MAX as f32).round() as u32
     }
 
@@ -960,6 +969,7 @@ impl Render for PdfViewer {
         self.on_display_scroll_offset_changed(cx);
 
         let display_base_width = self.display_base_width(window);
+        let display_panel_width = self.display_panel_width(window);
         let thumbnail_sizes = self.thumbnail_item_sizes();
         let display_sizes = self.display_item_sizes(display_base_width);
 
@@ -1064,7 +1074,12 @@ impl Render for PdfViewer {
                         .flex()
                         .overflow_hidden()
                         .child(self.render_thumbnail_panel(page_count, thumbnail_sizes, cx))
-                        .child(self.render_display_panel(page_count, display_sizes, cx)),
+                        .child(self.render_display_panel(
+                            page_count,
+                            display_sizes,
+                            display_panel_width,
+                            cx,
+                        )),
                 ),
         )
     }
