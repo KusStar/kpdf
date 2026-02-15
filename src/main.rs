@@ -24,5 +24,7 @@ fn main() {
             Ok::<_, anyhow::Error>(())
         })
         .detach();
+
+        cx.activate(true);
     });
 }
