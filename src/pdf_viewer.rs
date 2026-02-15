@@ -9,6 +9,7 @@ mod utils;
 
 use crate::i18n::{I18n, Language};
 use gpui::*;
+use gpui::prelude::FluentBuilder as _;
 use gpui_component::{button::*, *};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -33,6 +34,10 @@ const MAX_RECENT_FILES: usize = 12;
 const RECENT_POPUP_CLOSE_DELAY_MS: u64 = 120;
 const RECENT_FILES_TREE: &str = "recent_files";
 const FILE_POSITIONS_TREE: &str = "file_positions";
+#[cfg(target_os = "macos")]
+const TITLE_BAR_CONTENT_LEFT_PADDING: f32 = 80.0;
+#[cfg(not(target_os = "macos"))]
+const TITLE_BAR_CONTENT_LEFT_PADDING: f32 = 12.0;
 
 use self::utils::{display_file_name, load_display_images, load_document_summary};
 
@@ -1003,7 +1008,8 @@ impl Render for PdfViewer {
                             div()
                                 .h_full()
                                 .flex_1()
-                                .px_3()
+                                .pl(px(TITLE_BAR_CONTENT_LEFT_PADDING))
+                                .pr_3()
                                 .flex()
                                 .items_center()
                                 .gap_2()
@@ -1027,48 +1033,50 @@ impl Render for PdfViewer {
                                         .child(file_name),
                                 ),
                         )
-                        .child(
-                            div()
-                                .h_full()
-                                .pr_1()
-                                .flex()
-                                .items_center()
-                                .gap_1()
-                                .child(
-                                    Button::new("window-minimize")
-                                        .ghost()
-                                        .small()
-                                        .icon(
-                                            Icon::new(IconName::WindowMinimize)
+                        .when(!cfg!(target_os = "macos"), |this| {
+                            this.child(
+                                div()
+                                    .h_full()
+                                    .pr_1()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(
+                                        Button::new("window-minimize")
+                                            .ghost()
+                                            .small()
+                                            .icon(
+                                                Icon::new(IconName::WindowMinimize)
+                                                    .text_color(cx.theme().foreground),
+                                            )
+                                            .on_click(|_, window, _| window.minimize_window()),
+                                    )
+                                    .child(
+                                        Button::new("window-maximize")
+                                            .ghost()
+                                            .small()
+                                            .icon(
+                                                Icon::new(if window.is_maximized() {
+                                                    IconName::WindowRestore
+                                                } else {
+                                                    IconName::WindowMaximize
+                                                })
                                                 .text_color(cx.theme().foreground),
-                                        )
-                                        .on_click(|_, window, _| window.minimize_window()),
-                                )
-                                .child(
-                                    Button::new("window-maximize")
-                                        .ghost()
-                                        .small()
-                                        .icon(
-                                            Icon::new(if window.is_maximized() {
-                                                IconName::WindowRestore
-                                            } else {
-                                                IconName::WindowMaximize
-                                            })
-                                            .text_color(cx.theme().foreground),
-                                        )
-                                        .on_click(|_, window, _| window.zoom_window()),
-                                )
-                                .child(
-                                    Button::new("window-close")
-                                        .ghost()
-                                        .small()
-                                        .icon(
-                                            Icon::new(IconName::WindowClose)
-                                                .text_color(cx.theme().foreground),
-                                        )
-                                        .on_click(|_, window, _| window.remove_window()),
-                                ),
-                        ),
+                                            )
+                                            .on_click(|_, window, _| window.zoom_window()),
+                                    )
+                                    .child(
+                                        Button::new("window-close")
+                                            .ghost()
+                                            .small()
+                                            .icon(
+                                                Icon::new(IconName::WindowClose)
+                                                    .text_color(cx.theme().foreground),
+                                            )
+                                            .on_click(|_, window, _| window.remove_window()),
+                                    ),
+                            )
+                        }),
                 )
                 .child(self.render_menu_bar(
                     page_count,
