@@ -2,6 +2,8 @@
 mod display_list;
 #[path = "menu_bar.rs"]
 mod menu_bar;
+#[path = "text_selection.rs"]
+mod text_selection;
 #[path = "thumbnail_list.rs"]
 mod thumbnail_list;
 #[path = "utils.rs"]
@@ -42,7 +44,9 @@ const TITLE_BAR_CONTENT_LEFT_PADDING: f32 = 80.0;
 #[cfg(not(target_os = "macos"))]
 const TITLE_BAR_CONTENT_LEFT_PADDING: f32 = 12.0;
 
+use self::text_selection::{copy_to_clipboard, TextSelectionManager};
 use self::utils::{display_file_name, load_display_images, load_document_summary};
+use std::cell::RefCell;
 
 #[derive(Clone)]
 struct PageSummary {
@@ -88,6 +92,7 @@ pub struct PdfViewer {
     last_display_scroll_offset: Option<Point<Pixels>>,
     suppress_display_scroll_sync_once: bool,
     last_saved_position: Option<(PathBuf, usize)>,
+    text_selection_manager: RefCell<TextSelectionManager>,
 }
 
 impl PdfViewer {
@@ -130,6 +135,7 @@ impl PdfViewer {
             last_display_scroll_offset: None,
             suppress_display_scroll_sync_once: false,
             last_saved_position: None,
+            text_selection_manager: RefCell::new(TextSelectionManager::new()),
         }
     }
 
@@ -154,6 +160,8 @@ impl PdfViewer {
     fn reset_page_render_state(&mut self) {
         self.reset_thumbnail_render_state();
         self.reset_display_render_state();
+        self.text_selection_manager.borrow_mut().clear_cache();
+        self.text_selection_manager.borrow_mut().clear_selection();
     }
 
     fn open_persistent_stores() -> (Option<sled::Tree>, Option<sled::Tree>, Option<sled::Tree>) {
@@ -1009,6 +1017,39 @@ impl PdfViewer {
     fn trim_display_cache(&mut self, visible_range: std::ops::Range<usize>) {
         let _ = visible_range;
     }
+
+    pub fn copy_selected_text(&self) {
+        let manager = self.text_selection_manager.borrow();
+        if let Some(text) = manager.get_selected_text() {
+            if !text.is_empty() {
+                if let Err(err) = copy_to_clipboard(&text) {
+                    eprintln!("[copy] failed to copy to clipboard: {}", err);
+                } else {
+                    eprintln!("[copy] copied {} characters to clipboard", text.len());
+                }
+            }
+        }
+    }
+
+    pub fn select_all_text(&mut self, cx: &mut Context<Self>) {
+        if self.pages.get(self.active_page).is_some() {
+            let mut manager = self.text_selection_manager.borrow_mut();
+            if let Some(cache) = manager.get_page_cache(self.active_page) {
+                let char_count = cache.chars.len();
+                if char_count > 0 {
+                    manager.start_selection(self.active_page, 0);
+                    manager.update_selection(self.active_page, char_count);
+                    manager.end_selection();
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    pub fn clear_text_selection(&mut self, cx: &mut Context<Self>) {
+        self.text_selection_manager.borrow_mut().clear_selection();
+        cx.notify();
+    }
 }
 
 impl Render for PdfViewer {
@@ -1080,7 +1121,7 @@ impl Render for PdfViewer {
                                         .text_sm()
                                         .font_semibold()
                                         .text_color(cx.theme().foreground)
-                                        .child("KPDF"),
+                                        .child("kPDF"),
                                 )
                                 .child(
                                     div()
@@ -1154,7 +1195,29 @@ impl Render for PdfViewer {
                             display_sizes,
                             display_panel_width,
                             cx,
-                        )),
+                        ))
+                        .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
+                            eprintln!("[main_key_down] key={}, platform={}", event.keystroke.key, event.keystroke.modifiers.platform);
+                            
+                            // Handle Cmd+C / Ctrl+C for copy
+                            if event.keystroke.key == "c" && event.keystroke.modifiers.platform {
+                                eprintln!("[main_key_down] Copy command detected");
+                                this.copy_selected_text();
+                                cx.stop_propagation();
+                            }
+                            // Handle Cmd+A / Ctrl+A for select all on current page
+                            else if event.keystroke.key == "a" && event.keystroke.modifiers.platform {
+                                eprintln!("[main_key_down] Select all command detected");
+                                this.select_all_text(cx);
+                                cx.stop_propagation();
+                            }
+                            // Handle Escape to clear selection
+                            else if event.keystroke.key == "escape" {
+                                eprintln!("[main_key_down] Escape command detected");
+                                this.clear_text_selection(cx);
+                                cx.stop_propagation();
+                            }
+                        })),
                 ),
         )
     }

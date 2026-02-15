@@ -171,12 +171,6 @@ pub(super) fn load_display_images(
         });
     }
 
-    // eprintln!(
-    //     "[pdf][document] {} {}",
-    //     file_name,
-    //     if cache_hit { "cache_hit" } else { "cache_miss" }
-    // );
-
     let document = &cached_document_guard
         .as_ref()
         .expect("Pdfium document cache should be initialized")
@@ -238,15 +232,6 @@ pub(super) fn load_display_images(
         match bitmap_to_gpui_render_image(&bitmap, language) {
             Ok(image) => {
                 display_images.push((ix, image));
-                // eprintln!(
-                //     "[pdf][render] {} p{} ok | total={}ms render={}ms upload={}ms target_width={} format=raw_bgra",
-                //     file_name,
-                //     page_num,
-                //     started_at.elapsed().as_millis(),
-                //     render_elapsed_ms,
-                //     convert_started_at.elapsed().as_millis(),
-                //     target_width
-                // );
             }
             Err(err) => {
                 eprintln!(
@@ -311,4 +296,112 @@ fn rgba_to_bgra(mut rgba: Vec<u8>) -> Vec<u8> {
         pixel.swap(0, 2);
     }
     rgba
+}
+
+/// Load text information from a page for text selection using pdfium-render high-level API
+pub fn load_page_text_for_selection(
+    path: &Path,
+    page_index: usize,
+) -> Result<Option<(usize, f32, f32, Vec<super::text_selection::TextCharInfo>)>> {
+    let cache_key = document_cache_key(path);
+
+    let mut cached_document_guard = match document_cache().lock() {
+        Ok(guard) => guard,
+        Err(_) => return Ok(None),
+    };
+
+    let cache_hit = cached_document_guard
+        .as_ref()
+        .map(|cached| cached.key == cache_key)
+        .unwrap_or(false);
+
+    if !cache_hit {
+        let pdfium = match shared_pdfium(Language::EnUs) {
+            Ok(p) => p,
+            Err(_) => return Ok(None),
+        };
+
+        let document = match pdfium.load_pdf_from_file(&cache_key.canonical_path, None) {
+            Ok(doc) => doc,
+            Err(err) => {
+                eprintln!(
+                    "[text] Failed to load document for text extraction: {} | {:?}",
+                    path.display(),
+                    err
+                );
+                return Ok(None);
+            }
+        };
+
+        *cached_document_guard = Some(CachedPdfDocument {
+            key: cache_key,
+            document,
+        });
+    }
+
+    let document = match cached_document_guard.as_ref() {
+        Some(cached) => &cached.document,
+        None => return Ok(None),
+    };
+
+    let total_pages = document.pages().len() as usize;
+    if page_index >= total_pages {
+        eprintln!(
+            "[text] Page index {} out of range (total: {})",
+            page_index, total_pages
+        );
+        return Ok(None);
+    }
+
+    let page = match document.pages().get(page_index as u16) {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!(
+                "[text] Failed to get page {} from document: {:?}",
+                page_index, err
+            );
+            return Ok(None);
+        }
+    };
+
+    let page_width = page.width().value as f32;
+    let page_height = page.height().value as f32;
+
+    let page_text = match page.text() {
+        Ok(text) => text,
+        Err(err) => {
+            eprintln!(
+                "[text] Failed to get text from page {}: {:?}",
+                page_index, err
+            );
+            return Ok(None);
+        }
+    };
+
+    let chars_collection = page_text.chars();
+
+    if chars_collection.is_empty() {
+        return Ok(Some((page_index, page_width, page_height, Vec::new())));
+    }
+
+    let mut chars = Vec::new();
+
+    for char in chars_collection.iter() {
+        let bounds = match char.tight_bounds() {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+        let text = char.unicode_char().map(|c| c.to_string()).unwrap_or_default();
+
+        chars.push(super::text_selection::TextCharInfo {
+            char_index: char.index() as usize,
+            text,
+            left: bounds.left().value as f32,
+            top: bounds.top().value as f32,
+            right: bounds.right().value as f32,
+            bottom: bounds.bottom().value as f32,
+        });
+    }
+
+    Ok(Some((page_index, page_width, page_height, chars)))
 }
