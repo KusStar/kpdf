@@ -3080,6 +3080,7 @@ dependencies = [
  "image",
  "pdf-rs",
  "pdfium-render",
+ "rust-embed",
  "sled",
 ]
 

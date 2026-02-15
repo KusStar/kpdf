@@ -1,3 +1,5 @@
+use crate::icons;
+
 use super::PdfViewer;
 use super::utils::display_file_name;
 use gpui::prelude::FluentBuilder as _;
@@ -231,7 +233,7 @@ impl PdfViewer {
                                         .small()
                                         .disabled(self.active_page == 0)
                                         .icon(
-                                            Icon::new(IconName::ChevronUp)
+                                            Icon::new(icons::IconName::ChevronFirst)
                                                 .text_color(cx.theme().foreground),
                                         )
                                         .on_click(cx.listener(|this, _, _, cx| {
@@ -276,7 +278,7 @@ impl PdfViewer {
                                         .small()
                                         .disabled(self.active_page + 1 >= page_count)
                                         .icon(
-                                            Icon::new(IconName::ChevronDown)
+                                            Icon::new(icons::IconName::ChevronLast)
                                                 .text_color(cx.theme().foreground),
                                         )
                                         .on_click(cx.listener(move |this, _, _, cx| {

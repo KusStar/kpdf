@@ -1,12 +1,12 @@
 mod pdf_viewer;
+mod icons;
 
 use gpui::*;
 use gpui_component::*;
-use gpui_component_assets::Assets;
 use pdf_viewer::PdfViewer;
 
 fn main() {
-    let app = Application::new().with_assets(Assets);
+    let app = Application::new().with_assets(icons::Assets);
 
     app.run(move |cx| {
         gpui_component::init(cx);
