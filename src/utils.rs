@@ -391,10 +391,12 @@ pub fn load_page_text_for_selection(
             Ok(b) => b,
             Err(_) => continue,
         };
-        let text = char.unicode_char().map(|c| c.to_string()).unwrap_or_default();
+        let text = char
+            .unicode_char()
+            .map(|c| c.to_string())
+            .unwrap_or_default();
 
         chars.push(super::text_selection::TextCharInfo {
-            char_index: char.index() as usize,
             text,
             left: bounds.left().value as f32,
             top: bounds.top().value as f32,

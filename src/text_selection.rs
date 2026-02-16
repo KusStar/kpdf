@@ -22,20 +22,11 @@ impl TextSelection {
             end_char_index: end,
         }
     }
-
-    pub fn is_empty(&self) -> bool {
-        self.start_char_index == self.end_char_index
-    }
-
-    pub fn char_count(&self) -> usize {
-        self.end_char_index.saturating_sub(self.start_char_index)
-    }
 }
 
 /// Represents a character with its bounds and index
 #[derive(Clone, Debug)]
 pub struct TextCharInfo {
-    pub char_index: usize,
     pub text: String,
     pub left: f32,
     pub top: f32,
@@ -67,7 +58,6 @@ impl TextCharInfo {
 /// Cache for page text information
 #[derive(Clone)]
 pub struct PageTextCache {
-    pub page_index: usize,
     pub chars: Vec<TextCharInfo>,
     pub page_width: f32,
     pub page_height: f32,
@@ -116,12 +106,6 @@ impl PageTextCache {
         } else {
             None
         }
-    }
-
-    pub fn get_char_bounds(&self, char_index: usize) -> Option<(f32, f32, f32, f32)> {
-        self.chars
-            .get(char_index)
-            .map(|c| (c.left, c.top, c.right, c.bottom))
     }
 
     pub fn get_selection_bounds(&self, selection: &TextSelection) -> Vec<(f32, f32, f32, f32)> {
@@ -356,10 +340,6 @@ impl TextSelectionManager {
         eprintln!("[selection] Cleared");
     }
 
-    pub fn get_current_selection(&self) -> Option<&TextSelection> {
-        self.current_selection.as_ref()
-    }
-
     pub fn is_selecting(&self) -> bool {
         self.is_selecting
     }
@@ -399,7 +379,6 @@ impl TextSelectionManager {
         chars: Vec<TextCharInfo>,
     ) {
         let cache = PageTextCache {
-            page_index,
             chars,
             page_width,
             page_height,

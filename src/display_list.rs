@@ -350,79 +350,6 @@ impl PdfViewer {
             .collect()
     }
 
-    /// Get character bounds for debugging visualization - applies the same offset as selection
-    fn get_char_bounds_for_page(
-        &self,
-        page_index: usize,
-        page_width_screen: f32,
-        page_height_screen: f32,
-        scale: f32,
-    ) -> Vec<(f32, f32, f32, f32)> {
-        let manager = self.text_selection_manager.borrow();
-        let Some(cache) = manager.get_page_cache(page_index) else {
-            return Vec::new();
-        };
-
-        let page_width_pt = cache.page_width;
-        let page_height_pt = cache.page_height;
-
-        // Use the incoming scale parameter which should match the one used in mouse events
-        let effective_scale = scale;
-
-        // Calculate the actual dimensions of the rendered content based on ObjectFit::Contain
-        let container_aspect = page_width_screen / page_height_screen;
-        let content_aspect = page_width_pt / page_height_pt;
-
-        // Calculate the actual dimensions of the rendered content based on ObjectFit::Contain
-        let (final_width, final_height) = if content_aspect > container_aspect {
-            // Content is wider relative to its height, so width is limiting factor
-            (page_width_screen, page_height_pt * effective_scale)
-        } else {
-            // Content is taller relative to its width, so height is limiting factor
-            (page_width_pt * effective_scale, page_height_screen)
-        };
-
-        // Calculate offsets for centering
-        let x_offset = (page_width_screen - final_width) / 2.0;
-        let y_offset = (page_height_screen - final_height) / 2.0;
-
-        cache
-            .chars
-            .iter()
-            .map(|char_info| {
-                // Convert from PDF coordinates to screen coordinates
-                // PDF: origin at bottom-left, y increases upward
-                // Screen: origin at top-left, y increases downward
-
-                let screen_left = char_info.left * effective_scale;
-                let screen_right = char_info.right * effective_scale;
-                let screen_top = (page_height_pt - char_info.top) * effective_scale;
-                let screen_bottom = (page_height_pt - char_info.bottom) * effective_scale;
-
-                // Apply the same offsets that are used in selection rectangles
-                let final_left = screen_left + x_offset;
-                let final_right = screen_right + x_offset;
-                let final_top = screen_top + y_offset;
-                let final_bottom = screen_bottom + y_offset;
-
-                // Ensure coordinates are ordered correctly
-                let (ordered_top, ordered_bottom) = if final_top <= final_bottom {
-                    (final_top, final_bottom)
-                } else {
-                    (final_bottom, final_top)
-                };
-
-                let (ordered_left, ordered_right) = if final_left <= final_right {
-                    (final_left, final_right)
-                } else {
-                    (final_right, final_left)
-                };
-
-                (ordered_left, ordered_top, ordered_right, ordered_bottom)
-            })
-            .collect()
-    }
-
     /// Calculate local page coordinates from window mouse position
     ///
     /// Returns (local_x, local_y) relative to the page container (including margins due to ObjectFit::Contain).
@@ -564,27 +491,6 @@ impl PdfViewer {
     fn handle_text_mouse_up(&mut self, cx: &mut Context<Self>) {
         self.text_selection_manager.borrow_mut().end_selection();
         cx.notify();
-    }
-
-    fn load_page_text(
-        &self,
-        page_index: usize,
-        _path: std::path::PathBuf,
-        _cx: &mut Context<Self>,
-    ) {
-        // Check if we already have text loaded for this page
-        if self
-            .text_selection_manager
-            .borrow()
-            .get_page_cache(page_index)
-            .is_some()
-        {
-            return;
-        }
-
-        // Mark as loading to prevent duplicate requests
-        // Note: Pdfium is not thread-safe, so we must load text synchronously
-        // We'll load on demand when user interacts with the page
     }
 
     fn ensure_page_text_loaded(&self, page_index: usize) {

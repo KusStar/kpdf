@@ -497,21 +497,6 @@ impl PdfViewer {
         self.save_file_position(&path, page_index);
     }
 
-    fn load_saved_window_size(&self) -> Option<(f32, f32)> {
-        let store = self.window_size_store.as_ref()?;
-        let width_bytes = store.get(WINDOW_SIZE_KEY_WIDTH).ok().flatten()?;
-        let height_bytes = store.get(WINDOW_SIZE_KEY_HEIGHT).ok().flatten()?;
-        if width_bytes.len() != 4 || height_bytes.len() != 4 {
-            return None;
-        }
-        let width = f32::from_be_bytes(width_bytes.as_ref().try_into().ok()?);
-        let height = f32::from_be_bytes(height_bytes.as_ref().try_into().ok()?);
-        if width <= 0.0 || height <= 0.0 {
-            return None;
-        }
-        Some((width, height))
-    }
-
     fn save_window_size(&self, width: f32, height: f32) {
         let Some(store) = self.window_size_store.as_ref() else {
             return;
