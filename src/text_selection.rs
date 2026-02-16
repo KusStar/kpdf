@@ -124,20 +124,52 @@ impl PageTextCache {
     }
 
     pub fn get_selection_bounds(&self, selection: &TextSelection) -> Vec<(f32, f32, f32, f32)> {
-        let mut bounds = Vec::new();
         let start = selection.start_char_index.min(self.chars.len());
         let end = selection.end_char_index.min(self.chars.len());
 
+        if start >= end {
+            return Vec::new();
+        }
+
+        // Group characters by line (using bottom position with tolerance)
+        // Use a larger tolerance based on typical line height
+        let line_tolerance = 8.0; // Tolerance for grouping characters on the same line
+        let mut lines: Vec<Vec<&TextCharInfo>> = Vec::new();
+
         for i in start..end {
             if let Some(char_info) = self.chars.get(i) {
-                bounds.push((
-                    char_info.left,
-                    char_info.top,
-                    char_info.right,
-                    char_info.bottom,
-                ));
+                // Find existing line or create new one
+                // Use bottom position for more reliable line grouping
+                let line_found = lines.iter_mut().find(|line| {
+                    line.first().map_or(false, |first| {
+                        (first.bottom - char_info.bottom).abs() < line_tolerance
+                    })
+                });
+
+                if let Some(line) = line_found {
+                    line.push(char_info);
+                } else {
+                    lines.push(vec![char_info]);
+                }
             }
         }
+
+        // Create merged rectangles for each line
+        let mut bounds = Vec::new();
+        for line in lines {
+            if line.is_empty() {
+                continue;
+            }
+
+            // Find the bounding box for all characters in the line
+            let min_left = line.iter().map(|c| c.left).fold(f32::INFINITY, f32::min);
+            let max_right = line.iter().map(|c| c.right).fold(f32::NEG_INFINITY, f32::max);
+            let min_bottom = line.iter().map(|c| c.bottom).fold(f32::INFINITY, f32::min);
+            let max_top = line.iter().map(|c| c.top).fold(f32::NEG_INFINITY, f32::max);
+
+            bounds.push((min_left, max_top, max_right, min_bottom));
+        }
+
         bounds
     }
 

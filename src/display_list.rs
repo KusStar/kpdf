@@ -244,7 +244,8 @@ impl PdfViewer {
                                     .top(px(top))
                                     .w(px(right - left))
                                     .h(px(bottom - top))
-                                    .bg(gpui::rgba(0x3390FF40)) // Semi-transparent blue highlight
+                                    .bg(gpui::rgb(0x3390FF)) // Blue color
+                                    .opacity(0.3)
                                     .into_any_element()
                             }),
                     )
@@ -273,19 +274,14 @@ impl PdfViewer {
     ) -> Vec<(f32, f32, f32, f32)> {
         let manager = self.text_selection_manager.borrow();
         let Some(rects) = manager.get_selection_rects(page_index) else {
-            eprintln!("[selection_rects] No selection for page {}", page_index);
             return Vec::new();
         };
 
         let Some(page) = self.pages.get(page_index) else {
-            eprintln!("[selection_rects] No page {} found", page_index);
             return Vec::new();
         };
 
-        eprintln!("[selection_rects] Page {} has {} rects, scale={}, page_height={}", 
-            page_index, rects.len(), scale, page.height_pt);
-
-        let result: Vec<(f32, f32, f32, f32)> = rects
+        rects
             .into_iter()
             .map(|(left, top, right, bottom)| {
                 // Convert from PDF coordinates to screen coordinates
@@ -306,14 +302,9 @@ impl PdfViewer {
                     (screen_bottom, screen_top)
                 };
 
-                eprintln!("[selection_rects] PDF({},{},{},{}) -> Screen({},{},{},{})", 
-                    left, top, right, bottom, screen_left, final_top, screen_right, final_bottom);
-
                 (screen_left, final_top, screen_right, final_bottom)
             })
-            .collect();
-
-        result
+            .collect()
     }
 
     fn handle_text_mouse_down(
