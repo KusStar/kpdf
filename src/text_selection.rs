@@ -89,6 +89,7 @@ impl PageTextCache {
         let mut closest_distance = f32::INFINITY;
 
         for (index, char_info) in self.chars.iter().enumerate() {
+            // Calculate distance to the center of the character
             let center = char_info.center();
             let dx = x - center.0;
             let dy = y - center.1;
@@ -100,7 +101,7 @@ impl PageTextCache {
             let char_height = char_info.top - char_info.bottom;
             let char_size = char_width.max(char_height);
             let size_factor = 1.0 + (char_size / 100.0).min(1.0);
-            
+
             let adjusted_distance = distance / size_factor;
 
             if adjusted_distance < closest_distance {
@@ -181,6 +182,52 @@ impl PageTextCache {
             .iter()
             .map(|c| c.text.as_str())
             .collect()
+    }
+
+    /// Find character at screen position with proper conversion from screen to PDF coordinates
+    pub fn find_char_at_screen_position(
+        &self,
+        screen_x: f32,
+        screen_y: f32,
+        page_bounds: (f32, f32, f32, f32), // (left, top, right, bottom) in screen coordinates
+        page_scale: f32,
+    ) -> Option<usize> {
+        let (page_left, page_top, page_right, page_bottom) = page_bounds;
+        let page_width_screen = page_right - page_left;
+        let page_height_screen = page_bottom - page_top;
+
+        // Calculate the actual rendered content dimensions considering ObjectFit::Contain
+        let content_aspect = self.page_width / self.page_height;
+        let container_aspect = page_width_screen / page_height_screen;
+
+        let (content_width_screen, content_height_screen) = if content_aspect > container_aspect {
+            // Width is limiting factor
+            (page_width_screen, self.page_height * page_scale)
+        } else {
+            // Height is limiting factor
+            (self.page_width * page_scale, page_height_screen)
+        };
+
+        // Calculate centering offsets
+        let x_offset = (page_width_screen - content_width_screen) / 2.0;
+        let y_offset = (page_height_screen - content_height_screen) / 2.0;
+
+        // Convert screen coordinates to content-relative coordinates
+        let content_relative_x = screen_x - (page_left + x_offset);
+        let content_relative_y = screen_y - (page_top + y_offset);
+
+        // Check if the point is within the rendered content area
+        if content_relative_x < 0.0 || content_relative_x > content_width_screen ||
+           content_relative_y < 0.0 || content_relative_y > content_height_screen {
+            return None;
+        }
+
+        // Convert to PDF coordinates
+        let pdf_x = content_relative_x / page_scale;
+        let pdf_y = self.page_height - (content_relative_y / page_scale);
+
+        // Use the existing find_char_at_position method
+        self.find_char_at_position(pdf_x, pdf_y)
     }
 }
 
@@ -298,29 +345,6 @@ impl TextSelectionManager {
         } else {
             Some(text)
         }
-    }
-
-    /// Find character at screen position
-    pub fn find_char_at_screen_position(
-        &self,
-        screen_x: f32,
-        screen_y: f32,
-        page_index: usize,
-        page_bounds: (f32, f32, f32, f32),
-    ) -> Option<usize> {
-        let cache = self.get_page_cache(page_index)?;
-        let (page_left, page_top, page_right, page_bottom) = page_bounds;
-        let page_width_screen = page_right - page_left;
-        let page_height_screen = page_bottom - page_top;
-
-        // Convert screen coordinates to PDF coordinates
-        let x_ratio = (screen_x - page_left) / page_width_screen;
-        let y_ratio = (screen_y - page_top) / page_height_screen;
-
-        let pdf_x = x_ratio * cache.page_width;
-        let pdf_y = cache.page_height - (y_ratio * cache.page_height);
-
-        cache.find_char_at_position(pdf_x, pdf_y)
     }
 
     pub fn get_selection_rects(&self, page_index: usize) -> Option<Vec<(f32, f32, f32, f32)>> {

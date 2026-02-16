@@ -311,7 +311,7 @@ impl PdfViewer {
         rects
             .into_iter()
             .enumerate()
-            .map(|(idx, (left, top, right, bottom))| {
+            .map(|(_idx, (left, top, right, bottom))| {
 
                 // Convert from PDF coordinates to screen coordinates
                 // PDF: origin at bottom-left, y increases upward
@@ -442,55 +442,18 @@ impl PdfViewer {
         };
 
         let page_width_pt = cache.page_width;
-        let page_height_pt = cache.page_height;
+        let _page_height_pt = cache.page_height;
 
         // Calculate scale factor (same as in render_page_with_text_selection)
         let scale = page_width_screen / page_width_pt;
 
-        // Since ObjectFit::Contain is used, the actual rendered content might be centered
-        // Calculate expected rendered dimensions based on scale
-        let calculated_width_screen = page_width_pt * scale;
-        let calculated_height_screen = page_height_pt * scale;
-
-        // Determine if there's horizontal/vertical centering due to aspect ratio differences
-        let x_offset = if calculated_width_screen < page_width_screen {
-            // Page is horizontally centered, account for the offset
-            (page_width_screen - calculated_width_screen) / 2.0
-        } else {
-            // No horizontal centering
-            0.0
-        };
-
-        let y_offset = if calculated_height_screen < page_height_screen {
-            // Page is vertically centered, account for the offset
-            (page_height_screen - calculated_height_screen) / 2.0
-        } else {
-            // No vertical centering
-            0.0
-        };
-
-
-        // Adjust local coordinates to account for potential centering
-        // Convert from container-relative coordinates to content-relative coordinates
-        let adjusted_local_x = (local_x - x_offset).max(0.0).min(calculated_width_screen);
-        let adjusted_local_y = (local_y - y_offset).max(0.0).min(calculated_height_screen);
-
-
-        // Convert screen coordinates to PDF coordinates
-        // This is the inverse of the transformation in get_char_bounds_for_page
-        // Screen: origin at top-left, y increases downward
-        // PDF: origin at bottom-left, y increases upward
-        let pdf_x = adjusted_local_x / scale;
-        let pdf_y = page_height_pt - adjusted_local_y / scale;
-
-
-        // Find character at position using the cached page data
-        let char_index = if let Some(cache) = manager.get_page_cache(page_index) {
-            let idx = cache.find_char_at_position(pdf_x, pdf_y);
-            idx
-        } else {
-            None
-        };
+        // Use the improved method to find character at screen position
+        let char_index = cache.find_char_at_screen_position(
+            local_x,
+            local_y,
+            (0.0, 0.0, page_width_screen, page_height_screen), // Relative to page container
+            scale
+        );
 
         drop(manager); // Release borrow before mutable borrow
 
@@ -528,42 +491,18 @@ impl PdfViewer {
         };
 
         let page_width_pt = cache.page_width;
-        let page_height_pt = cache.page_height;
+        let _page_height_pt = cache.page_height;
 
         // Use the same scale as passed to rendering functions
-        let effective_scale = page_width_screen / page_width_pt;
+        let scale = page_width_screen / page_width_pt;
 
-        // For ObjectFit::Contain, calculate the actual rendered content dimensions
-        let container_aspect = page_width_screen / page_height_screen;
-        let content_aspect = page_width_pt / page_height_pt;
-
-        // Calculate the actual dimensions of the rendered content based on ObjectFit::Contain
-        let (final_width, final_height) = if content_aspect > container_aspect {
-            // Content is wider relative to its height, so width is limiting factor
-            (page_width_screen, page_height_pt * effective_scale)
-        } else {
-            // Content is taller relative to its width, so height is limiting factor
-            (page_width_pt * effective_scale, page_height_screen)
-        };
-
-        // Calculate offsets for centering
-        let x_offset = (page_width_screen - final_width) / 2.0;
-        let y_offset = (page_height_screen - final_height) / 2.0;
-
-        // Adjust local coordinates to account for potential centering
-        // Convert from container-relative coordinates to content-relative coordinates
-        let adjusted_local_x = (local_x - x_offset).max(0.0).min(final_width);
-        let adjusted_local_y = (local_y - y_offset).max(0.0).min(final_height);
-
-        // Convert screen coordinates to PDF coordinates
-        let pdf_x = adjusted_local_x / effective_scale;
-        let pdf_y = page_height_pt - (adjusted_local_y / effective_scale);
-
-        let char_index = if let Some(cache) = manager.get_page_cache(page_index) {
-            cache.find_char_at_position(pdf_x, pdf_y)
-        } else {
-            None
-        };
+        // Use the improved method to find character at screen position
+        let char_index = cache.find_char_at_screen_position(
+            local_x,
+            local_y,
+            (0.0, 0.0, page_width_screen, page_height_screen), // Relative to page container
+            scale
+        );
 
         drop(manager);
 
@@ -616,7 +555,7 @@ impl PdfViewer {
         if let Some(path) = &self.path {
             match crate::pdf_viewer::utils::load_page_text_for_selection(path, page_index) {
                 Ok(Some((page_index, page_width, page_height, chars))) => {
-                    let char_count = chars.len();
+                    let _char_count = chars.len();
                     if let Ok(mut manager) = self.text_selection_manager.try_borrow_mut() {
                         manager.load_cached_text(page_index, page_width, page_height, chars);
                     }
@@ -624,7 +563,7 @@ impl PdfViewer {
                 Ok(None) => {
                     // No text found on page
                 }
-                Err(e) => {
+                Err(_e) => {
                     // Failed to load text for page
                 }
             }
