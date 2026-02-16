@@ -84,6 +84,7 @@ impl PageTextCache {
         }
 
         // If no character contains the point, find the closest one
+        // Consider both distance and character size for better selection accuracy
         let mut closest_index: Option<usize> = None;
         let mut closest_distance = f32::INFINITY;
 
@@ -93,8 +94,17 @@ impl PageTextCache {
             let dy = y - center.1;
             let distance = (dx * dx + dy * dy).sqrt();
 
-            if distance < closest_distance {
-                closest_distance = distance;
+            // Apply character size adjustment: larger characters get a small bonus
+            // This helps with different font sizes in the same document
+            let char_width = char_info.right - char_info.left;
+            let char_height = char_info.top - char_info.bottom;
+            let char_size = char_width.max(char_height);
+            let size_factor = 1.0 + (char_size / 100.0).min(1.0);
+            
+            let adjusted_distance = distance / size_factor;
+
+            if adjusted_distance < closest_distance {
+                closest_distance = adjusted_distance;
                 closest_index = Some(index);
             }
         }

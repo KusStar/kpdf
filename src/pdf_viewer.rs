@@ -368,7 +368,7 @@ impl PdfViewer {
                         };
                         this.suppress_display_scroll_sync_once = true;
                         this.thumbnail_scroll.scroll_to_item(initial_page, strategy);
-                        this.display_scroll.scroll_to_item(initial_page, strategy);
+                        this.display_scroll.scroll_to_item(initial_page, ScrollStrategy::Top);
                     }
                     cx.notify();
                 }
@@ -642,7 +642,7 @@ impl PdfViewer {
         self.thumbnail_scroll
             .scroll_to_item(self.selected_page, ScrollStrategy::Center);
         self.display_scroll
-            .scroll_to_item(self.selected_page, ScrollStrategy::Center);
+            .scroll_to_item(self.selected_page, ScrollStrategy::Top);
     }
 
     fn schedule_thumbnail_sync_after_display_scroll(&mut self, cx: &mut Context<Self>) {
