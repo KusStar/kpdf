@@ -129,7 +129,8 @@ impl PdfViewer {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let i18n = self.i18n();
-        let selection_rects = self.get_selection_rects_for_page(page_index, page_width, page_height, scale);
+        let selection_rects =
+            self.get_selection_rects_for_page(page_index, page_width, page_height, scale);
 
         // Get page info for coordinate conversion
         let _page_height_pt = page.height_pt;
@@ -191,10 +192,13 @@ impl PdfViewer {
                             .on_mouse_down(
                                 gpui::MouseButton::Left,
                                 cx.listener(
-                                    move |this, event: &gpui::MouseDownEvent, _window, cx| {
-                                        let local_x = f32::from(event.position.x);
-                                        let local_y = f32::from(event.position.y);
-
+                                    move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                        let (local_x, local_y) = this.calculate_page_coordinates(
+                                            page_index,
+                                            event.position,
+                                            page_width,
+                                            window,
+                                        );
 
                                         this.handle_text_mouse_down(
                                             page_index,
@@ -208,9 +212,13 @@ impl PdfViewer {
                                 ),
                             )
                             .on_mouse_move(cx.listener(
-                                move |this, event: &gpui::MouseMoveEvent, _window, cx| {
-                                    let local_x = f32::from(event.position.x);
-                                    let local_y = f32::from(event.position.y);
+                                move |this, event: &gpui::MouseMoveEvent, window, cx| {
+                                    let (local_x, local_y) = this.calculate_page_coordinates(
+                                        page_index,
+                                        event.position,
+                                        page_width,
+                                        window,
+                                    );
 
                                     this.handle_text_mouse_move(
                                         page_index,
@@ -275,7 +283,6 @@ impl PdfViewer {
             return Vec::new();
         };
 
-
         // Get cache page dimensions - same as get_char_bounds_for_page
         let Some(cache) = manager.get_page_cache(page_index) else {
             return Vec::new();
@@ -306,28 +313,24 @@ impl PdfViewer {
         let x_offset = (page_width_screen - final_width) / 2.0;
         let y_offset = (page_height_screen - final_height) / 2.0;
 
-
         // We'll convert PDF coordinates to screen coordinates considering the actual scaling
         rects
             .into_iter()
             .enumerate()
             .map(|(_idx, (left, top, right, bottom))| {
-
                 // Convert from PDF coordinates to screen coordinates
                 // PDF: origin at bottom-left, y increases upward
                 // Screen: origin at top-left, y increases downward
                 let screen_left = left * effective_scale;
                 let screen_right = right * effective_scale;
-                let screen_top = (page_height_pt - top) * effective_scale;  // Flip Y-axis
-                let screen_bottom = (page_height_pt - bottom) * effective_scale;  // Flip Y-axis
-
+                let screen_top = (page_height_pt - top) * effective_scale; // Flip Y-axis
+                let screen_bottom = (page_height_pt - bottom) * effective_scale; // Flip Y-axis
 
                 // Apply offsets that account for centering due to ObjectFit::Contain
                 let final_left = screen_left + x_offset;
                 let final_right = screen_right + x_offset;
                 let final_top = screen_top + y_offset;
                 let final_bottom = screen_bottom + y_offset;
-
 
                 // Make sure we return (left, top, right, bottom) with proper ordering
                 let (ordered_top, ordered_bottom) = if final_top <= final_bottom {
@@ -420,6 +423,45 @@ impl PdfViewer {
             .collect()
     }
 
+    /// Calculate local page coordinates from window mouse position
+    ///
+    /// Returns (local_x, local_y) relative to the page content area
+    fn calculate_page_coordinates(
+        &self,
+        page_index: usize,
+        window_pos: Point<Pixels>,
+        page_width: f32,
+        window: &mut Window,
+    ) -> (f32, f32) {
+        let scroll_offset = self.display_scroll.offset();
+
+        // Calculate cumulative height of all pages before this one
+        let display_base_width = self.display_base_width(window);
+        let display_sizes = self.display_item_sizes(display_base_width);
+        let cumulative_height: f32 = display_sizes
+            .iter()
+            .take(page_index)
+            .map(|s| f32::from(s.height))
+            .sum();
+
+        // Calculate horizontal centering offset (pages are centered in the panel)
+        let display_panel_width = self.display_panel_width(window);
+        let horizontal_offset = (display_panel_width - page_width) / 2.0;
+
+        // Constants for layout offsets
+        let content_offset_y = 35.0; // Title bar height
+        let sidebar_width = super::SIDEBAR_WIDTH;
+
+        // Convert window coordinates to local page coordinates
+        let local_x = f32::from(window_pos.x) - sidebar_width - horizontal_offset;
+        let local_y = f32::from(window_pos.y)
+            - content_offset_y
+            - cumulative_height
+            - f32::from(scroll_offset.y);
+
+        (local_x, local_y)
+    }
+
     fn handle_text_mouse_down(
         &mut self,
         page_index: usize,
@@ -452,7 +494,7 @@ impl PdfViewer {
             local_x,
             local_y,
             (0.0, 0.0, page_width_screen, page_height_screen), // Relative to page container
-            scale
+            scale,
         );
 
         drop(manager); // Release borrow before mutable borrow
@@ -501,7 +543,7 @@ impl PdfViewer {
             local_x,
             local_y,
             (0.0, 0.0, page_width_screen, page_height_screen), // Relative to page container
-            scale
+            scale,
         );
 
         drop(manager);
