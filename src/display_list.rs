@@ -425,7 +425,8 @@ impl PdfViewer {
 
     /// Calculate local page coordinates from window mouse position
     ///
-    /// Returns (local_x, local_y) relative to the page content area
+    /// Returns (local_x, local_y) relative to the page container (including margins due to ObjectFit::Contain).
+    /// The caller (e.g., find_char_at_screen_position) is responsible for handling content centering offsets.
     fn calculate_page_coordinates(
         &self,
         page_index: usize,
@@ -449,10 +450,14 @@ impl PdfViewer {
         let horizontal_offset = (display_panel_width - page_width) / 2.0;
 
         // Constants for layout offsets
-        let content_offset_y = 35.0; // Title bar height
+        // Title bar: 34px (from pdf_viewer.rs)
+        // Menu bar: 40px (h_10 from menu_bar.rs)
+        let content_offset_y = 74.0; // 34 + 40
         let sidebar_width = super::SIDEBAR_WIDTH;
 
-        // Convert window coordinates to local page coordinates
+        // Convert window coordinates to local page container coordinates
+        // Note: Do NOT subtract content centering offset here.
+        // find_char_at_screen_position handles ObjectFit::Contain centering internally.
         let local_x = f32::from(window_pos.x) - sidebar_width - horizontal_offset;
         let local_y = f32::from(window_pos.y)
             - content_offset_y

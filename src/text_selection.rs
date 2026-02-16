@@ -164,7 +164,10 @@ impl PageTextCache {
 
             // Find the bounding box for all characters in the line
             let min_left = line.iter().map(|c| c.left).fold(f32::INFINITY, f32::min);
-            let max_right = line.iter().map(|c| c.right).fold(f32::NEG_INFINITY, f32::max);
+            let max_right = line
+                .iter()
+                .map(|c| c.right)
+                .fold(f32::NEG_INFINITY, f32::max);
             let min_bottom = line.iter().map(|c| c.bottom).fold(f32::INFINITY, f32::min);
             let max_top = line.iter().map(|c| c.top).fold(f32::NEG_INFINITY, f32::max);
 
@@ -217,14 +220,19 @@ impl PageTextCache {
         let content_relative_y = screen_y - (page_top + y_offset);
 
         // Check if the point is within the rendered content area
-        if content_relative_x < 0.0 || content_relative_x > content_width_screen ||
-           content_relative_y < 0.0 || content_relative_y > content_height_screen {
+        if content_relative_x < 0.0
+            || content_relative_x > content_width_screen
+            || content_relative_y < 0.0
+            || content_relative_y > content_height_screen
+        {
             return None;
         }
 
         // Convert to PDF coordinates
+        // PDF coordinates: origin at bottom-left, y increases upward
+        // Content coordinates: origin at top-left, y increases downward
         let pdf_x = content_relative_x / page_scale;
-        let pdf_y = self.page_height - (content_relative_y / page_scale);
+        let pdf_y = (content_height_screen - content_relative_y) / page_scale;
 
         // Use the existing find_char_at_position method
         self.find_char_at_position(pdf_x, pdf_y)
@@ -280,35 +288,55 @@ impl TextSelectionManager {
                 selection.page_index, selection.start_char_index, selection.end_char_index
             );
             if let Some(cache) = self.get_page_cache(selection.page_index) {
-                eprintln!("[selection] Cache has {} chars, page size: {}x{}", cache.chars.len(), cache.page_width, cache.page_height);
-                
+                eprintln!(
+                    "[selection] Cache has {} chars, page size: {}x{}",
+                    cache.chars.len(),
+                    cache.page_width,
+                    cache.page_height
+                );
+
                 // Log first 20 chars to understand text order
                 for i in 0..20.min(cache.chars.len()) {
                     if let Some(c) = cache.chars.get(i) {
-                        eprintln!("[selection] char[{}] = '{}' at pdf({},{})", i, c.text, c.left, c.top);
+                        eprintln!(
+                            "[selection] char[{}] = '{}' at pdf({},{})",
+                            i, c.text, c.left, c.top
+                        );
                     }
                 }
-                
+
                 // Also log around the selected start position
                 let search_idx = 155.min(cache.chars.len().saturating_sub(5));
                 for i in search_idx..(search_idx + 10).min(cache.chars.len()) {
                     if let Some(c) = cache.chars.get(i) {
-                        eprintln!("[selection] char_near[{}] = '{}' at pdf({},{})", i, c.text, c.left, c.top);
+                        eprintln!(
+                            "[selection] char_near[{}] = '{}' at pdf({},{})",
+                            i, c.text, c.left, c.top
+                        );
                     }
                 }
-                
-                let start_idx = selection.start_char_index.min(cache.chars.len().saturating_sub(1));
+
+                let start_idx = selection
+                    .start_char_index
+                    .min(cache.chars.len().saturating_sub(1));
                 let end_idx = selection.end_char_index.min(cache.chars.len());
-                
+
                 if let Some(start_char) = cache.chars.get(start_idx) {
-                    eprintln!("[selection] Start char[{}]: '{}' at pdf({},{})", 
-                        start_idx, start_char.text, start_char.left, start_char.top);
+                    eprintln!(
+                        "[selection] Start char[{}]: '{}' at pdf({},{})",
+                        start_idx, start_char.text, start_char.left, start_char.top
+                    );
                 }
                 if let Some(end_char) = cache.chars.get(end_idx.saturating_sub(1)) {
-                    eprintln!("[selection] End char[{}]: '{}' at pdf({},{})", 
-                        end_idx.saturating_sub(1), end_char.text, end_char.left, end_char.top);
+                    eprintln!(
+                        "[selection] End char[{}]: '{}' at pdf({},{})",
+                        end_idx.saturating_sub(1),
+                        end_char.text,
+                        end_char.left,
+                        end_char.top
+                    );
                 }
-                
+
                 let text = self.get_selected_text();
                 if let Some(text) = text {
                     eprintln!("[selection] Text: '{}'", text);
