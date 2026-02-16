@@ -129,11 +129,10 @@ impl PdfViewer {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let i18n = self.i18n();
-        let selection_rects = self.get_selection_rects_for_page(page_index, scale);
+        let selection_rects = self.get_selection_rects_for_page(page_index, page_width, page_height, scale);
 
         // Get page info for coordinate conversion
-        let page_height_pt = page.height_pt;
-        let page_width_pt = page.width_pt;
+        let _page_height_pt = page.height_pt;
 
         div()
             .id(("display-row", page_index))
@@ -196,15 +195,13 @@ impl PdfViewer {
                                         let local_x = f32::from(event.position.x);
                                         let local_y = f32::from(event.position.y);
 
-                                        eprintln!("[mouse_down] local: ({}, {})", local_x, local_y);
 
                                         this.handle_text_mouse_down(
                                             page_index,
                                             local_x,
                                             local_y,
-                                            page_width_pt,
-                                            page_height_pt,
-                                            scale,
+                                            page_width,
+                                            page_height,
                                             cx,
                                         );
                                     },
@@ -219,9 +216,8 @@ impl PdfViewer {
                                         page_index,
                                         local_x,
                                         local_y,
-                                        page_width_pt,
-                                        page_height_pt,
-                                        scale,
+                                        page_width,
+                                        page_height,
                                         cx,
                                     );
                                 },
@@ -270,6 +266,8 @@ impl PdfViewer {
     fn get_selection_rects_for_page(
         &self,
         page_index: usize,
+        page_width_screen: f32,
+        page_height_screen: f32,
         scale: f32,
     ) -> Vec<(f32, f32, f32, f32)> {
         let manager = self.text_selection_manager.borrow();
@@ -277,32 +275,147 @@ impl PdfViewer {
             return Vec::new();
         };
 
-        let Some(page) = self.pages.get(page_index) else {
+
+        // Get cache page dimensions - same as get_char_bounds_for_page
+        let Some(cache) = manager.get_page_cache(page_index) else {
             return Vec::new();
         };
 
+        let page_width_pt = cache.page_width;
+        let page_height_pt = cache.page_height;
+
+        // Use the incoming scale parameter which should match the one used in mouse events
+        // The incoming scale was calculated as: scale = page_width / page.width_pt (in render_page_with_text_selection)
+        let effective_scale = scale;
+
+        // The actual rendered content dimensions should match the incoming page_width_screen and page_height_screen
+        // But for ObjectFit::Contain, the actual content may be smaller with centering offsets
+        let container_aspect = page_width_screen / page_height_screen;
+        let content_aspect = page_width_pt / page_height_pt;
+
+        // Calculate the actual dimensions of the rendered content based on ObjectFit::Contain
+        let (final_width, final_height) = if content_aspect > container_aspect {
+            // Content is wider relative to its height, so width is limiting factor
+            (page_width_screen, page_height_pt * effective_scale)
+        } else {
+            // Content is taller relative to its width, so height is limiting factor
+            (page_width_pt * effective_scale, page_height_screen)
+        };
+
+        // Calculate offsets for centering
+        let x_offset = (page_width_screen - final_width) / 2.0;
+        let y_offset = (page_height_screen - final_height) / 2.0;
+
+
+        // We'll convert PDF coordinates to screen coordinates considering the actual scaling
         rects
             .into_iter()
-            .map(|(left, top, right, bottom)| {
+            .enumerate()
+            .map(|(idx, (left, top, right, bottom))| {
+
                 // Convert from PDF coordinates to screen coordinates
                 // PDF: origin at bottom-left, y increases upward
                 // Screen: origin at top-left, y increases downward
-                let screen_left = left * scale;
-                let screen_right = right * scale;
-                // In PDF: top > bottom (top is higher y value)
-                // After conversion: screen_top < screen_bottom (top is smaller y on screen)
-                let screen_top = (page.height_pt - top) * scale;
-                let screen_bottom = (page.height_pt - bottom) * scale;
+                let screen_left = left * effective_scale;
+                let screen_right = right * effective_scale;
+                let screen_top = (page_height_pt - top) * effective_scale;  // Flip Y-axis
+                let screen_bottom = (page_height_pt - bottom) * effective_scale;  // Flip Y-axis
 
-                // screen_top should be smaller (higher on screen), screen_bottom larger (lower on screen)
-                // Return (left, top, right, bottom) where top < bottom for positive height
-                let (final_top, final_bottom) = if screen_top < screen_bottom {
-                    (screen_top, screen_bottom)
+
+                // Apply offsets that account for centering due to ObjectFit::Contain
+                let final_left = screen_left + x_offset;
+                let final_right = screen_right + x_offset;
+                let final_top = screen_top + y_offset;
+                let final_bottom = screen_bottom + y_offset;
+
+
+                // Make sure we return (left, top, right, bottom) with proper ordering
+                let (ordered_top, ordered_bottom) = if final_top <= final_bottom {
+                    (final_top, final_bottom)
                 } else {
-                    (screen_bottom, screen_top)
+                    (final_bottom, final_top)
                 };
 
-                (screen_left, final_top, screen_right, final_bottom)
+                let (ordered_left, ordered_right) = if final_left <= final_right {
+                    (final_left, final_right)
+                } else {
+                    (final_right, final_left)
+                };
+
+                (ordered_left, ordered_top, ordered_right, ordered_bottom)
+            })
+            .collect()
+    }
+
+    /// Get character bounds for debugging visualization - applies the same offset as selection
+    fn get_char_bounds_for_page(
+        &self,
+        page_index: usize,
+        page_width_screen: f32,
+        page_height_screen: f32,
+        scale: f32,
+    ) -> Vec<(f32, f32, f32, f32)> {
+        let manager = self.text_selection_manager.borrow();
+        let Some(cache) = manager.get_page_cache(page_index) else {
+            return Vec::new();
+        };
+
+        let page_width_pt = cache.page_width;
+        let page_height_pt = cache.page_height;
+
+        // Use the incoming scale parameter which should match the one used in mouse events
+        let effective_scale = scale;
+
+        // Calculate the actual dimensions of the rendered content based on ObjectFit::Contain
+        let container_aspect = page_width_screen / page_height_screen;
+        let content_aspect = page_width_pt / page_height_pt;
+
+        // Calculate the actual dimensions of the rendered content based on ObjectFit::Contain
+        let (final_width, final_height) = if content_aspect > container_aspect {
+            // Content is wider relative to its height, so width is limiting factor
+            (page_width_screen, page_height_pt * effective_scale)
+        } else {
+            // Content is taller relative to its width, so height is limiting factor
+            (page_width_pt * effective_scale, page_height_screen)
+        };
+
+        // Calculate offsets for centering
+        let x_offset = (page_width_screen - final_width) / 2.0;
+        let y_offset = (page_height_screen - final_height) / 2.0;
+
+        cache
+            .chars
+            .iter()
+            .map(|char_info| {
+                // Convert from PDF coordinates to screen coordinates
+                // PDF: origin at bottom-left, y increases upward
+                // Screen: origin at top-left, y increases downward
+
+                let screen_left = char_info.left * effective_scale;
+                let screen_right = char_info.right * effective_scale;
+                let screen_top = (page_height_pt - char_info.top) * effective_scale;
+                let screen_bottom = (page_height_pt - char_info.bottom) * effective_scale;
+
+                // Apply the same offsets that are used in selection rectangles
+                let final_left = screen_left + x_offset;
+                let final_right = screen_right + x_offset;
+                let final_top = screen_top + y_offset;
+                let final_bottom = screen_bottom + y_offset;
+
+                // Ensure coordinates are ordered correctly
+                let (ordered_top, ordered_bottom) = if final_top <= final_bottom {
+                    (final_top, final_bottom)
+                } else {
+                    (final_bottom, final_top)
+                };
+
+                let (ordered_left, ordered_right) = if final_left <= final_right {
+                    (final_left, final_right)
+                } else {
+                    (final_right, final_left)
+                };
+
+                (ordered_left, ordered_top, ordered_right, ordered_bottom)
             })
             .collect()
     }
@@ -312,9 +425,8 @@ impl PdfViewer {
         page_index: usize,
         local_x: f32,
         local_y: f32,
-        page_width_pt: f32,
-        page_height_pt: f32,
-        scale: f32,
+        page_width_screen: f32,
+        page_height_screen: f32,
         cx: &mut Context<Self>,
     ) {
         // Ensure text is loaded before handling mouse down
@@ -322,67 +434,59 @@ impl PdfViewer {
 
         let manager = self.text_selection_manager.borrow();
 
-        // Convert local coordinates to PDF coordinates
-        // The page is displayed with ObjectFit::Contain which maintains aspect ratio
-        // We need to account for any letterboxing/pillarboxing
-        let aspect_ratio_page = page_width_pt / page_height_pt;
-        let aspect_ratio_display = local_x / local_y;
-
-        // Calculate the actual content area within the display
-        let (content_width, content_height, offset_x, offset_y) =
-            if aspect_ratio_page > aspect_ratio_display {
-                // Letterbox: full width, centered height
-                let h = page_width_pt / aspect_ratio_page;
-                let y_offset = (page_height_pt - h) / 2.0;
-                (page_width_pt, h, 0.0, y_offset)
-            } else {
-                // Pillarbox: full height, centered width
-                let w = page_height_pt * aspect_ratio_page;
-                let x_offset = (page_width_pt - w) / 2.0;
-                (w, page_height_pt, x_offset, 0.0)
-            };
-
-        // Scale to screen coordinates
-        let content_width_screen = content_width * scale;
-        let content_height_screen = content_height * scale;
-        let offset_x_screen = offset_x * scale;
-        let offset_y_screen = offset_y * scale;
-
-        // Check if click is within the content area
-        if local_x < offset_x_screen
-            || local_x > offset_x_screen + content_width_screen
-            || local_y < offset_y_screen
-            || local_y > offset_y_screen + content_height_screen
-        {
-            eprintln!("[mouse_down] Click outside content area");
-            drop(manager);
+        // Get cache page dimensions - these must match the dimensions used in get_char_bounds_for_page
+        let Some(cache) = manager.get_page_cache(page_index) else {
             self.text_selection_manager.borrow_mut().clear_selection();
             cx.notify();
             return;
-        }
+        };
 
-        // Convert to normalized coordinates (0-1)
-        let norm_x = (local_x - offset_x_screen) / content_width_screen;
-        let norm_y = (local_y - offset_y_screen) / content_height_screen;
+        let page_width_pt = cache.page_width;
+        let page_height_pt = cache.page_height;
 
-        // Convert to PDF coordinates
-        let pdf_x = norm_x * page_width_pt;
-        let pdf_y = page_height_pt - (norm_y * page_height_pt); // Flip Y
+        // Calculate scale factor (same as in render_page_with_text_selection)
+        let scale = page_width_screen / page_width_pt;
 
-        eprintln!(
-            "[mouse_down] local=({}, {}), pdf=({}, {})",
-            local_x, local_y, pdf_x, pdf_y
-        );
+        // Since ObjectFit::Contain is used, the actual rendered content might be centered
+        // Calculate expected rendered dimensions based on scale
+        let calculated_width_screen = page_width_pt * scale;
+        let calculated_height_screen = page_height_pt * scale;
+
+        // Determine if there's horizontal/vertical centering due to aspect ratio differences
+        let x_offset = if calculated_width_screen < page_width_screen {
+            // Page is horizontally centered, account for the offset
+            (page_width_screen - calculated_width_screen) / 2.0
+        } else {
+            // No horizontal centering
+            0.0
+        };
+
+        let y_offset = if calculated_height_screen < page_height_screen {
+            // Page is vertically centered, account for the offset
+            (page_height_screen - calculated_height_screen) / 2.0
+        } else {
+            // No vertical centering
+            0.0
+        };
+
+
+        // Adjust local coordinates to account for potential centering
+        // Convert from container-relative coordinates to content-relative coordinates
+        let adjusted_local_x = (local_x - x_offset).max(0.0).min(calculated_width_screen);
+        let adjusted_local_y = (local_y - y_offset).max(0.0).min(calculated_height_screen);
+
+
+        // Convert screen coordinates to PDF coordinates
+        // This is the inverse of the transformation in get_char_bounds_for_page
+        // Screen: origin at top-left, y increases downward
+        // PDF: origin at bottom-left, y increases upward
+        let pdf_x = adjusted_local_x / scale;
+        let pdf_y = page_height_pt - adjusted_local_y / scale;
+
 
         // Find character at position using the cached page data
         let char_index = if let Some(cache) = manager.get_page_cache(page_index) {
             let idx = cache.find_char_at_position(pdf_x, pdf_y);
-            if let Some(i) = idx {
-                if let Some(char_info) = cache.chars.get(i) {
-                    eprintln!("[mouse_down] Found char[{}] = '{}' at pdf({},{})", 
-                        i, char_info.text, char_info.left, char_info.top);
-                }
-            }
             idx
         } else {
             None
@@ -391,12 +495,10 @@ impl PdfViewer {
         drop(manager); // Release borrow before mutable borrow
 
         if let Some(char_index) = char_index {
-            eprintln!("[mouse_down] Selected char index: {}", char_index);
             self.text_selection_manager
                 .borrow_mut()
                 .start_selection(page_index, char_index);
         } else {
-            eprintln!("[mouse_down] No character found at position");
             self.text_selection_manager.borrow_mut().clear_selection();
         }
         cx.notify();
@@ -407,9 +509,8 @@ impl PdfViewer {
         page_index: usize,
         local_x: f32,
         local_y: f32,
-        page_width_pt: f32,
-        page_height_pt: f32,
-        scale: f32,
+        page_width_screen: f32,
+        page_height_screen: f32,
         cx: &mut Context<Self>,
     ) {
         // Ensure text is loaded before handling mouse move
@@ -421,35 +522,42 @@ impl PdfViewer {
             return;
         }
 
-        // Same coordinate conversion as mouse_down
-        let aspect_ratio_page = page_width_pt / page_height_pt;
-        let aspect_ratio_display = local_x / local_y;
+        // Get cache page dimensions - these must match the dimensions used in get_char_bounds_for_page
+        let Some(cache) = manager.get_page_cache(page_index) else {
+            return;
+        };
 
-        let (content_width, content_height, offset_x, offset_y) =
-            if aspect_ratio_page > aspect_ratio_display {
-                let h = page_width_pt / aspect_ratio_page;
-                let y_offset = (page_height_pt - h) / 2.0;
-                (page_width_pt, h, 0.0, y_offset)
-            } else {
-                let w = page_height_pt * aspect_ratio_page;
-                let x_offset = (page_width_pt - w) / 2.0;
-                (w, page_height_pt, x_offset, 0.0)
-            };
+        let page_width_pt = cache.page_width;
+        let page_height_pt = cache.page_height;
 
-        let content_width_screen = content_width * scale;
-        let content_height_screen = content_height * scale;
-        let offset_x_screen = offset_x * scale;
-        let offset_y_screen = offset_y * scale;
+        // Use the same scale as passed to rendering functions
+        let effective_scale = page_width_screen / page_width_pt;
 
-        // Clamp to content bounds
-        let local_x = local_x.clamp(offset_x_screen, offset_x_screen + content_width_screen);
-        let local_y = local_y.clamp(offset_y_screen, offset_y_screen + content_height_screen);
+        // For ObjectFit::Contain, calculate the actual rendered content dimensions
+        let container_aspect = page_width_screen / page_height_screen;
+        let content_aspect = page_width_pt / page_height_pt;
 
-        let norm_x = (local_x - offset_x_screen) / content_width_screen;
-        let norm_y = (local_y - offset_y_screen) / content_height_screen;
+        // Calculate the actual dimensions of the rendered content based on ObjectFit::Contain
+        let (final_width, final_height) = if content_aspect > container_aspect {
+            // Content is wider relative to its height, so width is limiting factor
+            (page_width_screen, page_height_pt * effective_scale)
+        } else {
+            // Content is taller relative to its width, so height is limiting factor
+            (page_width_pt * effective_scale, page_height_screen)
+        };
 
-        let pdf_x = norm_x * page_width_pt;
-        let pdf_y = page_height_pt - (norm_y * page_height_pt);
+        // Calculate offsets for centering
+        let x_offset = (page_width_screen - final_width) / 2.0;
+        let y_offset = (page_height_screen - final_height) / 2.0;
+
+        // Adjust local coordinates to account for potential centering
+        // Convert from container-relative coordinates to content-relative coordinates
+        let adjusted_local_x = (local_x - x_offset).max(0.0).min(final_width);
+        let adjusted_local_y = (local_y - y_offset).max(0.0).min(final_height);
+
+        // Convert screen coordinates to PDF coordinates
+        let pdf_x = adjusted_local_x / effective_scale;
+        let pdf_y = page_height_pt - (adjusted_local_y / effective_scale);
 
         let char_index = if let Some(cache) = manager.get_page_cache(page_index) {
             cache.find_char_at_position(pdf_x, pdf_y)
@@ -491,10 +599,6 @@ impl PdfViewer {
         // Mark as loading to prevent duplicate requests
         // Note: Pdfium is not thread-safe, so we must load text synchronously
         // We'll load on demand when user interacts with the page
-        eprintln!(
-            "[text] Will load text for page {} on user interaction",
-            page_index
-        );
     }
 
     fn ensure_page_text_loaded(&self, page_index: usize) {
@@ -515,17 +619,13 @@ impl PdfViewer {
                     let char_count = chars.len();
                     if let Ok(mut manager) = self.text_selection_manager.try_borrow_mut() {
                         manager.load_cached_text(page_index, page_width, page_height, chars);
-                        eprintln!(
-                            "[text] Loaded {} characters for page {}",
-                            char_count, page_index
-                        );
                     }
                 }
                 Ok(None) => {
-                    eprintln!("[text] No text found on page {}", page_index);
+                    // No text found on page
                 }
                 Err(e) => {
-                    eprintln!("[text] Failed to load text for page {}: {}", page_index, e);
+                    // Failed to load text for page
                 }
             }
         }
