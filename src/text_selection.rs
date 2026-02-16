@@ -249,10 +249,6 @@ impl TextSelectionManager {
         self.is_selecting = true;
         self.selection_start = Some((page_index, char_index));
         self.current_selection = Some(TextSelection::new(page_index, char_index, char_index));
-        eprintln!(
-            "[selection] Started at page {}, char {}",
-            page_index, char_index
-        );
     }
 
     pub fn update_selection(&mut self, page_index: usize, char_index: usize) {
@@ -266,78 +262,12 @@ impl TextSelectionManager {
 
     pub fn end_selection(&mut self) {
         self.is_selecting = false;
-        if let Some(ref selection) = self.current_selection {
-            eprintln!(
-                "[selection] Ended: page {}, chars {} to {}",
-                selection.page_index, selection.start_char_index, selection.end_char_index
-            );
-            if let Some(cache) = self.get_page_cache(selection.page_index) {
-                eprintln!(
-                    "[selection] Cache has {} chars, page size: {}x{}",
-                    cache.chars.len(),
-                    cache.page_width,
-                    cache.page_height
-                );
-
-                // Log first 20 chars to understand text order
-                for i in 0..20.min(cache.chars.len()) {
-                    if let Some(c) = cache.chars.get(i) {
-                        eprintln!(
-                            "[selection] char[{}] = '{}' at pdf({},{})",
-                            i, c.text, c.left, c.top
-                        );
-                    }
-                }
-
-                // Also log around the selected start position
-                let search_idx = 155.min(cache.chars.len().saturating_sub(5));
-                for i in search_idx..(search_idx + 10).min(cache.chars.len()) {
-                    if let Some(c) = cache.chars.get(i) {
-                        eprintln!(
-                            "[selection] char_near[{}] = '{}' at pdf({},{})",
-                            i, c.text, c.left, c.top
-                        );
-                    }
-                }
-
-                let start_idx = selection
-                    .start_char_index
-                    .min(cache.chars.len().saturating_sub(1));
-                let end_idx = selection.end_char_index.min(cache.chars.len());
-
-                if let Some(start_char) = cache.chars.get(start_idx) {
-                    eprintln!(
-                        "[selection] Start char[{}]: '{}' at pdf({},{})",
-                        start_idx, start_char.text, start_char.left, start_char.top
-                    );
-                }
-                if let Some(end_char) = cache.chars.get(end_idx.saturating_sub(1)) {
-                    eprintln!(
-                        "[selection] End char[{}]: '{}' at pdf({},{})",
-                        end_idx.saturating_sub(1),
-                        end_char.text,
-                        end_char.left,
-                        end_char.top
-                    );
-                }
-
-                let text = self.get_selected_text();
-                if let Some(text) = text {
-                    eprintln!("[selection] Text: '{}'", text);
-                } else {
-                    eprintln!("[selection] Text: (empty)");
-                }
-            } else {
-                eprintln!("[selection] No cache for page {}", selection.page_index);
-            }
-        }
     }
 
     pub fn clear_selection(&mut self) {
         self.current_selection = None;
         self.selection_start = None;
         self.is_selecting = false;
-        eprintln!("[selection] Cleared");
     }
 
     pub fn is_selecting(&self) -> bool {

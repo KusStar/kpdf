@@ -1,6 +1,7 @@
 use super::PdfViewer;
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
+use gpui_component::button::Button;
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use gpui_component::*;
 use std::rc::Rc;
@@ -193,6 +194,12 @@ impl PdfViewer {
                                 gpui::MouseButton::Left,
                                 cx.listener(
                                     move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                        // Close context menu if open
+                                        if this.context_menu_open {
+                                            this.close_context_menu(cx);
+                                            return;
+                                        }
+
                                         let (local_x, local_y) = this.calculate_page_coordinates(
                                             page_index,
                                             event.position,
@@ -208,6 +215,16 @@ impl PdfViewer {
                                             page_height,
                                             cx,
                                         );
+                                    },
+                                ),
+                            )
+                            .on_mouse_down(
+                                gpui::MouseButton::Right,
+                                cx.listener(
+                                    move |this, event: &gpui::MouseDownEvent, _window, cx| {
+                                        if this.has_text_selection() {
+                                            this.open_context_menu(event.position, cx);
+                                        }
                                     },
                                 ),
                             )
@@ -521,5 +538,48 @@ impl PdfViewer {
                 }
             }
         }
+    }
+
+    pub(super) fn render_context_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.context_menu_open {
+            return None;
+        }
+
+        let i18n = self.i18n();
+        let position = self.context_menu_position.unwrap_or_default();
+        let x: f32 = position.x.into();
+        let y: f32 = position.y.into();
+
+        Some(
+            div()
+                .id("context-menu")
+                .absolute()
+                .left(px(x))
+                .top(px(y))
+                .w(px(160.))
+                .v_flex()
+                .gap_1()
+                .popover_style(cx)
+                .p_1()
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(|_, _: &gpui::MouseDownEvent, _, cx| {
+                        eprintln!("[context_menu] menu container clicked, stopping propagation");
+                        cx.stop_propagation();
+                    }),
+                )
+                .child(
+                    Button::new("copy-text")
+                        .small()
+                        .w_full()
+                        .label(i18n.copy_button())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            eprintln!("[context_menu] copy button clicked");
+                            this.copy_selected_text();
+                            this.close_context_menu(cx);
+                        })),
+                )
+                .into_any_element(),
+        )
     }
 }

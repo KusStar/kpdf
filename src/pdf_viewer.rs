@@ -93,6 +93,8 @@ pub struct PdfViewer {
     suppress_display_scroll_sync_once: bool,
     last_saved_position: Option<(PathBuf, usize)>,
     text_selection_manager: RefCell<TextSelectionManager>,
+    context_menu_open: bool,
+    context_menu_position: Option<Point<Pixels>>,
 }
 
 impl PdfViewer {
@@ -136,6 +138,8 @@ impl PdfViewer {
             suppress_display_scroll_sync_once: false,
             last_saved_position: None,
             text_selection_manager: RefCell::new(TextSelectionManager::new()),
+            context_menu_open: false,
+            context_menu_position: None,
         }
     }
 
@@ -1004,15 +1008,21 @@ impl PdfViewer {
     }
 
     pub fn copy_selected_text(&self) {
+        eprintln!("[copy] copy_selected_text called");
         let manager = self.text_selection_manager.borrow();
         if let Some(text) = manager.get_selected_text() {
+            eprintln!("[copy] got selected text: {} chars", text.len());
             if !text.is_empty() {
                 if let Err(err) = copy_to_clipboard(&text) {
                     eprintln!("[copy] failed to copy to clipboard: {}", err);
                 } else {
                     eprintln!("[copy] copied {} characters to clipboard", text.len());
                 }
+            } else {
+                eprintln!("[copy] text is empty");
             }
+        } else {
+            eprintln!("[copy] no text selected");
         }
     }
 
@@ -1034,6 +1044,22 @@ impl PdfViewer {
     pub fn clear_text_selection(&mut self, cx: &mut Context<Self>) {
         self.text_selection_manager.borrow_mut().clear_selection();
         cx.notify();
+    }
+
+    pub fn open_context_menu(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        self.context_menu_open = true;
+        self.context_menu_position = Some(position);
+        cx.notify();
+    }
+
+    pub fn close_context_menu(&mut self, cx: &mut Context<Self>) {
+        self.context_menu_open = false;
+        self.context_menu_position = None;
+        cx.notify();
+    }
+
+    pub fn has_text_selection(&self) -> bool {
+        self.text_selection_manager.borrow().get_selected_text().is_some()
     }
 }
 
@@ -1071,11 +1097,14 @@ impl Render for PdfViewer {
         let thumbnail_sizes = self.thumbnail_item_sizes();
         let display_sizes = self.display_item_sizes(display_base_width);
 
+        let context_menu = self.render_context_menu(cx);
+
         window_border().child(
             div()
                 .v_flex()
                 .size_full()
                 .bg(cx.theme().background)
+                .relative()
                 .child(
                     div()
                         .h(px(34.))
@@ -1203,7 +1232,10 @@ impl Render for PdfViewer {
                                 cx.stop_propagation();
                             }
                         })),
-                ),
+                )
+                .when(context_menu.is_some(), |this| {
+                    this.child(context_menu.unwrap())
+                }),
         )
     }
 }

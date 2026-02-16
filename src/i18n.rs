@@ -175,6 +175,13 @@ impl I18n {
         }
     }
 
+    pub fn copy_button(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "复制",
+            Language::EnUs => "Copy",
+        }
+    }
+
     pub fn cannot_create_image_buffer(self, width: u32, height: u32) -> String {
         match self.lang {
             Language::ZhCn => format!("无法创建图像缓冲区: {}x{}", width, height),
