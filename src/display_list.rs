@@ -180,7 +180,7 @@ impl PdfViewer {
                                 }),
                         )
                     })
-                    // Text interaction overlay (must be before highlights to let mouse events through, but use z-index)
+                    // Text interaction overlay (transparent, captures mouse events)
                     .child(
                         div()
                             .absolute()
@@ -233,7 +233,7 @@ impl PdfViewer {
                                 }),
                             ),
                     )
-                    // Render selection highlights AFTER text interaction overlay so they appear on top
+                    // Render selection highlights (rendered after overlay, so appear on top)
                     .children(
                         selection_rects
                             .into_iter()
@@ -244,7 +244,7 @@ impl PdfViewer {
                                     .top(px(top))
                                     .w(px(right - left))
                                     .h(px(bottom - top))
-                                    .bg(gpui::rgba(0x3390FF))
+                                    .bg(gpui::rgba(0x3390FF40)) // Semi-transparent blue highlight
                                     .into_any_element()
                             }),
                     )
@@ -273,14 +273,19 @@ impl PdfViewer {
     ) -> Vec<(f32, f32, f32, f32)> {
         let manager = self.text_selection_manager.borrow();
         let Some(rects) = manager.get_selection_rects(page_index) else {
+            eprintln!("[selection_rects] No selection for page {}", page_index);
             return Vec::new();
         };
 
         let Some(page) = self.pages.get(page_index) else {
+            eprintln!("[selection_rects] No page {} found", page_index);
             return Vec::new();
         };
 
-        rects
+        eprintln!("[selection_rects] Page {} has {} rects, scale={}, page_height={}", 
+            page_index, rects.len(), scale, page.height_pt);
+
+        let result: Vec<(f32, f32, f32, f32)> = rects
             .into_iter()
             .map(|(left, top, right, bottom)| {
                 // Convert from PDF coordinates to screen coordinates
@@ -288,19 +293,27 @@ impl PdfViewer {
                 // Screen: origin at top-left, y increases downward
                 let screen_left = left * scale;
                 let screen_right = right * scale;
+                // In PDF: top > bottom (top is higher y value)
+                // After conversion: screen_top < screen_bottom (top is smaller y on screen)
                 let screen_top = (page.height_pt - top) * scale;
                 let screen_bottom = (page.height_pt - bottom) * scale;
 
-                // Ensure positive height
-                let (final_top, final_bottom) = if screen_top > screen_bottom {
+                // screen_top should be smaller (higher on screen), screen_bottom larger (lower on screen)
+                // Return (left, top, right, bottom) where top < bottom for positive height
+                let (final_top, final_bottom) = if screen_top < screen_bottom {
                     (screen_top, screen_bottom)
                 } else {
                     (screen_bottom, screen_top)
                 };
 
+                eprintln!("[selection_rects] PDF({},{},{},{}) -> Screen({},{},{},{})", 
+                    left, top, right, bottom, screen_left, final_top, screen_right, final_bottom);
+
                 (screen_left, final_top, screen_right, final_bottom)
             })
-            .collect()
+            .collect();
+
+        result
     }
 
     fn handle_text_mouse_down(
