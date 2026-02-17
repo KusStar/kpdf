@@ -96,6 +96,13 @@ fn main() {
 
         gpui_component::init(cx);
         Theme::change(cx.window_appearance(), None, cx);
+        #[cfg(target_os = "macos")]
+        cx.on_window_closed(|cx| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
 
         cx.spawn(async move |cx| {
             let saved_size = load_saved_window_size();
