@@ -1192,6 +1192,18 @@ impl PdfViewer {
     pub(super) fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let tabs = self.tab_bar.tabs().to_vec();
         let active_tab_id = self.tab_bar.active_tab_id();
+        
+        // 检查是否有文件打开，如果有，则过滤掉空的 Home 标签
+        let has_file_open = tabs.iter().any(|tab| tab.path.is_some());
+        let tabs_to_show: Vec<_> = tabs.iter().filter(|tab| {
+            if has_file_open {
+                // 有文件打开时，只显示有文件的标签
+                tab.path.is_some()
+            } else {
+                // 没有文件时，显示所有标签（包括 Home）
+                true
+            }
+        }).collect();
 
         div()
             .h(px(TAB_BAR_HEIGHT))
@@ -1204,11 +1216,11 @@ impl PdfViewer {
             .px_1()
             .gap_1()
             .overflow_x_hidden()
-            .children(tabs.iter().map(|tab| {
+            .children(tabs_to_show.iter().map(|tab| {
                 let tab_id = tab.id;
                 let is_active = active_tab_id == Some(tab_id);
                 let file_name = tab.file_name();
-                let is_untitled = tab.path.is_none();
+                let is_home = tab.path.is_none();
 
                 div()
                     .id(("tab", tab_id))
@@ -1219,20 +1231,20 @@ impl PdfViewer {
                     .gap_2()
                     .rounded_md()
                     .cursor_pointer()
-                    .when(is_active, |this| this.bg(cx.theme().secondary_active))
+                    .when(is_active, |this| this.bg(cx.theme().secondary.opacity(0.85)))
                     .when(!is_active, |this| {
-                        this.hover(|this| this.bg(cx.theme().secondary_hover))
+                        this.hover(|this| this.bg(cx.theme().secondary.opacity(0.3)))
                     })
                     .child(
                         div()
                             .text_sm()
                             .text_color(if is_active {
-                                cx.theme().secondary_foreground
+                                cx.theme().foreground
                             } else {
                                 cx.theme().muted_foreground
                             })
                             .child(file_name.clone())
-                            .when(is_untitled, |this| {
+                            .when(is_home, |this| {
                                 this.text_color(cx.theme().muted_foreground.opacity(0.6))
                             }),
                     )
@@ -1243,6 +1255,7 @@ impl PdfViewer {
                             .icon(
                                 Icon::new(IconName::WindowClose)
                                     .size_3()
+                                    .text_color(cx.theme().muted_foreground),
                             )
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.close_tab(tab_id, cx);

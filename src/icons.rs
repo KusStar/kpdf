@@ -32,7 +32,6 @@ use gpui_component::IconNamed;
 pub enum IconName {
     ChevronLast,
     ChevronFirst,
-    WindowClose,
 }
 
 impl IconNamed for IconName {
@@ -40,7 +39,6 @@ impl IconNamed for IconName {
         match self {
             Self::ChevronLast => "icons/chevron-last.svg",
             Self::ChevronFirst => "icons/chevron-first.svg",
-            Self::WindowClose => "icons/window-close.svg",
         }
         .into()
     }
