@@ -2044,6 +2044,7 @@ impl Render for PdfViewer {
                         .bg(cx.theme().title_bar)
                         .child(
                             div()
+                                .id("title-drag-area")
                                 .h_full()
                                 .flex_1()
                                 .pl(px(TITLE_BAR_CONTENT_LEFT_PADDING))
@@ -2051,6 +2052,12 @@ impl Render for PdfViewer {
                                 .flex()
                                 .items_center()
                                 .gap_2()
+                                .when(cfg!(target_os = "macos"), |this| {
+                                    this.on_double_click(|_, window, _| window.titlebar_double_click())
+                                })
+                                .when(!cfg!(target_os = "macos"), |this| {
+                                    this.on_double_click(|_, window, _| window.zoom_window())
+                                })
                                 .window_control_area(WindowControlArea::Drag),
                         )
                         .when(!cfg!(target_os = "macos"), |this| {
