@@ -119,7 +119,7 @@ impl PdfViewer {
                                                                     )
                                                                     .when(page.thumbnail_failed, |this| {
                                                                         this.child(
-                                                                            Icon::new(IconName::File)
+                                                                            Icon::new(crate::icons::IconName::File)
                                                                                 .size_5()
                                                                                 .text_color(
                                                                                     cx.theme()
@@ -139,7 +139,7 @@ impl PdfViewer {
                                                                             spinner::Spinner::new()
                                                                                 .large()
                                                                                 .icon(Icon::new(
-                                                                                    IconName::LoaderCircle,
+                                                                                    crate::icons::IconName::LoaderCircle,
                                                                                 ))
                                                                                 .color(
                                                                                     cx.theme()

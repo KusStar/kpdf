@@ -32,6 +32,18 @@ use gpui_component::IconNamed;
 pub enum IconName {
     ChevronLast,
     ChevronFirst,
+    ChevronRight,
+    ChevronLeft,
+    File,
+    FolderOpen,
+    Minimize,
+    LoaderCircle,
+    Plus,
+    Minus,
+    WindowMaximize,
+    WindowClose,
+    WindowMinimize,
+    WindowRestore,
 }
 
 impl IconNamed for IconName {
@@ -39,6 +51,18 @@ impl IconNamed for IconName {
         match self {
             Self::ChevronLast => "icons/chevron-last.svg",
             Self::ChevronFirst => "icons/chevron-first.svg",
+            Self::ChevronRight => "icons/chevron-right.svg",
+            Self::ChevronLeft => "icons/chevron-left.svg",
+            Self::File => "icons/file.svg",
+            Self::FolderOpen => "icons/folder-open.svg",
+            Self::Minimize => "icons/minimize.svg",
+            Self::LoaderCircle => "icons/loader-circle.svg",
+            Self::Plus => "icons/plus.svg",
+            Self::Minus => "icons/minus.svg",
+            Self::WindowMaximize => "icons/window-maximize.svg",
+            Self::WindowClose => "icons/window-close.svg",
+            Self::WindowMinimize => "icons/window-minimize.svg",
+            Self::WindowRestore => "icons/window-restore.svg",
         }
         .into()
     }

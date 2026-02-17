@@ -40,7 +40,7 @@ impl PdfViewer {
                                 .justify_center()
                                 .gap_3()
                                 .child(
-                                    Icon::new(IconName::FolderOpen)
+                                    Icon::new(crate::icons::IconName::FolderOpen)
                                         .size_8()
                                         .text_color(cx.theme().muted_foreground),
                                 )
@@ -174,7 +174,7 @@ impl PdfViewer {
                                 .text_color(cx.theme().muted_foreground)
                                 .when(page.display_failed, |this| {
                                     this.child(
-                                        Icon::new(IconName::File)
+                                        Icon::new(crate::icons::IconName::File)
                                             .size_8()
                                             .text_color(cx.theme().muted_foreground),
                                     )
@@ -184,7 +184,7 @@ impl PdfViewer {
                                     this.child(
                                         spinner::Spinner::new()
                                             .large()
-                                            .icon(Icon::new(IconName::LoaderCircle))
+                                            .icon(Icon::new(crate::icons::IconName::LoaderCircle))
                                             .color(cx.theme().muted_foreground),
                                     )
                                 }),

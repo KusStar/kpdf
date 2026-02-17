@@ -54,7 +54,7 @@ impl PdfViewer {
                                 Button::new("open-pdf")
                                     .small()
                                     .icon(
-                                        Icon::new(IconName::FolderOpen)
+                                        Icon::new(icons::IconName::FolderOpen)
                                             .text_color(cx.theme().foreground),
                                     )
                                     .label(i18n.open_button())
@@ -94,7 +94,7 @@ impl PdfViewer {
                                                 .small()
                                                 .w_full()
                                                 .icon(
-                                                    Icon::new(IconName::FolderOpen)
+                                                    Icon::new(icons::IconName::FolderOpen)
                                                         .text_color(cx.theme().foreground),
                                                 )
                                                 .label(i18n.choose_file_button())
@@ -244,7 +244,7 @@ impl PdfViewer {
                                         .small()
                                         .disabled(active_page == 0)
                                         .icon(
-                                            Icon::new(IconName::ChevronLeft)
+                                            Icon::new(icons::IconName::ChevronLeft)
                                                 .text_color(cx.theme().foreground),
                                         )
                                         .on_click(cx.listener(|this, _, _, cx| {
@@ -263,7 +263,7 @@ impl PdfViewer {
                                         .small()
                                         .disabled(active_page + 1 >= page_count)
                                         .icon(
-                                            Icon::new(IconName::ChevronRight)
+                                            Icon::new(icons::IconName::ChevronRight)
                                                 .text_color(cx.theme().foreground),
                                         )
                                         .on_click(cx.listener(|this, _, _, cx| {
@@ -295,7 +295,7 @@ impl PdfViewer {
                         Button::new("zoom-out")
                             .ghost()
                             .small()
-                            .icon(Icon::new(IconName::Minus).text_color(cx.theme().foreground))
+                            .icon(Icon::new(icons::IconName::Minus).text_color(cx.theme().foreground))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.zoom_out(cx);
                             })),
@@ -313,7 +313,7 @@ impl PdfViewer {
                         Button::new("zoom-in")
                             .ghost()
                             .small()
-                            .icon(Icon::new(IconName::Plus).text_color(cx.theme().foreground))
+                            .icon(Icon::new(icons::IconName::Plus).text_color(cx.theme().foreground))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.zoom_in(cx);
                             })),

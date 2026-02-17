@@ -1253,7 +1253,7 @@ impl PdfViewer {
                             .xsmall()
                             .ghost()
                             .icon(
-                                Icon::new(IconName::WindowClose)
+                                Icon::new(crate::icons::IconName::WindowClose)
                                     .size_3()
                                     .text_color(cx.theme().muted_foreground),
                             )
@@ -1273,7 +1273,7 @@ impl PdfViewer {
                     .xsmall()
                     .ghost()
                     .icon(
-                        Icon::new(IconName::Plus)
+                        Icon::new(crate::icons::IconName::Plus)
                             .size_4()
                             .text_color(cx.theme().muted_foreground),
                     )
@@ -1389,7 +1389,7 @@ impl Render for PdfViewer {
                                 .gap_2()
                                 .window_control_area(WindowControlArea::Drag)
                                 .child(
-                                    Icon::new(IconName::File)
+                                    Icon::new(crate::icons::IconName::File)
                                         .size_4()
                                         .text_color(cx.theme().foreground),
                                 )
@@ -1420,7 +1420,7 @@ impl Render for PdfViewer {
                                             .ghost()
                                             .small()
                                             .icon(
-                                                Icon::new(IconName::WindowMinimize)
+                                                Icon::new(crate::icons::IconName::WindowMinimize)
                                                     .text_color(cx.theme().foreground),
                                             )
                                             .on_click(|_, window, _| window.minimize_window()),
@@ -1431,9 +1431,9 @@ impl Render for PdfViewer {
                                             .small()
                                             .icon(
                                                 Icon::new(if window.is_maximized() {
-                                                    IconName::WindowRestore
+                                                    crate::icons::IconName::WindowRestore
                                                 } else {
-                                                    IconName::WindowMaximize
+                                                    crate::icons::IconName::WindowMaximize
                                                 })
                                                 .text_color(cx.theme().foreground),
                                             )
@@ -1444,7 +1444,7 @@ impl Render for PdfViewer {
                                             .ghost()
                                             .small()
                                             .icon(
-                                                Icon::new(IconName::WindowClose)
+                                                Icon::new(crate::icons::IconName::WindowClose)
                                                     .text_color(cx.theme().foreground),
                                             )
                                             .on_click(|_, window, _| window.remove_window()),
