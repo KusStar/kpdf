@@ -667,7 +667,9 @@ impl PdfViewer {
                 .on_mouse_down(
                     gpui::MouseButton::Left,
                     cx.listener(|_, _: &gpui::MouseDownEvent, _, cx| {
-                        eprintln!("[context_menu] menu container clicked, stopping propagation");
+                        crate::debug_log!(
+                            "[context_menu] menu container clicked, stopping propagation"
+                        );
                         cx.stop_propagation();
                     }),
                 )
@@ -677,7 +679,7 @@ impl PdfViewer {
                         .w_full()
                         .label(i18n.copy_button())
                         .on_click(cx.listener(|this, _, _, cx| {
-                            eprintln!("[context_menu] copy button clicked");
+                            crate::debug_log!("[context_menu] copy button clicked");
                             this.copy_selected_text();
                             this.close_context_menu(cx);
                         })),

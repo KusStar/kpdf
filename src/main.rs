@@ -1,5 +1,6 @@
 pub mod i18n;
 pub mod icons;
+pub mod logger;
 mod pdf_viewer;
 
 use gpui::*;
@@ -48,6 +49,8 @@ fn load_saved_window_size() -> Option<(f32, f32)> {
 }
 
 fn main() {
+    logger::initialize();
+
     let app = Application::new().with_assets(icons::Assets);
 
     app.run(move |cx| {

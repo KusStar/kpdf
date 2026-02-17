@@ -420,7 +420,7 @@ pub fn copy_to_clipboard(text: &str) -> Result<(), Box<dyn std::error::Error>> {
     echo.wait()?;
     pbcopy.wait()?;
 
-    eprintln!("[clipboard] Copied {} characters on macOS", text.len());
+    crate::debug_log!("[clipboard] Copied {} characters on macOS", text.len());
     Ok(())
 }
 
@@ -445,7 +445,7 @@ pub fn copy_to_clipboard(text: &str) -> Result<(), Box<dyn std::error::Error>> {
     echo.wait()?;
     clipboard_cmd.wait()?;
 
-    eprintln!("[clipboard] Copied {} characters on Linux", text.len());
+    crate::debug_log!("[clipboard] Copied {} characters on Linux", text.len());
     Ok(())
 }
 
@@ -463,7 +463,7 @@ pub fn copy_to_clipboard(text: &str) -> Result<(), Box<dyn std::error::Error>> {
 
     ps.wait()?;
 
-    eprintln!("[clipboard] Copied {} characters on Windows", text.len());
+    crate::debug_log!("[clipboard] Copied {} characters on Windows", text.len());
     Ok(())
 }
 

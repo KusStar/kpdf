@@ -259,7 +259,7 @@ impl PdfViewer {
         let db_path = Self::recent_files_db_path();
         if let Some(parent) = db_path.parent() {
             if std::fs::create_dir_all(parent).is_err() {
-                eprintln!("[store] create dir failed: {}", parent.to_string_lossy());
+                crate::debug_log!("[store] create dir failed: {}", parent.to_string_lossy());
                 return (None, None, None, None);
             }
         }
@@ -267,7 +267,7 @@ impl PdfViewer {
         let db = match sled::open(&db_path) {
             Ok(db) => db,
             Err(err) => {
-                eprintln!(
+                crate::debug_log!(
                     "[store] open db failed: {} | {}",
                     db_path.to_string_lossy(),
                     err
@@ -279,16 +279,17 @@ impl PdfViewer {
         let recent_store = match db.open_tree(RECENT_FILES_TREE) {
             Ok(tree) => Some(tree),
             Err(err) => {
-                eprintln!("[store] open tree failed: {} | {}", RECENT_FILES_TREE, err);
+                crate::debug_log!("[store] open tree failed: {} | {}", RECENT_FILES_TREE, err);
                 None
             }
         };
         let position_store = match db.open_tree(FILE_POSITIONS_TREE) {
             Ok(tree) => Some(tree),
             Err(err) => {
-                eprintln!(
+                crate::debug_log!(
                     "[store] open tree failed: {} | {}",
-                    FILE_POSITIONS_TREE, err
+                    FILE_POSITIONS_TREE,
+                    err
                 );
                 None
             }
@@ -296,19 +297,19 @@ impl PdfViewer {
         let window_size_store = match db.open_tree(WINDOW_SIZE_TREE) {
             Ok(tree) => Some(tree),
             Err(err) => {
-                eprintln!("[store] open tree failed: {} | {}", WINDOW_SIZE_TREE, err);
+                crate::debug_log!("[store] open tree failed: {} | {}", WINDOW_SIZE_TREE, err);
                 None
             }
         };
         let open_tabs_store = match db.open_tree(OPEN_TABS_TREE) {
             Ok(tree) => Some(tree),
             Err(err) => {
-                eprintln!("[store] open tree failed: {} | {}", OPEN_TABS_TREE, err);
+                crate::debug_log!("[store] open tree failed: {} | {}", OPEN_TABS_TREE, err);
                 None
             }
         };
 
-        eprintln!(
+        crate::debug_log!(
             "[store] init recent={} positions={} window_size={} open_tabs={} path={}",
             recent_store.is_some(),
             position_store.is_some(),
@@ -619,6 +620,57 @@ impl PdfViewer {
         let tab_id = self.tab_bar.create_tab();
         let _ = self.tab_bar.switch_to_tab(tab_id);
         self.load_pdf_path_into_tab(tab_id, path, true, cx);
+    }
+
+    fn open_logs_directory(&self) {
+        let Some(log_file_path) = crate::logger::log_file_path() else {
+            crate::debug_log!("[log] cannot open logs directory: unresolved log path");
+            return;
+        };
+
+        let log_dir = log_file_path
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or(log_file_path);
+
+        let status = {
+            #[cfg(target_os = "macos")]
+            {
+                std::process::Command::new("open").arg(&log_dir).status()
+            }
+            #[cfg(target_os = "windows")]
+            {
+                std::process::Command::new("explorer")
+                    .arg(&log_dir)
+                    .status()
+            }
+            #[cfg(all(unix, not(target_os = "macos")))]
+            {
+                std::process::Command::new("xdg-open")
+                    .arg(&log_dir)
+                    .status()
+            }
+        };
+
+        match status {
+            Ok(exit_status) if exit_status.success() => {
+                crate::debug_log!("[log] opened logs directory: {}", log_dir.display());
+            }
+            Ok(exit_status) => {
+                crate::debug_log!(
+                    "[log] failed to open logs directory: {} | exit={}",
+                    log_dir.display(),
+                    exit_status
+                );
+            }
+            Err(err) => {
+                crate::debug_log!(
+                    "[log] failed to open logs directory: {} | {}",
+                    log_dir.display(),
+                    err
+                );
+            }
+        }
     }
 
     #[allow(dead_code)]
@@ -941,13 +993,13 @@ impl PdfViewer {
             .insert(WINDOW_SIZE_KEY_WIDTH, width_bytes.as_slice())
             .is_err()
         {
-            eprintln!("[window_size] save width failed");
+            crate::debug_log!("[window_size] save width failed");
         }
         if store
             .insert(WINDOW_SIZE_KEY_HEIGHT, height_bytes.as_slice())
             .is_err()
         {
-            eprintln!("[window_size] save height failed");
+            crate::debug_log!("[window_size] save height failed");
         }
         let _ = store.flush();
     }
@@ -1846,7 +1898,7 @@ impl PdfViewer {
             if let Some(text) = manager.get_selected_text() {
                 if !text.is_empty() {
                     if let Err(err) = copy_to_clipboard(&text) {
-                        eprintln!("[copy] failed to copy to clipboard: {}", err);
+                        crate::debug_log!("[copy] failed to copy to clipboard: {}", err);
                     }
                 }
             }

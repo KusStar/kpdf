@@ -3,6 +3,7 @@ use anyhow::{Context as _, Result, anyhow};
 use gpui::RenderImage as GpuiRenderImage;
 use image::{Frame as RasterFrame, RgbaImage};
 use pdfium_render::prelude::*;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
@@ -21,7 +22,8 @@ pub struct PageSummary {
     pub display_failed: bool,
 }
 
-static PDFIUM_INSTANCE: OnceLock<Result<Pdfium, String>> = OnceLock::new();
+static PDFIUM_INSTANCE: OnceLock<Pdfium> = OnceLock::new();
+static PDFIUM_INIT_LOCK: Mutex<()> = Mutex::new(());
 static PDFIUM_DOCUMENT_CACHE: OnceLock<Mutex<Option<CachedPdfDocument>>> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,14 +39,26 @@ struct CachedPdfDocument {
 }
 
 fn shared_pdfium(language: Language) -> Result<&'static Pdfium> {
-    match PDFIUM_INSTANCE.get_or_init(|| init_pdfium(language).map_err(|err| format!("{err:#}"))) {
-        Ok(pdfium) => Ok(pdfium),
-        Err(message) => Err(anyhow!("{message}")),
+    if let Some(pdfium) = PDFIUM_INSTANCE.get() {
+        return Ok(pdfium);
     }
+
+    let _init_guard = PDFIUM_INIT_LOCK
+        .lock()
+        .map_err(|_| anyhow!("Pdfium init lock is poisoned"))?;
+
+    if let Some(pdfium) = PDFIUM_INSTANCE.get() {
+        return Ok(pdfium);
+    }
+
+    let pdfium = init_pdfium(language)?;
+    let _ = PDFIUM_INSTANCE.set(pdfium);
+    PDFIUM_INSTANCE
+        .get()
+        .ok_or_else(|| anyhow!("Pdfium initialized but instance is unavailable"))
 }
 
-fn app_resources_lib_dir() -> Option<PathBuf> {
-    let current_exe = std::env::current_exe().ok()?;
+fn app_resources_lib_dir(current_exe: &Path) -> Option<PathBuf> {
     let macos_dir = current_exe.parent()?;
     if macos_dir.file_name()?.to_string_lossy() != "MacOS" {
         return None;
@@ -57,46 +71,101 @@ fn app_resources_lib_dir() -> Option<PathBuf> {
     Some(contents_dir.join("Resources").join("lib"))
 }
 
-fn init_pdfium(language: Language) -> Result<Pdfium> {
-    let i18n = I18n::new(language);
-
-    eprintln!("[pdfium] starting init...");
-
-    let mut library_paths = Vec::new();
-    let is_running_in_app_bundle = if let Some(resources_lib_dir) = app_resources_lib_dir() {
-        library_paths.push(resources_lib_dir);
-        true
-    } else {
-        false
-    };
-
-    if !is_running_in_app_bundle {
-        library_paths.push(PathBuf::from("./lib"));
-        library_paths.push(PathBuf::from("./"));
+fn push_library_dir(
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<PathBuf>,
+    candidate: PathBuf,
+) {
+    if candidate.as_os_str().is_empty() {
+        return;
     }
 
-    for lib_path in &library_paths {
-        let display = lib_path.to_string_lossy();
-        eprintln!("[pdfium] trying path: {}", display);
-        match Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(lib_path)) {
-            Ok(bindings) => {
-                eprintln!("[pdfium] loaded from {}", display);
-                eprintln!("[pdfium] init success!");
-                return Ok(Pdfium::new(bindings));
-            }
-            Err(e) => eprintln!("[pdfium] {} failed: {}", display, e),
+    let normalized = if candidate.exists() {
+        candidate.canonicalize().unwrap_or(candidate)
+    } else if candidate.is_relative() {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(&candidate))
+            .unwrap_or(candidate)
+    } else {
+        candidate
+    };
+
+    if seen.insert(normalized.clone()) {
+        candidates.push(normalized);
+    }
+}
+
+fn collect_library_dirs() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+
+    if let Ok(override_dir) = std::env::var("KPDF_PDFIUM_LIB_DIR") {
+        let override_dir = override_dir.trim();
+        if !override_dir.is_empty() {
+            push_library_dir(&mut candidates, &mut seen, PathBuf::from(override_dir));
         }
     }
 
-    eprintln!("[pdfium] trying system library");
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(resources_lib_dir) = app_resources_lib_dir(&current_exe) {
+            push_library_dir(&mut candidates, &mut seen, resources_lib_dir);
+        }
+
+        if let Some(exe_dir) = current_exe.parent() {
+            push_library_dir(&mut candidates, &mut seen, exe_dir.join("lib"));
+            push_library_dir(&mut candidates, &mut seen, exe_dir.to_path_buf());
+
+            for ancestor in exe_dir.ancestors().take(6) {
+                push_library_dir(&mut candidates, &mut seen, ancestor.join("lib"));
+            }
+        }
+    }
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        push_library_dir(&mut candidates, &mut seen, current_dir.join("lib"));
+        push_library_dir(&mut candidates, &mut seen, current_dir);
+    }
+
+    push_library_dir(&mut candidates, &mut seen, PathBuf::from("./lib"));
+    push_library_dir(&mut candidates, &mut seen, PathBuf::from("./"));
+
+    candidates
+}
+
+fn init_pdfium(language: Language) -> Result<Pdfium> {
+    let i18n = I18n::new(language);
+
+    crate::debug_log!("[pdfium] starting init...");
+
+    for lib_dir in collect_library_dirs() {
+        let lib_path = Pdfium::pdfium_platform_library_name_at_path(&lib_dir);
+        let display = lib_path.to_string_lossy().into_owned();
+        crate::debug_log!("[pdfium] trying path: {}", display);
+
+        if !lib_path.exists() {
+            crate::debug_log!("[pdfium] {} skipped: not found", display);
+            continue;
+        }
+
+        match Pdfium::bind_to_library(lib_path) {
+            Ok(bindings) => {
+                crate::debug_log!("[pdfium] loaded from {}", display);
+                crate::debug_log!("[pdfium] init success!");
+                return Ok(Pdfium::new(bindings));
+            }
+            Err(e) => crate::debug_log!("[pdfium] {} failed: {}", display, e),
+        }
+    }
+
+    crate::debug_log!("[pdfium] trying system library");
     let bindings = Pdfium::bind_to_system_library();
     match &bindings {
-        Ok(_) => eprintln!("[pdfium] loaded from system"),
-        Err(e) => eprintln!("[pdfium] system failed: {}", e),
+        Ok(_) => crate::debug_log!("[pdfium] loaded from system"),
+        Err(e) => crate::debug_log!("[pdfium] system failed: {}", e),
     }
 
     let bindings = bindings.context(i18n.pdfium_not_found())?;
-    eprintln!("[pdfium] init success!");
+    crate::debug_log!("[pdfium] init success!");
     Ok(Pdfium::new(bindings))
 }
 
@@ -123,15 +192,15 @@ pub(super) fn display_file_name(path: &Path) -> String {
 
 pub(super) fn load_document_summary(path: &Path, language: Language) -> Result<Vec<PageSummary>> {
     let i18n = I18n::new(language);
-    eprintln!("[pdf][load] opening: {}", path.display());
+    crate::debug_log!("[pdf][load] opening: {}", path.display());
 
     let pdfium = shared_pdfium(language)?;
-    eprintln!("[pdf][load] pdfium loaded");
+    crate::debug_log!("[pdf][load] pdfium loaded");
 
     let document = pdfium
         .load_pdf_from_file(path, None)
         .with_context(|| i18n.pdfium_cannot_open_file(path))?;
-    eprintln!(
+    crate::debug_log!(
         "[pdf][load] document loaded, pages: {}",
         document.pages().len()
     );
@@ -157,7 +226,7 @@ pub(super) fn load_document_summary(path: &Path, language: Language) -> Result<V
         });
     }
 
-    eprintln!("[pdf][load] summary loaded, {} pages", pages.len());
+    crate::debug_log!("[pdf][load] summary loaded, {} pages", pages.len());
     Ok(pages)
 }
 
@@ -171,7 +240,7 @@ pub(super) fn load_display_images(
         return Ok(Vec::new());
     }
 
-    eprintln!(
+    crate::debug_log!(
         "[pdf][render] loading {} pages, target_width={}",
         page_indices.len(),
         target_width
@@ -220,7 +289,7 @@ pub(super) fn load_display_images(
         let page_num = ix + 1;
 
         if ix >= total_pages || ix > u16::MAX as usize {
-            eprintln!(
+            crate::debug_log!(
                 "[pdf][render] {} p{} skipped: out of range (total_pages={}) | {}ms",
                 file_name,
                 page_num,
@@ -233,7 +302,7 @@ pub(super) fn load_display_images(
         let page = match document.pages().get(ix as u16) {
             Ok(page) => page,
             Err(err) => {
-                eprintln!(
+                crate::debug_log!(
                     "[pdf][render] {} p{} failed: get_page error: {} | {}ms",
                     file_name,
                     page_num,
@@ -248,7 +317,7 @@ pub(super) fn load_display_images(
         let bitmap = match page.render_with_config(&render_config) {
             Ok(bitmap) => bitmap,
             Err(err) => {
-                eprintln!(
+                crate::debug_log!(
                     "[pdf][render] {} p{} failed: render error: {} | total={}ms render={}ms",
                     file_name,
                     page_num,
@@ -267,7 +336,7 @@ pub(super) fn load_display_images(
                 display_images.push((ix, image));
             }
             Err(err) => {
-                eprintln!(
+                crate::debug_log!(
                     "[pdf][render] {} p{} failed: upload error: {} | total={}ms render={}ms upload={}ms",
                     file_name,
                     page_num,
@@ -357,7 +426,7 @@ pub fn load_page_text_for_selection(
         let document = match pdfium.load_pdf_from_file(&cache_key.canonical_path, None) {
             Ok(doc) => doc,
             Err(err) => {
-                eprintln!(
+                crate::debug_log!(
                     "[text] Failed to load document for text extraction: {} | {:?}",
                     path.display(),
                     err
@@ -379,9 +448,10 @@ pub fn load_page_text_for_selection(
 
     let total_pages = document.pages().len() as usize;
     if page_index >= total_pages {
-        eprintln!(
+        crate::debug_log!(
             "[text] Page index {} out of range (total: {})",
-            page_index, total_pages
+            page_index,
+            total_pages
         );
         return Ok(None);
     }
@@ -389,9 +459,10 @@ pub fn load_page_text_for_selection(
     let page = match document.pages().get(page_index as u16) {
         Ok(p) => p,
         Err(err) => {
-            eprintln!(
+            crate::debug_log!(
                 "[text] Failed to get page {} from document: {:?}",
-                page_index, err
+                page_index,
+                err
             );
             return Ok(None);
         }
@@ -403,9 +474,10 @@ pub fn load_page_text_for_selection(
     let page_text = match page.text() {
         Ok(text) => text,
         Err(err) => {
-            eprintln!(
+            crate::debug_log!(
                 "[text] Failed to get text from page {}: {:?}",
-                page_index, err
+                page_index,
+                err
             );
             return Ok(None);
         }

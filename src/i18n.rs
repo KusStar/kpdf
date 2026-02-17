@@ -91,6 +91,13 @@ impl I18n {
         }
     }
 
+    pub fn open_logs_button(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "打开日志目录",
+            Language::EnUs => "Open Logs",
+        }
+    }
+
     pub fn no_pages(self) -> &'static str {
         match self.lang {
             Language::ZhCn => "暂无页面",
@@ -178,10 +185,10 @@ impl I18n {
     pub fn pdfium_not_found(self) -> &'static str {
         match self.lang {
             Language::ZhCn => {
-                "未找到 Pdfium 动态库（已尝试 App 的 Contents/Resources/lib、./lib、./ 与系统库）"
+                "未找到 Pdfium 动态库（已尝试 App 资源目录、可执行文件附近的 lib、当前目录与系统库）"
             }
             Language::EnUs => {
-                "Pdfium dynamic library not found (tried app Contents/Resources/lib, ./lib, ./, and system library)"
+                "Pdfium dynamic library not found (tried app resources, lib near executable, working directory, and system library)"
             }
         }
     }
