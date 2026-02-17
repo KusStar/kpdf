@@ -53,9 +53,9 @@ impl PdfViewer {
                                         target_width,
                                         cx,
                                     );
-                                    
+
                                     let active_page = viewer.active_tab_active_page();
-                                    
+
                                     visible_range
                                         .map(|ix| {
                                             let Some(pages) = viewer.active_tab_pages() else {
