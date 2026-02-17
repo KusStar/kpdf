@@ -14,6 +14,7 @@ mod utils;
 use crate::i18n::{I18n, Language};
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
+use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::popover::{Popover, PopoverState};
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use gpui_component::{button::*, *};
@@ -42,6 +43,20 @@ pub enum RecentPopupAnchor {
     TabAddButton,
 }
 
+#[derive(Clone)]
+enum CommandPanelItem {
+    OpenFile,
+    OpenTab {
+        tab_id: usize,
+        path: PathBuf,
+        is_active: bool,
+    },
+    RecentFile {
+        path: PathBuf,
+        last_seen_page: Option<usize>,
+    },
+}
+
 use self::tab::{PdfTab, TabBar};
 use self::text_selection::copy_to_clipboard;
 use self::utils::{display_file_name, load_display_images, load_document_summary};
@@ -62,6 +77,9 @@ const DISPLAY_SCROLL_SYNC_DELAY_MS: u64 = 140;
 const MAX_RECENT_FILES: usize = 12;
 const RECENT_FILES_LIST_MAX_HEIGHT: f32 = 280.0;
 const RECENT_POPUP_CLOSE_DELAY_MS: u64 = 120;
+const COMMAND_PANEL_WIDTH: f32 = 560.0;
+const COMMAND_PANEL_MAX_HEIGHT: f32 = 460.0;
+const COMMAND_PANEL_SCROLLBAR_GUTTER: f32 = 20.0;
 const RECENT_FILES_TREE: &str = "recent_files";
 const FILE_POSITIONS_TREE: &str = "file_positions";
 const WINDOW_SIZE_TREE: &str = "window_size";
@@ -91,9 +109,15 @@ pub struct PdfViewer {
     recent_popup_panel_hovered: bool,
     recent_popup_hover_epoch: u64,
     recent_popup_anchor: Option<RecentPopupAnchor>,
+    command_panel_open: bool,
+    command_panel_query: String,
+    command_panel_selected_index: usize,
     tab_bar_scroll: ScrollHandle,
     recent_popup_list_scroll: ScrollHandle,
+    command_panel_list_scroll: ScrollHandle,
     recent_home_list_scroll: ScrollHandle,
+    command_panel_input_state: Entity<InputState>,
+    _command_panel_input_subscription: Subscription,
     context_menu_open: bool,
     context_menu_position: Option<Point<Pixels>>,
     #[allow(dead_code)]
@@ -104,16 +128,39 @@ pub struct PdfViewer {
     drag_mouse_position: Option<Point<Pixels>>,
     text_hover_target: Option<(usize, usize)>, // (tab_id, page_index)
     needs_initial_focus: bool,
+    command_panel_needs_focus: bool,
+    needs_root_refocus: bool,
 }
 
 impl PdfViewer {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let language = Language::detect();
         let (recent_store, position_store, window_size_store) = Self::open_persistent_stores();
         let recent_files = recent_store
             .as_ref()
             .map(Self::load_recent_files_from_store)
             .unwrap_or_default();
+        let command_panel_input_state = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(I18n::new(language).command_panel_search_hint())
+        });
+        let command_panel_input_state_for_sub = command_panel_input_state.clone();
+        let command_panel_input_subscription = cx.subscribe(
+            &command_panel_input_state_for_sub,
+            |this, input, event: &InputEvent, cx| {
+                if !matches!(event, InputEvent::Change) {
+                    return;
+                }
+                let next_query = input.read(cx).value().to_string();
+                if this.command_panel_query != next_query {
+                    this.command_panel_query = next_query;
+                    this.command_panel_selected_index = 0;
+                    this.command_panel_list_scroll.scroll_to_item(0);
+                    if this.command_panel_open {
+                        cx.notify();
+                    }
+                }
+            },
+        );
 
         let mut tab_bar = TabBar::new();
         // 创建第一个空标签页
@@ -134,9 +181,15 @@ impl PdfViewer {
             recent_popup_panel_hovered: false,
             recent_popup_hover_epoch: 0,
             recent_popup_anchor: None,
+            command_panel_open: false,
+            command_panel_query: String::new(),
+            command_panel_selected_index: 0,
             tab_bar_scroll: ScrollHandle::new(),
             recent_popup_list_scroll: ScrollHandle::new(),
+            command_panel_list_scroll: ScrollHandle::new(),
             recent_home_list_scroll: ScrollHandle::new(),
+            command_panel_input_state,
+            _command_panel_input_subscription: command_panel_input_subscription,
             context_menu_open: false,
             context_menu_position: None,
             context_menu_tab_id: None,
@@ -145,6 +198,8 @@ impl PdfViewer {
             drag_mouse_position: None,
             text_hover_target: None,
             needs_initial_focus: true,
+            command_panel_needs_focus: false,
+            needs_root_refocus: false,
         }
     }
 
@@ -261,6 +316,7 @@ impl PdfViewer {
     }
 
     fn open_pdf_dialog(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.close_command_panel(cx);
         self.close_recent_popup(cx);
 
         let picker = cx.prompt_for_paths(PathPromptOptions {
@@ -517,6 +573,36 @@ impl PdfViewer {
         let is_primary_modifier = event.keystroke.modifiers.secondary();
         let key = event.keystroke.key.as_str();
 
+        if self.command_panel_open {
+            if key == "escape" {
+                self.close_command_panel(cx);
+                cx.stop_propagation();
+                return;
+            }
+            if key == "down" {
+                self.move_command_panel_selection(1, cx);
+                cx.stop_propagation();
+                return;
+            }
+            if key == "up" {
+                self.move_command_panel_selection(-1, cx);
+                cx.stop_propagation();
+                return;
+            }
+            if key == "enter" {
+                self.execute_command_panel_selected(window, cx);
+                cx.stop_propagation();
+                return;
+            }
+            if key == "t" && is_primary_modifier && !event.keystroke.modifiers.shift {
+                self.toggle_command_panel(window, cx);
+                cx.stop_propagation();
+                return;
+            }
+            // Keep command panel focused on query editing; do not run global shortcuts underneath.
+            return;
+        }
+
         // Handle Cmd/Ctrl+C for copy
         if key == "c" && is_primary_modifier {
             self.copy_selected_text();
@@ -537,9 +623,9 @@ impl PdfViewer {
             self.close_current_tab(cx);
             cx.stop_propagation();
         }
-        // Handle Cmd/Ctrl+T to open PDF in a new tab flow
+        // Handle Cmd/Ctrl+T to toggle command panel
         else if key == "t" && is_primary_modifier && !event.keystroke.modifiers.shift {
-            self.open_pdf_dialog(window, cx);
+            self.toggle_command_panel(window, cx);
             cx.stop_propagation();
         }
         // Handle Cmd/Ctrl+O to open PDF
@@ -859,6 +945,139 @@ impl PdfViewer {
         }
     }
 
+    fn open_command_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut changed = false;
+        if !self.command_panel_open {
+            self.command_panel_open = true;
+            self.command_panel_needs_focus = true;
+            self.needs_root_refocus = false;
+            self.command_panel_selected_index = 0;
+            self.command_panel_list_scroll.scroll_to_item(0);
+            changed = true;
+        }
+        if self.recent_popup_open {
+            self.close_recent_popup(cx);
+            changed = true;
+        }
+        self.command_panel_input_state.update(cx, |input, cx| {
+            input.set_value("", window, cx);
+        });
+        if changed {
+            cx.notify();
+        }
+    }
+
+    fn close_command_panel(&mut self, cx: &mut Context<Self>) {
+        if self.command_panel_open {
+            self.command_panel_open = false;
+            self.command_panel_needs_focus = false;
+            self.needs_root_refocus = true;
+            cx.notify();
+        }
+    }
+
+    fn toggle_command_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.command_panel_open {
+            self.close_command_panel(cx);
+        } else {
+            self.open_command_panel(window, cx);
+        }
+    }
+
+    fn opened_file_tabs(&self) -> Vec<(usize, PathBuf)> {
+        self.tab_bar
+            .tabs()
+            .iter()
+            .filter_map(|tab| tab.path.as_ref().map(|path| (tab.id, path.clone())))
+            .collect()
+    }
+
+    fn command_panel_items(&self) -> Vec<CommandPanelItem> {
+        let query = self.command_panel_query.trim().to_ascii_lowercase();
+        let query_matches = |path: &PathBuf| {
+            if query.is_empty() {
+                return true;
+            }
+            let file_name = display_file_name(path).to_ascii_lowercase();
+            let path_text = path.display().to_string().to_ascii_lowercase();
+            file_name.contains(&query) || path_text.contains(&query)
+        };
+
+        let mut items = vec![CommandPanelItem::OpenFile];
+        let active_tab_id = self.tab_bar.active_tab_id();
+        let open_files = self.opened_file_tabs();
+        let open_file_paths: HashSet<PathBuf> =
+            open_files.iter().map(|(_, path)| path.clone()).collect();
+
+        items.extend(open_files.into_iter().filter_map(|(tab_id, path)| {
+            if query_matches(&path) {
+                Some(CommandPanelItem::OpenTab {
+                    tab_id,
+                    path,
+                    is_active: active_tab_id == Some(tab_id),
+                })
+            } else {
+                None
+            }
+        }));
+
+        items.extend(
+            self.recent_files_with_positions(&self.recent_files)
+                .into_iter()
+                .filter_map(|(path, last_seen_page)| {
+                    if open_file_paths.contains(&path) || !query_matches(&path) {
+                        return None;
+                    }
+                    Some(CommandPanelItem::RecentFile {
+                        path,
+                        last_seen_page,
+                    })
+                }),
+        );
+
+        items
+    }
+
+    fn move_command_panel_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let items_len = self.command_panel_items().len();
+        if items_len == 0 {
+            return;
+        }
+        let current = self
+            .command_panel_selected_index
+            .min(items_len.saturating_sub(1)) as isize;
+        let next = (current + delta).rem_euclid(items_len as isize) as usize;
+        if next != self.command_panel_selected_index {
+            self.command_panel_selected_index = next;
+            self.command_panel_list_scroll.scroll_to_item(next);
+            cx.notify();
+        }
+    }
+
+    fn execute_command_panel_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let items = self.command_panel_items();
+        if items.is_empty() {
+            return;
+        }
+        let index = self
+            .command_panel_selected_index
+            .min(items.len().saturating_sub(1));
+        match items[index].clone() {
+            CommandPanelItem::OpenFile => {
+                self.close_command_panel(cx);
+                self.open_pdf_dialog(window, cx);
+            }
+            CommandPanelItem::OpenTab { tab_id, .. } => {
+                self.close_command_panel(cx);
+                self.switch_to_tab(tab_id, cx);
+            }
+            CommandPanelItem::RecentFile { path, .. } => {
+                self.close_command_panel(cx);
+                self.open_recent_pdf(path, cx);
+            }
+        }
+    }
+
     fn recent_files_with_positions(
         &self,
         recent_files: &[PathBuf],
@@ -1072,6 +1291,260 @@ impl PdfViewer {
                 cx,
             ))
             .into_any_element()
+    }
+
+    fn render_command_panel(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.command_panel_open {
+            return None;
+        }
+
+        let i18n = self.i18n();
+        let viewer = cx.entity();
+        let items = self.command_panel_items();
+        let selected_index = if items.is_empty() {
+            0
+        } else {
+            self.command_panel_selected_index
+                .min(items.len().saturating_sub(1))
+        };
+        let list_scroll = self.command_panel_list_scroll.clone();
+        let list_max_height = (COMMAND_PANEL_MAX_HEIGHT - 44.0).max(120.0);
+        let list_content = if items.is_empty() {
+            div()
+                .px_2()
+                .py_1()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(i18n.no_recent_files())
+                .into_any_element()
+        } else {
+            div()
+                .relative()
+                .w_full()
+                .child(
+                    div()
+                        .id("command-panel-list")
+                        .w_full()
+                        .h(px(list_max_height))
+                        .overflow_y_scroll()
+                        .track_scroll(&list_scroll)
+                        .pr(px(COMMAND_PANEL_SCROLLBAR_GUTTER))
+                        .v_flex()
+                        .gap_1()
+                        .children(items.iter().enumerate().map(|(index, item)| {
+                            let is_selected = selected_index == index;
+                            let item_for_click = item.clone();
+                            let (title, subtitle, tail, extra) = match item {
+                                CommandPanelItem::OpenFile => (
+                                    i18n.choose_file_button().to_string(),
+                                    i18n.open_pdf_prompt().to_string(),
+                                    None,
+                                    None,
+                                ),
+                                CommandPanelItem::OpenTab {
+                                    path, is_active, ..
+                                } => (
+                                    display_file_name(path),
+                                    path.display().to_string(),
+                                    if *is_active {
+                                        Some(i18n.command_panel_current_badge().to_string())
+                                    } else {
+                                        None
+                                    },
+                                    None,
+                                ),
+                                CommandPanelItem::RecentFile {
+                                    path,
+                                    last_seen_page,
+                                } => (
+                                    display_file_name(path),
+                                    path.display().to_string(),
+                                    None,
+                                    last_seen_page
+                                        .map(|page_index| i18n.last_seen_page(page_index + 1)),
+                                ),
+                            };
+
+                            div()
+                                .id(("command-panel-item", index))
+                                .w_full()
+                                .rounded_md()
+                                .px_2()
+                                .py_1()
+                                .cursor_pointer()
+                                .when(is_selected, |this| {
+                                    this.border_1()
+                                        .border_color(cx.theme().primary.opacity(0.65))
+                                        .bg(cx.theme().secondary.opacity(0.85))
+                                })
+                                .when(!is_selected, |this| {
+                                    this.hover(|this| this.bg(cx.theme().secondary.opacity(0.6)))
+                                        .active(|this| this.bg(cx.theme().secondary.opacity(0.9)))
+                                })
+                                .on_mouse_move(cx.listener(
+                                    move |this, _: &MouseMoveEvent, _, cx| {
+                                        if this.command_panel_selected_index != index {
+                                            this.command_panel_selected_index = index;
+                                            cx.notify();
+                                        }
+                                    },
+                                ))
+                                .on_click({
+                                    let viewer = viewer.clone();
+                                    move |_, window, cx| {
+                                        let _ = viewer.update(cx, |this, cx| match item_for_click
+                                            .clone()
+                                        {
+                                            CommandPanelItem::OpenFile => {
+                                                this.close_command_panel(cx);
+                                                this.open_pdf_dialog(window, cx);
+                                            }
+                                            CommandPanelItem::OpenTab { tab_id, .. } => {
+                                                this.close_command_panel(cx);
+                                                this.switch_to_tab(tab_id, cx);
+                                            }
+                                            CommandPanelItem::RecentFile { path, .. } => {
+                                                this.close_command_panel(cx);
+                                                this.open_recent_pdf(path, cx);
+                                            }
+                                        });
+                                    }
+                                })
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .child(
+                                            div()
+                                                .v_flex()
+                                                .flex_1()
+                                                .overflow_x_hidden()
+                                                .items_start()
+                                                .gap_1()
+                                                .child(
+                                                    div()
+                                                        .w_full()
+                                                        .truncate()
+                                                        .text_sm()
+                                                        .text_color(cx.theme().foreground)
+                                                        .child(title),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .w_full()
+                                                        .truncate()
+                                                        .text_xs()
+                                                        .text_color(cx.theme().muted_foreground)
+                                                        .child(subtitle),
+                                                )
+                                                .when_some(extra, |this, label| {
+                                                    this.child(
+                                                        div()
+                                                            .w_full()
+                                                            .truncate()
+                                                            .text_xs()
+                                                            .text_color(cx.theme().muted_foreground)
+                                                            .child(label),
+                                                    )
+                                                }),
+                                        )
+                                        .when_some(tail, |this, label| {
+                                            this.child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(cx.theme().primary)
+                                                    .child(label),
+                                            )
+                                        }),
+                                )
+                                .into_any_element()
+                        })),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .child(
+                            Scrollbar::vertical(&list_scroll).scrollbar_show(ScrollbarShow::Always),
+                        ),
+                )
+                .into_any_element()
+        };
+
+        Some(
+            div()
+                .id("command-panel-overlay")
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .bg(cx.theme().background.opacity(0.45))
+                .on_scroll_wheel(cx.listener(|_, _: &ScrollWheelEvent, _, cx| {
+                    // Prevent wheel events from leaking to the background lists.
+                    cx.stop_propagation();
+                }))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.close_command_panel(cx);
+                    }),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .v_flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .id("command-panel")
+                                .w(px(COMMAND_PANEL_WIDTH))
+                                .h(px(COMMAND_PANEL_MAX_HEIGHT))
+                                .v_flex()
+                                .gap_2()
+                                .popover_style(cx)
+                                .p_2()
+                                .on_scroll_wheel(cx.listener(|_, _: &ScrollWheelEvent, _, cx| {
+                                    cx.stop_propagation();
+                                }))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|_, _, _, cx| {
+                                        cx.stop_propagation();
+                                    }),
+                                )
+                                .child(
+                                    Input::new(&self.command_panel_input_state)
+                                        .small()
+                                        .cleanable(true),
+                                )
+                                .child(div().h(px(1.)).bg(cx.theme().border))
+                                .child(
+                                    div()
+                                        .id("command-panel-list-wrap")
+                                        .w_full()
+                                        .h(px(list_max_height))
+                                        .on_scroll_wheel(cx.listener(
+                                            |_, _: &ScrollWheelEvent, _, cx| {
+                                                cx.stop_propagation();
+                                            },
+                                        ))
+                                        .child(list_content),
+                                ),
+                        ),
+                )
+                .into_any_element(),
+        )
     }
 
     fn select_page(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -2085,6 +2558,16 @@ impl Render for PdfViewer {
             self.needs_initial_focus = false;
             cx.focus_self(window);
         }
+        if self.command_panel_open && self.command_panel_needs_focus {
+            self.command_panel_needs_focus = false;
+            let _ = self
+                .command_panel_input_state
+                .update(cx, |input, cx| input.focus(window, cx));
+        }
+        if !self.command_panel_open && self.needs_root_refocus {
+            self.needs_root_refocus = false;
+            window.focus(&self.focus_handle);
+        }
 
         window.set_rem_size(cx.theme().font_size);
 
@@ -2099,7 +2582,7 @@ impl Render for PdfViewer {
             page_count,
             current_page_num,
             zoom,
-            file_name,
+            _file_name,
             thumbnail_sizes,
             display_sizes,
             _display_base_width,
@@ -2160,8 +2643,9 @@ impl Render for PdfViewer {
 
         let context_menu = self.render_context_menu(cx);
         let drag_tab_preview = self.render_drag_tab_preview(cx);
+        let command_panel = self.render_command_panel(cx);
 
-        window_border().child(
+        div().size_full().child(
             div()
                 .v_flex()
                 .size_full()
@@ -2207,7 +2691,9 @@ impl Render for PdfViewer {
                                 .items_center()
                                 .gap_2()
                                 .when(cfg!(target_os = "macos"), |this| {
-                                    this.on_double_click(|_, window, _| window.titlebar_double_click())
+                                    this.on_double_click(|_, window, _| {
+                                        window.titlebar_double_click()
+                                    })
                                 })
                                 .when(!cfg!(target_os = "macos"), |this| {
                                     this.on_double_click(|_, window, _| window.zoom_window())
@@ -2282,6 +2768,9 @@ impl Render for PdfViewer {
                 })
                 .when(drag_tab_preview.is_some(), |this| {
                     this.child(drag_tab_preview.unwrap())
+                })
+                .when(command_panel.is_some(), |this| {
+                    this.child(command_panel.unwrap())
                 }),
         )
     }

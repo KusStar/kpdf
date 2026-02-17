@@ -124,6 +124,48 @@ impl I18n {
         }
     }
 
+    pub fn command_panel_title(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "Command Panel",
+            Language::EnUs => "Command Panel",
+        }
+    }
+
+    pub fn command_panel_search_hint(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "输入文件名或路径快速过滤",
+            Language::EnUs => "Type filename or path to filter",
+        }
+    }
+
+    pub fn command_panel_open_files(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "已打开文件",
+            Language::EnUs => "Open Files",
+        }
+    }
+
+    pub fn command_panel_recent_files(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "最近打开",
+            Language::EnUs => "Recent Files",
+        }
+    }
+
+    pub fn command_panel_no_open_files(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "暂无已打开文件",
+            Language::EnUs => "No open files",
+        }
+    }
+
+    pub fn command_panel_current_badge(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "当前",
+            Language::EnUs => "Current",
+        }
+    }
+
     pub fn pdfium_not_found(self) -> &'static str {
         match self.lang {
             Language::ZhCn => "未找到 Pdfium 动态库（已尝试 ./lib、./ 与系统库）",
