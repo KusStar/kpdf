@@ -11,6 +11,7 @@ pub struct PdfTab {
     pub id: usize,
     pub path: Option<PathBuf>,
     pub pages: Vec<PageSummary>,
+    pub summary_loaded: bool,
     pub summary_loading: bool,
     pub summary_failed: bool,
     pub selected_page: usize,
@@ -40,6 +41,7 @@ impl PdfTab {
             id,
             path: None,
             pages: Vec::new(),
+            summary_loaded: false,
             summary_loading: false,
             summary_failed: false,
             selected_page: 0,
@@ -127,6 +129,7 @@ impl TabBar {
         let mut tab = PdfTab::new(id);
         tab.path = Some(path);
         tab.pages = pages;
+        tab.summary_loaded = !tab.pages.is_empty();
         self.tabs.push(tab);
         self.active_tab_id = Some(id);
         id

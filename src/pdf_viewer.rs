@@ -48,7 +48,9 @@ pub enum RecentPopupAnchor {
 
 use self::tab::{PdfTab, TabBar};
 use self::text_selection::copy_to_clipboard;
-use self::utils::{display_file_name, load_display_images, load_document_summary};
+use self::utils::{
+    display_file_name, ensure_pdfium_ready, load_display_images, load_document_summary,
+};
 
 const ZOOM_MIN: f32 = 0.6;
 const ZOOM_MAX: f32 = 1.0;
@@ -218,6 +220,11 @@ impl PdfViewer {
         };
 
         viewer.persist_open_tabs();
+        if !tabs_to_restore.is_empty()
+            && let Err(err) = ensure_pdfium_ready(language)
+        {
+            crate::debug_log!("[pdfium] pre-init before restoring tabs failed: {}", err);
+        }
         viewer.restore_open_tabs(tabs_to_restore, cx);
         viewer
     }
@@ -444,9 +451,37 @@ impl PdfViewer {
         tabs_to_restore: Vec<(usize, PathBuf)>,
         cx: &mut Context<Self>,
     ) {
+        let active_tab_id = self.tab_bar.active_tab_id();
         for (tab_id, path) in tabs_to_restore {
-            self.load_pdf_path_into_tab(tab_id, path, false, cx);
+            if Some(tab_id) == active_tab_id {
+                self.load_pdf_path_into_tab(tab_id, path, false, cx);
+                break;
+            }
         }
+    }
+
+    fn pending_load_path_for_tab(&self, tab_id: usize) -> Option<PathBuf> {
+        self.tab_bar
+            .tabs()
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .and_then(|tab| {
+                if tab.summary_loading {
+                    return None;
+                }
+                if tab.summary_failed || !tab.summary_loaded {
+                    return tab.path.clone();
+                }
+                None
+            })
+    }
+
+    fn load_tab_if_needed(&mut self, tab_id: usize, cx: &mut Context<Self>) -> bool {
+        if let Some(path) = self.pending_load_path_for_tab(tab_id) {
+            self.load_pdf_path_into_tab(tab_id, path, false, cx);
+            return true;
+        }
+        false
     }
 
     fn load_pdf_path_into_tab(
@@ -461,6 +496,7 @@ impl PdfViewer {
         if let Some(tab) = self.tab_bar.get_tab_mut(tab_id) {
             tab.path = Some(path.clone());
             tab.pages.clear();
+            tab.summary_loaded = false;
             tab.summary_loading = true;
             tab.summary_failed = false;
             tab.selected_page = 0;
@@ -500,6 +536,7 @@ impl PdfViewer {
                         Ok(mut pages) => {
                             pages.sort_by_key(|p| p.index);
                             tab.pages = pages;
+                            tab.summary_loaded = true;
                             tab.summary_loading = false;
                             tab.summary_failed = false;
 
@@ -526,6 +563,7 @@ impl PdfViewer {
                         }
                         Err(_) => {
                             tab.pages.clear();
+                            tab.summary_loaded = false;
                             tab.summary_loading = false;
                             tab.summary_failed = true;
                             tab.selected_page = 0;
@@ -699,22 +737,19 @@ impl PdfViewer {
         }
 
         self.persist_open_tabs();
+        if let Some(active_tab_id) = self.tab_bar.active_tab_id()
+            && self.load_tab_if_needed(active_tab_id, cx)
+        {
+            return;
+        }
         cx.notify();
     }
 
     fn switch_to_tab(&mut self, tab_id: usize, cx: &mut Context<Self>) {
         if self.tab_bar.switch_to_tab(tab_id) {
-            let retry_path = self.tab_bar.get_active_tab().and_then(|tab| {
-                if tab.summary_failed && !tab.summary_loading {
-                    tab.path.clone()
-                } else {
-                    None
-                }
-            });
             self.persist_open_tabs();
             self.scroll_tab_bar_to_active_tab();
-            if let Some(path) = retry_path {
-                self.load_pdf_path_into_tab(tab_id, path, false, cx);
+            if self.load_tab_if_needed(tab_id, cx) {
                 return;
             }
             cx.notify();

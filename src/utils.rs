@@ -5,7 +5,7 @@ use image::{Frame as RasterFrame, RgbaImage};
 use pdfium_render::prelude::*;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Instant;
 use std::time::SystemTime;
 
@@ -24,6 +24,7 @@ pub struct PageSummary {
 
 static PDFIUM_INSTANCE: OnceLock<Pdfium> = OnceLock::new();
 static PDFIUM_INIT_LOCK: Mutex<()> = Mutex::new(());
+static PDFIUM_ACCESS_LOCK: Mutex<()> = Mutex::new(());
 static PDFIUM_DOCUMENT_CACHE: OnceLock<Mutex<Option<CachedPdfDocument>>> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,6 +57,17 @@ fn shared_pdfium(language: Language) -> Result<&'static Pdfium> {
     PDFIUM_INSTANCE
         .get()
         .ok_or_else(|| anyhow!("Pdfium initialized but instance is unavailable"))
+}
+
+fn pdfium_access_guard() -> Result<MutexGuard<'static, ()>> {
+    PDFIUM_ACCESS_LOCK
+        .lock()
+        .map_err(|_| anyhow!("Pdfium global access lock is poisoned"))
+}
+
+pub(super) fn ensure_pdfium_ready(language: Language) -> Result<()> {
+    let _access_guard = pdfium_access_guard()?;
+    shared_pdfium(language).map(|_| ())
 }
 
 fn app_resources_lib_dir(current_exe: &Path) -> Option<PathBuf> {
@@ -191,6 +203,7 @@ pub(super) fn display_file_name(path: &Path) -> String {
 }
 
 pub(super) fn load_document_summary(path: &Path, language: Language) -> Result<Vec<PageSummary>> {
+    let _access_guard = pdfium_access_guard()?;
     let i18n = I18n::new(language);
     crate::debug_log!("[pdf][load] opening: {}", path.display());
 
@@ -236,15 +249,10 @@ pub(super) fn load_display_images(
     target_width: u32,
     language: Language,
 ) -> Result<Vec<(usize, Arc<GpuiRenderImage>)>> {
+    let _access_guard = pdfium_access_guard()?;
     if page_indices.is_empty() {
         return Ok(Vec::new());
     }
-
-    crate::debug_log!(
-        "[pdf][render] loading {} pages, target_width={}",
-        page_indices.len(),
-        target_width
-    );
 
     let render_config = PdfRenderConfig::new().set_target_width(target_width as i32);
     let mut display_images = Vec::new();
@@ -405,6 +413,7 @@ pub fn load_page_text_for_selection(
     path: &Path,
     page_index: usize,
 ) -> Result<Option<(usize, f32, f32, Vec<super::text_selection::TextCharInfo>)>> {
+    let _access_guard = pdfium_access_guard()?;
     let cache_key = document_cache_key(path);
 
     let mut cached_document_guard = match document_cache().lock() {
