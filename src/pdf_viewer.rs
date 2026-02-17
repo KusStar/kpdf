@@ -1216,7 +1216,6 @@ impl PdfViewer {
             .items_center()
             .px_1()
             .gap_1()
-            .overflow_x_hidden()
             .children(tabs_to_show.iter().map(|tab| {
                 let tab_id = tab.id;
                 let is_active = active_tab_id == Some(tab_id);
@@ -1389,24 +1388,6 @@ impl Render for PdfViewer {
                                 .items_center()
                                 .gap_2()
                                 .window_control_area(WindowControlArea::Drag)
-                                .child(
-                                    Icon::new(crate::icons::IconName::File)
-                                        .size_4()
-                                        .text_color(cx.theme().foreground),
-                                )
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .font_semibold()
-                                        .text_color(cx.theme().foreground)
-                                        .child("kPDF"),
-                                )
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(file_name),
-                                ),
                         )
                         .when(!cfg!(target_os = "macos"), |this| {
                             this.child(
