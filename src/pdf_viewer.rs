@@ -14,7 +14,10 @@ mod thumbnail_list;
 mod utils;
 
 use crate::i18n::{I18n, Language};
-use crate::{DisableLoggingMenu, EnableLoggingMenu, OpenLogsMenu, configure_app_menus};
+use crate::{
+    APP_REPOSITORY_URL, DisableLoggingMenu, EnableLoggingMenu, OpenLogsMenu, ShowAboutMenu,
+    configure_app_menus,
+};
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::input::{InputEvent, InputState};
@@ -78,6 +81,7 @@ const WINDOW_SIZE_KEY_HEIGHT: &str = "height";
 const OPEN_TABS_KEY_ACTIVE_INDEX: &str = "active_index";
 const TITLE_BAR_HEIGHT: f32 = 34.0;
 const TAB_BAR_HEIGHT: f32 = 36.0;
+const ABOUT_DIALOG_WIDTH: f32 = 460.0;
 #[cfg(target_os = "macos")]
 const TITLE_BAR_CONTENT_LEFT_PADDING: f32 = 80.0;
 #[cfg(not(target_os = "macos"))]
@@ -101,6 +105,7 @@ pub struct PdfViewer {
     recent_popup_panel_hovered: bool,
     recent_popup_hover_epoch: u64,
     recent_popup_anchor: Option<RecentPopupAnchor>,
+    about_dialog_open: bool,
     command_panel_open: bool,
     command_panel_query: String,
     command_panel_selected_index: usize,
@@ -198,6 +203,7 @@ impl PdfViewer {
             recent_popup_panel_hovered: false,
             recent_popup_hover_epoch: 0,
             recent_popup_anchor: None,
+            about_dialog_open: false,
             command_panel_open: false,
             command_panel_query: String::new(),
             command_panel_selected_index: 0,
@@ -712,6 +718,173 @@ impl PdfViewer {
         }
     }
 
+    fn open_about_dialog(&mut self, cx: &mut Context<Self>) {
+        if self.command_panel_open {
+            self.close_command_panel(cx);
+        }
+        if self.recent_popup_open {
+            self.close_recent_popup(cx);
+        }
+        if !self.about_dialog_open {
+            self.about_dialog_open = true;
+            cx.notify();
+        }
+    }
+
+    fn close_about_dialog(&mut self, cx: &mut Context<Self>) {
+        if self.about_dialog_open {
+            self.about_dialog_open = false;
+            self.needs_root_refocus = true;
+            cx.notify();
+        }
+    }
+
+    fn render_about_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.about_dialog_open {
+            return None;
+        }
+
+        let i18n = self.i18n();
+        let version = env!("CARGO_PKG_VERSION");
+
+        Some(
+            div()
+                .id("about-dialog-overlay")
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .bg(cx.theme().background.opacity(0.45))
+                .on_scroll_wheel(cx.listener(|_, _: &ScrollWheelEvent, _, cx| {
+                    cx.stop_propagation();
+                }))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.close_about_dialog(cx);
+                    }),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .v_flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .id("about-dialog")
+                                .w(px(ABOUT_DIALOG_WIDTH))
+                                .v_flex()
+                                .gap_3()
+                                .popover_style(cx)
+                                .p_4()
+                                .on_scroll_wheel(cx.listener(|_, _: &ScrollWheelEvent, _, cx| {
+                                    cx.stop_propagation();
+                                }))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|_, _, _, cx| {
+                                        cx.stop_propagation();
+                                    }),
+                                )
+                                .child(
+                                    div()
+                                        .v_flex()
+                                        .gap_1()
+                                        .child(
+                                            div()
+                                                .text_lg()
+                                                .text_color(cx.theme().foreground)
+                                                .child(format!(
+                                                    "{} kPDF",
+                                                    i18n.about_dialog_title()
+                                                )),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child(i18n.about_app_info()),
+                                        ),
+                                )
+                                .child(div().h(px(1.)).bg(cx.theme().border))
+                                .child(
+                                    div()
+                                        .v_flex()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .text_color(cx.theme().muted_foreground)
+                                                        .child(i18n.version_label()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .text_color(cx.theme().foreground)
+                                                        .child(version),
+                                                ),
+                                        )
+                                        .child(
+                                            div()
+                                                .v_flex()
+                                                .items_start()
+                                                .gap_1()
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .text_color(cx.theme().muted_foreground)
+                                                        .child(i18n.website_label()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .text_color(cx.theme().foreground)
+                                                        .child(APP_REPOSITORY_URL),
+                                                ),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .flex()
+                                        .items_center()
+                                        .justify_end()
+                                        .gap_2()
+                                        .child(
+                                            Button::new("about-close")
+                                                .small()
+                                                .ghost()
+                                                .label(i18n.close_button())
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.close_about_dialog(cx);
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("about-open-website")
+                                                .small()
+                                                .label(i18n.open_website_button())
+                                                .on_click(|_, _, cx| {
+                                                    cx.open_url(APP_REPOSITORY_URL);
+                                                }),
+                                        ),
+                                ),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+
     #[allow(dead_code)]
     fn create_new_tab(&mut self, cx: &mut Context<Self>) {
         self.tab_bar.create_tab();
@@ -799,6 +972,14 @@ impl PdfViewer {
     ) {
         let is_primary_modifier = event.keystroke.modifiers.secondary();
         let key = event.keystroke.key.as_str();
+
+        if self.about_dialog_open {
+            if key == "escape" {
+                self.close_about_dialog(cx);
+                cx.stop_propagation();
+            }
+            return;
+        }
 
         if self.command_panel_open {
             if key == "escape" {
@@ -2569,9 +2750,13 @@ impl Render for PdfViewer {
         let context_menu = self.render_context_menu(cx);
         let drag_tab_preview = self.render_drag_tab_preview(cx);
         let command_panel = self.render_command_panel(cx);
+        let about_dialog = self.render_about_dialog(cx);
 
         div()
             .size_full()
+            .on_action(cx.listener(|this, _: &ShowAboutMenu, _, cx| {
+                this.open_about_dialog(cx);
+            }))
             .on_action(cx.listener(|this, _: &EnableLoggingMenu, _, cx| {
                 if crate::logger::enable_file_logging() {
                     configure_app_menus(cx, this.i18n());
@@ -2750,6 +2935,9 @@ impl Render for PdfViewer {
                     })
                     .when(command_panel.is_some(), |this| {
                         this.child(command_panel.unwrap())
+                    })
+                    .when(about_dialog.is_some(), |this| {
+                        this.child(about_dialog.unwrap())
                     }),
             )
     }

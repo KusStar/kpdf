@@ -10,22 +10,36 @@ use pdf_viewer::PdfViewer;
 const WINDOW_SIZE_TREE: &str = "window_size";
 const WINDOW_SIZE_KEY_WIDTH: &str = "width";
 const WINDOW_SIZE_KEY_HEIGHT: &str = "height";
+pub(crate) const APP_REPOSITORY_URL: &str = "https://github.com/KusStar/kpdf";
 
-gpui::actions!(kpdf, [EnableLoggingMenu, DisableLoggingMenu, OpenLogsMenu]);
+gpui::actions!(
+    kpdf,
+    [
+        ShowAboutMenu,
+        EnableLoggingMenu,
+        DisableLoggingMenu,
+        OpenLogsMenu
+    ]
+);
 
 pub(crate) fn configure_app_menus(cx: &mut App, i18n: i18n::I18n) {
-    let items = if logger::file_logging_enabled() {
-        vec![
+    let mut items = vec![
+        MenuItem::action(i18n.about_button(), ShowAboutMenu),
+        MenuItem::separator(),
+    ];
+
+    if logger::file_logging_enabled() {
+        items.extend([
             MenuItem::action(i18n.open_logs_button(), OpenLogsMenu),
             MenuItem::separator(),
             MenuItem::action(i18n.disable_logging_button(), DisableLoggingMenu),
-        ]
+        ]);
     } else {
-        vec![MenuItem::action(
+        items.push(MenuItem::action(
             i18n.enable_logging_button(),
             EnableLoggingMenu,
-        )]
-    };
+        ));
+    }
 
     cx.set_menus(vec![Menu {
         name: "kPDF".into(),

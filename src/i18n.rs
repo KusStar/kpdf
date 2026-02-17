@@ -112,6 +112,55 @@ impl I18n {
         }
     }
 
+    pub fn about_button(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "关于 kPDF",
+            Language::EnUs => "About kPDF",
+        }
+    }
+
+    pub fn about_dialog_title(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "关于",
+            Language::EnUs => "About",
+        }
+    }
+
+    pub fn about_app_info(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "轻量级 PDF 阅读器",
+            Language::EnUs => "A lightweight PDF viewer",
+        }
+    }
+
+    pub fn version_label(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "版本",
+            Language::EnUs => "Version",
+        }
+    }
+
+    pub fn website_label(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "官网",
+            Language::EnUs => "Website",
+        }
+    }
+
+    pub fn open_website_button(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "打开官网",
+            Language::EnUs => "Open Website",
+        }
+    }
+
+    pub fn close_button(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "关闭",
+            Language::EnUs => "Close",
+        }
+    }
+
     pub fn no_pages(self) -> &'static str {
         match self.lang {
             Language::ZhCn => "暂无页面",
