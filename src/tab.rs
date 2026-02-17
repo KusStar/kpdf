@@ -11,6 +11,8 @@ pub struct PdfTab {
     pub id: usize,
     pub path: Option<PathBuf>,
     pub pages: Vec<PageSummary>,
+    pub summary_loading: bool,
+    pub summary_failed: bool,
     pub selected_page: usize,
     pub active_page: usize,
     pub zoom: f32,
@@ -38,6 +40,8 @@ impl PdfTab {
             id,
             path: None,
             pages: Vec::new(),
+            summary_loading: false,
+            summary_failed: false,
             selected_page: 0,
             active_page: 0,
             zoom: 1.0,
@@ -157,6 +161,10 @@ impl TabBar {
     pub fn get_active_tab_mut(&mut self) -> Option<&mut PdfTab> {
         let active_id = self.active_tab_id?;
         self.tabs.iter_mut().find(|t| t.id == active_id)
+    }
+
+    pub fn get_tab_mut(&mut self, tab_id: usize) -> Option<&mut PdfTab> {
+        self.tabs.iter_mut().find(|t| t.id == tab_id)
     }
 
     pub fn switch_to_tab(&mut self, tab_id: usize) -> bool {

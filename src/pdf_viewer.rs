@@ -69,8 +69,10 @@ const RECENT_POPUP_CLOSE_DELAY_MS: u64 = 120;
 const RECENT_FILES_TREE: &str = "recent_files";
 const FILE_POSITIONS_TREE: &str = "file_positions";
 const WINDOW_SIZE_TREE: &str = "window_size";
+const OPEN_TABS_TREE: &str = "open_tabs";
 const WINDOW_SIZE_KEY_WIDTH: &str = "width";
 const WINDOW_SIZE_KEY_HEIGHT: &str = "height";
+const OPEN_TABS_KEY_ACTIVE_INDEX: &str = "active_index";
 const TITLE_BAR_HEIGHT: f32 = 34.0;
 const TAB_BAR_HEIGHT: f32 = 36.0;
 #[cfg(target_os = "macos")]
@@ -87,6 +89,7 @@ pub struct PdfViewer {
     recent_store: Option<sled::Tree>,
     position_store: Option<sled::Tree>,
     window_size_store: Option<sled::Tree>,
+    open_tabs_store: Option<sled::Tree>,
     last_window_size: Option<(f32, f32)>,
     recent_files: Vec<PathBuf>,
     recent_popup_open: bool,
@@ -122,11 +125,16 @@ pub struct PdfViewer {
 impl PdfViewer {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let language = Language::detect();
-        let (recent_store, position_store, window_size_store) = Self::open_persistent_stores();
+        let (recent_store, position_store, window_size_store, open_tabs_store) =
+            Self::open_persistent_stores();
         let recent_files = recent_store
             .as_ref()
             .map(Self::load_recent_files_from_store)
             .unwrap_or_default();
+        let (saved_open_tab_paths, saved_active_open_tab_index) = open_tabs_store
+            .as_ref()
+            .map(Self::load_open_tabs_from_store)
+            .unwrap_or_else(|| (Vec::new(), None));
         let command_panel_input_state = cx.new(|cx| {
             InputState::new(window, cx).placeholder(I18n::new(language).command_panel_search_hint())
         });
@@ -150,16 +158,35 @@ impl PdfViewer {
         );
 
         let mut tab_bar = TabBar::new();
-        // 创建第一个空标签页
-        tab_bar.create_tab();
+        let mut tabs_to_restore = Vec::new();
+        for path in saved_open_tab_paths {
+            if !path.exists() {
+                continue;
+            }
+            let tab_id = tab_bar.create_tab_with_path(path.clone(), Vec::new());
+            tabs_to_restore.push((tab_id, path));
+        }
 
-        Self {
+        if tabs_to_restore.is_empty() {
+            // 没有可恢复标签时，创建第一个空标签页
+            tab_bar.create_tab();
+        } else {
+            let target_active_index = saved_active_open_tab_index
+                .unwrap_or_else(|| tabs_to_restore.len().saturating_sub(1))
+                .min(tabs_to_restore.len().saturating_sub(1));
+            if let Some((tab_id, _)) = tabs_to_restore.get(target_active_index) {
+                tab_bar.switch_to_tab(*tab_id);
+            }
+        }
+
+        let mut viewer = Self {
             focus_handle: cx.focus_handle(),
             language,
             tab_bar,
             recent_store,
             position_store,
             window_size_store,
+            open_tabs_store,
             last_window_size: None,
             recent_files,
             recent_popup_open: false,
@@ -188,7 +215,11 @@ impl PdfViewer {
             command_panel_needs_focus: false,
             needs_root_refocus: false,
             resize_restore_epoch: 0,
-        }
+        };
+
+        viewer.persist_open_tabs();
+        viewer.restore_open_tabs(tabs_to_restore, cx);
+        viewer
     }
 
     fn i18n(&self) -> I18n {
@@ -219,12 +250,17 @@ impl PdfViewer {
         self.active_tab_mut().map(f)
     }
 
-    fn open_persistent_stores() -> (Option<sled::Tree>, Option<sled::Tree>, Option<sled::Tree>) {
+    fn open_persistent_stores() -> (
+        Option<sled::Tree>,
+        Option<sled::Tree>,
+        Option<sled::Tree>,
+        Option<sled::Tree>,
+    ) {
         let db_path = Self::recent_files_db_path();
         if let Some(parent) = db_path.parent() {
             if std::fs::create_dir_all(parent).is_err() {
                 eprintln!("[store] create dir failed: {}", parent.to_string_lossy());
-                return (None, None, None);
+                return (None, None, None, None);
             }
         }
 
@@ -236,7 +272,7 @@ impl PdfViewer {
                     db_path.to_string_lossy(),
                     err
                 );
-                return (None, None, None);
+                return (None, None, None, None);
             }
         };
 
@@ -264,16 +300,29 @@ impl PdfViewer {
                 None
             }
         };
+        let open_tabs_store = match db.open_tree(OPEN_TABS_TREE) {
+            Ok(tree) => Some(tree),
+            Err(err) => {
+                eprintln!("[store] open tree failed: {} | {}", OPEN_TABS_TREE, err);
+                None
+            }
+        };
 
         eprintln!(
-            "[store] init recent={} positions={} window_size={} path={}",
+            "[store] init recent={} positions={} window_size={} open_tabs={} path={}",
             recent_store.is_some(),
             position_store.is_some(),
             window_size_store.is_some(),
+            open_tabs_store.is_some(),
             db_path.to_string_lossy()
         );
 
-        (recent_store, position_store, window_size_store)
+        (
+            recent_store,
+            position_store,
+            window_size_store,
+            open_tabs_store,
+        )
     }
 
     fn recent_files_db_path() -> PathBuf {
@@ -301,6 +350,203 @@ impl PdfViewer {
             })
             .take(MAX_RECENT_FILES)
             .collect()
+    }
+
+    fn load_open_tabs_from_store(store: &sled::Tree) -> (Vec<PathBuf>, Option<usize>) {
+        let mut indexed_tabs = Vec::new();
+        for entry in store.iter() {
+            let (key, value) = match entry {
+                Ok(entry) => entry,
+                Err(_) => continue,
+            };
+            if key.len() != 4 {
+                continue;
+            }
+            let tab_index = u32::from_be_bytes([key[0], key[1], key[2], key[3]]) as usize;
+            let path_str = match String::from_utf8(value.to_vec()) {
+                Ok(path) if !path.is_empty() => path,
+                _ => continue,
+            };
+            indexed_tabs.push((tab_index, PathBuf::from(path_str)));
+        }
+        indexed_tabs.sort_by_key(|(index, _)| *index);
+
+        let active_index = store
+            .get(OPEN_TABS_KEY_ACTIVE_INDEX)
+            .ok()
+            .flatten()
+            .and_then(|raw| {
+                if raw.len() != 8 {
+                    return None;
+                }
+                let mut bytes = [0u8; 8];
+                bytes.copy_from_slice(raw.as_ref());
+                usize::try_from(u64::from_be_bytes(bytes)).ok()
+            });
+
+        (
+            indexed_tabs
+                .into_iter()
+                .map(|(_, path)| path)
+                .collect::<Vec<_>>(),
+            active_index,
+        )
+    }
+
+    fn persist_open_tabs(&self) {
+        let Some(store) = self.open_tabs_store.as_ref() else {
+            return;
+        };
+
+        if store.clear().is_err() {
+            return;
+        }
+
+        let active_tab_id = self.tab_bar.active_tab_id();
+        let mut active_index = None;
+        let mut open_paths = Vec::new();
+        for tab in self.tab_bar.tabs() {
+            let Some(path) = tab.path.as_ref() else {
+                continue;
+            };
+            if active_tab_id == Some(tab.id) {
+                active_index = Some(open_paths.len());
+            }
+            open_paths.push(path.clone());
+        }
+
+        for (index, path) in open_paths.iter().enumerate() {
+            let key = (index as u32).to_be_bytes();
+            if store
+                .insert(key, path.to_string_lossy().as_bytes())
+                .is_err()
+            {
+                return;
+            }
+        }
+
+        if let Some(index) = active_index {
+            let active_bytes = (index as u64).to_be_bytes();
+            if store
+                .insert(OPEN_TABS_KEY_ACTIVE_INDEX, active_bytes.as_slice())
+                .is_err()
+            {
+                return;
+            }
+        }
+
+        let _ = store.flush();
+    }
+
+    fn restore_open_tabs(
+        &mut self,
+        tabs_to_restore: Vec<(usize, PathBuf)>,
+        cx: &mut Context<Self>,
+    ) {
+        for (tab_id, path) in tabs_to_restore {
+            self.load_pdf_path_into_tab(tab_id, path, false, cx);
+        }
+    }
+
+    fn load_pdf_path_into_tab(
+        &mut self,
+        tab_id: usize,
+        path: PathBuf,
+        remember_recent_file: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let language = self.language;
+
+        if let Some(tab) = self.tab_bar.get_tab_mut(tab_id) {
+            tab.path = Some(path.clone());
+            tab.pages.clear();
+            tab.summary_loading = true;
+            tab.summary_failed = false;
+            tab.selected_page = 0;
+            tab.active_page = 0;
+            tab.zoom = 1.0;
+            tab.last_saved_position = None;
+            tab.reset_page_render_state();
+        } else {
+            return;
+        }
+
+        self.persist_open_tabs();
+        if self.tab_bar.active_tab_id() == Some(tab_id) {
+            self.scroll_tab_bar_to_active_tab();
+        }
+        cx.notify();
+
+        cx.spawn(async move |view, cx| {
+            let parsed = cx
+                .background_executor()
+                .spawn({
+                    let path = path.clone();
+                    async move { load_document_summary(&path, language) }
+                })
+                .await;
+
+            let _ = view.update(cx, |this, cx| {
+                let restored_page = this.load_saved_file_position(&path);
+                let mut loaded_ok = false;
+
+                if let Some(tab) = this.tab_bar.get_tab_mut(tab_id) {
+                    if tab.path.as_ref() != Some(&path) {
+                        return;
+                    }
+                    tab.path = Some(path.clone());
+                    match parsed {
+                        Ok(mut pages) => {
+                            pages.sort_by_key(|p| p.index);
+                            tab.pages = pages;
+                            tab.summary_loading = false;
+                            tab.summary_failed = false;
+
+                            let initial_page = restored_page
+                                .unwrap_or(0)
+                                .min(tab.pages.len().saturating_sub(1));
+                            tab.selected_page = initial_page;
+                            tab.active_page = initial_page;
+                            tab.zoom = 1.0;
+                            tab.reset_page_render_state();
+
+                            if !tab.pages.is_empty() {
+                                let strategy = if initial_page == 0 {
+                                    ScrollStrategy::Top
+                                } else {
+                                    ScrollStrategy::Center
+                                };
+                                tab.suppress_display_scroll_sync_once = true;
+                                tab.thumbnail_scroll.scroll_to_item(initial_page, strategy);
+                                tab.display_scroll
+                                    .scroll_to_item(initial_page, ScrollStrategy::Top);
+                            }
+                            loaded_ok = true;
+                        }
+                        Err(_) => {
+                            tab.pages.clear();
+                            tab.summary_loading = false;
+                            tab.summary_failed = true;
+                            tab.selected_page = 0;
+                            tab.active_page = 0;
+                            tab.zoom = 1.0;
+                            tab.reset_page_render_state();
+                        }
+                    }
+                }
+
+                if loaded_ok && remember_recent_file {
+                    this.remember_recent_file(&path);
+                }
+
+                this.persist_open_tabs();
+                if this.tab_bar.active_tab_id() == Some(tab_id) {
+                    this.scroll_tab_bar_to_active_tab();
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn open_pdf_dialog(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -361,132 +607,24 @@ impl PdfViewer {
     }
 
     fn open_pdf_path_in_current_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        let language = self.language;
-
-        // 先重置当前标签页
-        if let Some(tab) = self.active_tab_mut() {
-            tab.reset_page_render_state();
-        }
-        cx.notify();
-
-        cx.spawn(async move |view, cx| {
-            let parsed = cx
-                .background_executor()
-                .spawn({
-                    let path = path.clone();
-                    async move { load_document_summary(&path, language) }
-                })
-                .await;
-
-            let _ = view.update(cx, |this, cx| match parsed {
-                Ok(mut pages) => {
-                    pages.sort_by_key(|p| p.index);
-
-                    let restored_page = this.load_saved_file_position(&path);
-
-                    if let Some(tab) = this.active_tab_mut() {
-                        tab.path = Some(path.clone());
-                        tab.pages = pages;
-                        let initial_page = restored_page
-                            .unwrap_or(0)
-                            .min(tab.pages.len().saturating_sub(1));
-                        tab.selected_page = initial_page;
-                        tab.active_page = initial_page;
-                        tab.zoom = 1.0;
-                        tab.reset_page_render_state();
-
-                        if !tab.pages.is_empty() {
-                            let strategy = if initial_page == 0 {
-                                ScrollStrategy::Top
-                            } else {
-                                ScrollStrategy::Center
-                            };
-                            tab.suppress_display_scroll_sync_once = true;
-                            tab.thumbnail_scroll.scroll_to_item(initial_page, strategy);
-                            tab.display_scroll
-                                .scroll_to_item(initial_page, ScrollStrategy::Top);
-                        }
-                    }
-
-                    this.remember_recent_file(&path);
-                    this.scroll_tab_bar_to_active_tab();
-                    cx.notify();
-                }
-                Err(_) => {
-                    if let Some(tab) = this.active_tab_mut() {
-                        tab.path = Some(path.clone());
-                        tab.pages.clear();
-                        tab.selected_page = 0;
-                        tab.active_page = 0;
-                        tab.reset_page_render_state();
-                    }
-                    this.scroll_tab_bar_to_active_tab();
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
+        let tab_id = self
+            .tab_bar
+            .active_tab_id()
+            .unwrap_or_else(|| self.tab_bar.create_tab());
+        let _ = self.tab_bar.switch_to_tab(tab_id);
+        self.load_pdf_path_into_tab(tab_id, path, true, cx);
     }
 
     fn open_pdf_path_in_new_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        let language = self.language;
-
-        cx.spawn(async move |view, cx| {
-            let parsed = cx
-                .background_executor()
-                .spawn({
-                    let path = path.clone();
-                    async move { load_document_summary(&path, language) }
-                })
-                .await;
-
-            let _ = view.update(cx, |this, cx| match parsed {
-                Ok(mut pages) => {
-                    pages.sort_by_key(|p| p.index);
-                    let tab_id = this.tab_bar.create_tab_with_path(path.clone(), pages);
-                    this.tab_bar.switch_to_tab(tab_id);
-
-                    let restored_page = this.load_saved_file_position(&path);
-
-                    if let Some(tab) = this.tab_bar.get_active_tab_mut() {
-                        let initial_page = restored_page
-                            .unwrap_or(0)
-                            .min(tab.pages.len().saturating_sub(1));
-                        tab.selected_page = initial_page;
-                        tab.active_page = initial_page;
-                        tab.zoom = 1.0;
-
-                        if !tab.pages.is_empty() {
-                            let strategy = if initial_page == 0 {
-                                ScrollStrategy::Top
-                            } else {
-                                ScrollStrategy::Center
-                            };
-                            tab.suppress_display_scroll_sync_once = true;
-                            tab.thumbnail_scroll.scroll_to_item(initial_page, strategy);
-                            tab.display_scroll
-                                .scroll_to_item(initial_page, ScrollStrategy::Top);
-                        }
-                    }
-
-                    this.remember_recent_file(&path);
-                    this.scroll_tab_bar_to_active_tab();
-                    cx.notify();
-                }
-                Err(_) => {
-                    let tab_id = this.tab_bar.create_tab_with_path(path.clone(), Vec::new());
-                    this.tab_bar.switch_to_tab(tab_id);
-                    this.scroll_tab_bar_to_active_tab();
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
+        let tab_id = self.tab_bar.create_tab();
+        let _ = self.tab_bar.switch_to_tab(tab_id);
+        self.load_pdf_path_into_tab(tab_id, path, true, cx);
     }
 
     #[allow(dead_code)]
     fn create_new_tab(&mut self, cx: &mut Context<Self>) {
         self.tab_bar.create_tab();
+        self.persist_open_tabs();
         cx.notify();
     }
 
@@ -508,12 +646,25 @@ impl PdfViewer {
             self.tab_bar.create_tab();
         }
 
+        self.persist_open_tabs();
         cx.notify();
     }
 
     fn switch_to_tab(&mut self, tab_id: usize, cx: &mut Context<Self>) {
         if self.tab_bar.switch_to_tab(tab_id) {
+            let retry_path = self.tab_bar.get_active_tab().and_then(|tab| {
+                if tab.summary_failed && !tab.summary_loading {
+                    tab.path.clone()
+                } else {
+                    None
+                }
+            });
+            self.persist_open_tabs();
             self.scroll_tab_bar_to_active_tab();
+            if let Some(path) = retry_path {
+                self.load_pdf_path_into_tab(tab_id, path, false, cx);
+                return;
+            }
             cx.notify();
         }
     }
@@ -1865,10 +2016,15 @@ impl PdfViewer {
             } => {
                 let source_index = self.tab_bar.get_tab_index_by_id(source_tab_id);
                 let target_index = self.tab_bar.get_tab_index_by_id(target_tab_id);
+                let mut order_changed = false;
                 if let (Some(source_index), Some(target_index)) = (source_index, target_index)
                     && source_index != target_index
                 {
                     self.tab_bar.move_tab(source_index, target_index);
+                    order_changed = true;
+                }
+                if order_changed {
+                    self.persist_open_tabs();
                 }
                 self.drag_state = DragState::None;
                 self.drag_mouse_position = None;
@@ -2383,15 +2539,12 @@ impl Render for PdfViewer {
                                 .when(!cfg!(target_os = "macos"), |this| {
                                     let should_move = Rc::new(Cell::new(false));
                                     this.on_double_click(|_, window, _| window.zoom_window())
-                                        .on_mouse_down(
-                                            MouseButton::Left,
-                                            {
-                                                let should_move = should_move.clone();
-                                                move |_, _, _| {
-                                                    should_move.set(true);
-                                                }
-                                            },
-                                        )
+                                        .on_mouse_down(MouseButton::Left, {
+                                            let should_move = should_move.clone();
+                                            move |_, _, _| {
+                                                should_move.set(true);
+                                            }
+                                        })
                                         .on_mouse_down_out({
                                             let should_move = should_move.clone();
                                             move |_, _, _| {

@@ -1,5 +1,5 @@
-use super::display_file_name;
 use super::PdfViewer;
+use super::display_file_name;
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::input::Input;
