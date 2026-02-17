@@ -77,6 +77,7 @@ const TITLE_BAR_CONTENT_LEFT_PADDING: f32 = 12.0;
 pub use self::utils::PageSummary;
 
 pub struct PdfViewer {
+    focus_handle: FocusHandle,
     language: Language,
     tab_bar: TabBar,
     recent_store: Option<sled::Tree>,
@@ -102,10 +103,11 @@ pub struct PdfViewer {
     drag_state: DragState,
     drag_mouse_position: Option<Point<Pixels>>,
     text_hover_target: Option<(usize, usize)>, // (tab_id, page_index)
+    needs_initial_focus: bool,
 }
 
 impl PdfViewer {
-    pub fn new() -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
         let language = Language::detect();
         let (recent_store, position_store, window_size_store) = Self::open_persistent_stores();
         let recent_files = recent_store
@@ -118,6 +120,7 @@ impl PdfViewer {
         tab_bar.create_tab();
 
         Self {
+            focus_handle: cx.focus_handle(),
             language,
             tab_bar,
             recent_store,
@@ -141,6 +144,7 @@ impl PdfViewer {
             drag_state: DragState::None,
             drag_mouse_position: None,
             text_hover_target: None,
+            needs_initial_focus: true,
         }
     }
 
@@ -467,6 +471,133 @@ impl PdfViewer {
         if self.tab_bar.switch_to_tab(tab_id) {
             self.scroll_tab_bar_to_active_tab();
             cx.notify();
+        }
+    }
+
+    fn visible_tab_ids(&self) -> Vec<usize> {
+        let tabs = self.tab_bar.tabs();
+        let has_file_open = tabs.iter().any(|tab| tab.path.is_some());
+        tabs.iter()
+            .filter(|tab| !has_file_open || tab.path.is_some())
+            .map(|tab| tab.id)
+            .collect()
+    }
+
+    fn switch_to_visible_tab_by_index(&mut self, visible_index: usize, cx: &mut Context<Self>) {
+        let visible_tabs = self.visible_tab_ids();
+        if visible_tabs.is_empty() {
+            return;
+        }
+        let target_index = visible_index.min(visible_tabs.len().saturating_sub(1));
+        self.switch_to_tab(visible_tabs[target_index], cx);
+    }
+
+    fn switch_visible_tab_by_offset(&mut self, offset: isize, cx: &mut Context<Self>) {
+        let visible_tabs = self.visible_tab_ids();
+        if visible_tabs.len() < 2 {
+            return;
+        }
+
+        let current_index = self
+            .tab_bar
+            .active_tab_id()
+            .and_then(|id| visible_tabs.iter().position(|tab_id| *tab_id == id))
+            .unwrap_or(0);
+        let len = visible_tabs.len() as isize;
+        let next_index = (current_index as isize + offset).rem_euclid(len) as usize;
+        self.switch_to_tab(visible_tabs[next_index], cx);
+    }
+
+    fn handle_key_down(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let is_primary_modifier = event.keystroke.modifiers.secondary();
+        let key = event.keystroke.key.as_str();
+
+        // Handle Cmd/Ctrl+C for copy
+        if key == "c" && is_primary_modifier {
+            self.copy_selected_text();
+            cx.stop_propagation();
+        }
+        // Handle Cmd/Ctrl+A for select all on current page
+        else if key == "a" && is_primary_modifier {
+            self.select_all_text(cx);
+            cx.stop_propagation();
+        }
+        // Handle Escape to clear selection
+        else if key == "escape" {
+            self.clear_text_selection(cx);
+            cx.stop_propagation();
+        }
+        // Handle Cmd/Ctrl+W to close current tab
+        else if key == "w" && is_primary_modifier {
+            self.close_current_tab(cx);
+            cx.stop_propagation();
+        }
+        // Handle Cmd/Ctrl+T to open PDF in a new tab flow
+        else if key == "t" && is_primary_modifier && !event.keystroke.modifiers.shift {
+            self.open_pdf_dialog(window, cx);
+            cx.stop_propagation();
+        }
+        // Handle Cmd/Ctrl+O to open PDF
+        else if key == "o" && is_primary_modifier {
+            self.open_pdf_dialog(window, cx);
+            cx.stop_propagation();
+        }
+        // Handle Cmd/Ctrl+Shift+[ to switch to previous tab
+        else if key == "[" && is_primary_modifier && event.keystroke.modifiers.shift {
+            self.switch_visible_tab_by_offset(-1, cx);
+            cx.stop_propagation();
+        }
+        // Handle Cmd/Ctrl+Shift+] to switch to next tab
+        else if key == "]" && is_primary_modifier && event.keystroke.modifiers.shift {
+            self.switch_visible_tab_by_offset(1, cx);
+            cx.stop_propagation();
+        }
+        // Handle Cmd/Ctrl+1..9 to switch tabs
+        else if is_primary_modifier {
+            match key {
+                "1" => {
+                    self.switch_to_visible_tab_by_index(0, cx);
+                    cx.stop_propagation();
+                }
+                "2" => {
+                    self.switch_to_visible_tab_by_index(1, cx);
+                    cx.stop_propagation();
+                }
+                "3" => {
+                    self.switch_to_visible_tab_by_index(2, cx);
+                    cx.stop_propagation();
+                }
+                "4" => {
+                    self.switch_to_visible_tab_by_index(3, cx);
+                    cx.stop_propagation();
+                }
+                "5" => {
+                    self.switch_to_visible_tab_by_index(4, cx);
+                    cx.stop_propagation();
+                }
+                "6" => {
+                    self.switch_to_visible_tab_by_index(5, cx);
+                    cx.stop_propagation();
+                }
+                "7" => {
+                    self.switch_to_visible_tab_by_index(6, cx);
+                    cx.stop_propagation();
+                }
+                "8" => {
+                    self.switch_to_visible_tab_by_index(7, cx);
+                    cx.stop_propagation();
+                }
+                "9" => {
+                    self.switch_to_visible_tab_by_index(usize::MAX, cx);
+                    cx.stop_propagation();
+                }
+                _ => {}
+            }
         }
     }
 
@@ -1942,8 +2073,19 @@ impl PdfViewer {
     }
 }
 
+impl Focusable for PdfViewer {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 impl Render for PdfViewer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.needs_initial_focus {
+            self.needs_initial_focus = false;
+            cx.focus_self(window);
+        }
+
         window.set_rem_size(cx.theme().font_size);
 
         let bounds = window.bounds();
@@ -2025,6 +2167,16 @@ impl Render for PdfViewer {
                 .size_full()
                 .bg(cx.theme().background)
                 .relative()
+                .track_focus(&self.focus_handle)
+                .capture_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                    this.handle_key_down(event, window, cx);
+                }))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, window, _cx| {
+                        window.focus(&this.focus_handle);
+                    }),
+                )
                 .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
                     this.update_drag_mouse_position(event.position, cx);
                 }))
@@ -2123,35 +2275,6 @@ impl Render for PdfViewer {
                             display_sizes,
                             display_panel_width,
                             cx,
-                        ))
-                        .on_key_down(cx.listener(
-                            |this, event: &gpui::KeyDownEvent, _window, cx| {
-                                // Handle Cmd+C / Ctrl+C for copy
-                                if event.keystroke.key == "c" && event.keystroke.modifiers.platform
-                                {
-                                    this.copy_selected_text();
-                                    cx.stop_propagation();
-                                }
-                                // Handle Cmd+A / Ctrl+A for select all on current page
-                                else if event.keystroke.key == "a"
-                                    && event.keystroke.modifiers.platform
-                                {
-                                    this.select_all_text(cx);
-                                    cx.stop_propagation();
-                                }
-                                // Handle Escape to clear selection
-                                else if event.keystroke.key == "escape" {
-                                    this.clear_text_selection(cx);
-                                    cx.stop_propagation();
-                                }
-                                // Handle Cmd+W / Ctrl+W to close current tab
-                                else if event.keystroke.key == "w"
-                                    && event.keystroke.modifiers.platform
-                                {
-                                    this.close_current_tab(cx);
-                                    cx.stop_propagation();
-                                }
-                            },
                         )),
                 )
                 .when(context_menu.is_some(), |this| {

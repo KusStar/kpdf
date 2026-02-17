@@ -69,7 +69,7 @@ fn main() {
                 ..WindowOptions::default()
             };
 
-            cx.open_window(window_options, |_, cx| cx.new(|_| PdfViewer::new()))?;
+            cx.open_window(window_options, |_, cx| cx.new(|cx| PdfViewer::new(cx)))?;
             Ok::<_, anyhow::Error>(())
         })
         .detach();
