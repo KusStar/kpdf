@@ -391,6 +391,7 @@ impl PdfViewer {
         .detach();
     }
 
+    #[allow(dead_code)]
     fn create_new_tab(&mut self, cx: &mut Context<Self>) {
         self.tab_bar.create_tab();
         cx.notify();
@@ -1277,8 +1278,8 @@ impl PdfViewer {
                             .size_4()
                             .text_color(cx.theme().muted_foreground),
                     )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.create_new_tab(cx);
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_pdf_dialog(window, cx);
                     })),
             )
     }
