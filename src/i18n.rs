@@ -18,15 +18,24 @@ impl Language {
         .flatten()
         {
             let tag = raw.trim().to_ascii_lowercase();
-            if tag.starts_with("en") {
-                return Self::EnUs;
+            if tag.is_empty() {
+                continue;
             }
-            if tag.starts_with("zh") {
+
+            let is_chinese = tag.starts_with("zh")
+                || tag == "cn"
+                || tag.starts_with("cn_")
+                || tag.starts_with("cn-")
+                || tag.contains("_zh")
+                || tag.contains("-zh");
+            if is_chinese {
                 return Self::ZhCn;
             }
+
+            return Self::EnUs;
         }
 
-        Self::ZhCn
+        Self::EnUs
     }
 }
 
