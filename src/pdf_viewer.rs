@@ -116,6 +116,7 @@ pub struct PdfViewer {
     needs_initial_focus: bool,
     command_panel_needs_focus: bool,
     needs_root_refocus: bool,
+    resize_restore_epoch: u64,
 }
 
 impl PdfViewer {
@@ -186,6 +187,7 @@ impl PdfViewer {
             needs_initial_focus: true,
             command_panel_needs_focus: false,
             needs_root_refocus: false,
+            resize_restore_epoch: 0,
         }
     }
 
@@ -1297,6 +1299,52 @@ impl PdfViewer {
         }
     }
 
+    fn schedule_restore_current_page_after_layout_change(
+        &mut self,
+        keep_page: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab_id) = self.tab_bar.active_tab_id() else {
+            return;
+        };
+
+        self.resize_restore_epoch = self.resize_restore_epoch.wrapping_add(1);
+        let restore_epoch = self.resize_restore_epoch;
+
+        cx.spawn(async move |view, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(120))
+                .await;
+
+            let _ = view.update(cx, |this, cx| {
+                if this.resize_restore_epoch != restore_epoch {
+                    return;
+                }
+
+                let Some(tab) = this.tab_bar.get_active_tab_mut() else {
+                    return;
+                };
+                if tab.id != tab_id || tab.pages.is_empty() {
+                    return;
+                }
+
+                let page_index = keep_page.min(tab.pages.len().saturating_sub(1));
+                tab.active_page = page_index;
+                tab.selected_page = page_index;
+                tab.last_display_visible_range =
+                    Some(page_index..page_index.saturating_add(1).min(tab.pages.len()));
+                tab.suppress_display_scroll_sync_once = true;
+                tab.display_scroll
+                    .scroll_to_item(page_index, ScrollStrategy::Top);
+                tab.thumbnail_scroll
+                    .scroll_to_item(page_index, ScrollStrategy::Center);
+                tab.last_display_scroll_offset = Some(tab.display_scroll.offset());
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn thumbnail_base_width(&self) -> f32 {
         (SIDEBAR_WIDTH - THUMB_HORIZONTAL_PADDING).max(THUMB_MIN_WIDTH)
     }
@@ -2238,6 +2286,7 @@ impl Render for PdfViewer {
             220
         };
         let mut display_layout_changed = false;
+        let mut page_to_restore_after_layout_change = None;
         if let Some(tab) = self.active_tab_mut() {
             let target_width_changed = tab.last_display_target_width != target_width;
             display_layout_changed = window_size_changed || target_width_changed;
@@ -2261,12 +2310,13 @@ impl Render for PdfViewer {
                     tab.selected_page = keep_page;
                     tab.last_display_visible_range =
                         Some(keep_page..keep_page.saturating_add(1).min(tab.pages.len()));
-                    tab.thumbnail_scroll
-                        .scroll_to_item(keep_page, ScrollStrategy::Center);
-                    tab.display_scroll.scroll_to_item(keep_page, ScrollStrategy::Top);
                     tab.last_display_scroll_offset = Some(tab.display_scroll.offset());
+                    page_to_restore_after_layout_change = Some(keep_page);
                 }
             }
+        }
+        if let Some(keep_page) = page_to_restore_after_layout_change {
+            self.schedule_restore_current_page_after_layout_change(keep_page, cx);
         }
         if !display_layout_changed {
             self.on_display_scroll_offset_changed(cx);
