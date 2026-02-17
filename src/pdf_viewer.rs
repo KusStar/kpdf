@@ -2648,7 +2648,9 @@ impl Render for PdfViewer {
         let mut window_size_changed = false;
         if self.last_window_size != Some(current_size) {
             self.last_window_size = Some(current_size);
-            self.save_window_size(current_size.0, current_size.1);
+            if !window.is_maximized() && !window.is_fullscreen() {
+                self.save_window_size(current_size.0, current_size.1);
+            }
             window_size_changed = true;
         }
 

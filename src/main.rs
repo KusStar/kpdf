@@ -99,16 +99,16 @@ fn main() {
 
         cx.spawn(async move |cx| {
             let saved_size = load_saved_window_size();
+            let saved_window_bounds = if let Some((w, h)) = saved_size {
+                Some(cx.update(|app| WindowBounds::centered(size(px(w), px(h)), app))?)
+            } else {
+                None
+            };
 
             let window_options = WindowOptions {
                 titlebar: Some(TitleBar::title_bar_options()),
                 window_decorations: Some(WindowDecorations::Client),
-                window_bounds: saved_size.map(|(w, h)| {
-                    WindowBounds::Windowed(Bounds::new(
-                        point(px(100.0), px(100.0)),
-                        size(px(w), px(h)),
-                    ))
-                }),
+                window_bounds: saved_window_bounds,
                 ..WindowOptions::default()
             };
 
