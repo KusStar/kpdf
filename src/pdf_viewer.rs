@@ -14,6 +14,7 @@ mod thumbnail_list;
 mod utils;
 
 use crate::i18n::{I18n, Language};
+use crate::{DisableLoggingMenu, EnableLoggingMenu, OpenLogsMenu, configure_app_menus};
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::input::{InputEvent, InputState};
@@ -2569,165 +2570,187 @@ impl Render for PdfViewer {
         let drag_tab_preview = self.render_drag_tab_preview(cx);
         let command_panel = self.render_command_panel(cx);
 
-        div().size_full().child(
-            div()
-                .v_flex()
-                .size_full()
-                .bg(cx.theme().background)
-                .relative()
-                .track_focus(&self.focus_handle)
-                .capture_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                    this.handle_key_down(event, window, cx);
-                }))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, window, _cx| {
-                        window.focus(&this.focus_handle);
-                    }),
-                )
-                .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
-                    this.update_drag_mouse_position(event.position, cx);
-                }))
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, cx| {
-                        this.finish_tab_drag(cx);
-                    }),
-                )
-                .child(
-                    div()
-                        .id("title-bar")
-                        .h(px(TITLE_BAR_HEIGHT))
-                        .w_full()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .border_b_1()
-                        .border_color(cx.theme().title_bar_border)
-                        .bg(cx.theme().title_bar)
-                        .when(!cfg!(target_os = "macos"), |this| {
-                            this.on_double_click(|_, window, _| window.zoom_window())
-                        })
-                        .child(
-                            div()
-                                .id("title-drag-area")
-                                .h_full()
-                                .flex_1()
-                                .pl(px(TITLE_BAR_CONTENT_LEFT_PADDING))
-                                .pr_3()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .when(cfg!(target_os = "macos"), |this| {
-                                    this.on_double_click(|_, window, _| {
-                                        window.titlebar_double_click()
-                                    })
-                                })
-                                .when(!cfg!(target_os = "macos"), |this| {
-                                    let should_move = Rc::new(Cell::new(false));
-                                    this.on_double_click(|_, window, _| window.zoom_window())
-                                        .on_mouse_down(MouseButton::Left, {
-                                            let should_move = should_move.clone();
-                                            move |_, _, _| {
-                                                should_move.set(true);
-                                            }
-                                        })
-                                        .on_mouse_down_out({
-                                            let should_move = should_move.clone();
-                                            move |_, _, _| {
-                                                should_move.set(false);
-                                            }
-                                        })
-                                        .on_mouse_up(MouseButton::Left, {
-                                            let should_move = should_move.clone();
-                                            move |_, _, _| {
-                                                should_move.set(false);
-                                            }
-                                        })
-                                        .on_mouse_move({
-                                            let should_move = should_move.clone();
-                                            move |_, window, _| {
-                                                if should_move.get() {
-                                                    should_move.set(false);
-                                                    window.start_window_move();
-                                                }
-                                            }
-                                        })
-                                })
-                                .window_control_area(WindowControlArea::Drag),
-                        )
-                        .when(!cfg!(target_os = "macos"), |this| {
-                            this.child(
+        div()
+            .size_full()
+            .on_action(cx.listener(|this, _: &EnableLoggingMenu, _, cx| {
+                if crate::logger::enable_file_logging() {
+                    configure_app_menus(cx, this.i18n());
+                }
+            }))
+            .on_action(cx.listener(|this, _: &DisableLoggingMenu, _, cx| {
+                crate::logger::disable_file_logging();
+                configure_app_menus(cx, this.i18n());
+            }))
+            .on_action(cx.listener(|this, _: &OpenLogsMenu, _, _| {
+                this.open_logs_directory();
+            }))
+            .child(
+                div()
+                    .v_flex()
+                    .size_full()
+                    .bg(cx.theme().background)
+                    .relative()
+                    .track_focus(&self.focus_handle)
+                    .capture_key_down(cx.listener(
+                        |this, event: &gpui::KeyDownEvent, window, cx| {
+                            this.handle_key_down(event, window, cx);
+                        },
+                    ))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, _cx| {
+                            window.focus(&this.focus_handle);
+                        }),
+                    )
+                    .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                        this.update_drag_mouse_position(event.position, cx);
+                    }))
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.finish_tab_drag(cx);
+                        }),
+                    )
+                    .child(
+                        div()
+                            .id("title-bar")
+                            .h(px(TITLE_BAR_HEIGHT))
+                            .w_full()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .border_b_1()
+                            .border_color(cx.theme().title_bar_border)
+                            .bg(cx.theme().title_bar)
+                            .when(!cfg!(target_os = "macos"), |this| {
+                                this.on_double_click(|_, window, _| window.zoom_window())
+                            })
+                            .child(
                                 div()
+                                    .id("title-drag-area")
                                     .h_full()
-                                    .pr_1()
+                                    .flex_1()
+                                    .pl(px(TITLE_BAR_CONTENT_LEFT_PADDING))
+                                    .pr_3()
                                     .flex()
                                     .items_center()
-                                    .gap_1()
-                                    .child(
-                                        Button::new("window-minimize")
-                                            .ghost()
-                                            .small()
-                                            .icon(
-                                                Icon::new(crate::icons::IconName::WindowMinimize)
-                                                    .text_color(cx.theme().foreground),
-                                            )
-                                            .on_click(|_, window, _| window.minimize_window()),
-                                    )
-                                    .child(
-                                        Button::new("window-maximize")
-                                            .ghost()
-                                            .small()
-                                            .icon(
-                                                Icon::new(if window.is_maximized() {
-                                                    crate::icons::IconName::WindowRestore
-                                                } else {
-                                                    crate::icons::IconName::WindowMaximize
-                                                })
-                                                .text_color(cx.theme().foreground),
-                                            )
-                                            .on_click(|_, window, _| window.zoom_window()),
-                                    )
-                                    .child(
-                                        Button::new("window-close")
-                                            .ghost()
-                                            .small()
-                                            .icon(
-                                                Icon::new(crate::icons::IconName::WindowClose)
-                                                    .text_color(cx.theme().foreground),
-                                            )
-                                            .on_click(|_, window, _| window.remove_window()),
-                                    ),
+                                    .gap_2()
+                                    .when(cfg!(target_os = "macos"), |this| {
+                                        this.on_double_click(|_, window, _| {
+                                            window.titlebar_double_click()
+                                        })
+                                    })
+                                    .when(!cfg!(target_os = "macos"), |this| {
+                                        let should_move = Rc::new(Cell::new(false));
+                                        this.on_double_click(|_, window, _| window.zoom_window())
+                                            .on_mouse_down(MouseButton::Left, {
+                                                let should_move = should_move.clone();
+                                                move |_, _, _| {
+                                                    should_move.set(true);
+                                                }
+                                            })
+                                            .on_mouse_down_out({
+                                                let should_move = should_move.clone();
+                                                move |_, _, _| {
+                                                    should_move.set(false);
+                                                }
+                                            })
+                                            .on_mouse_up(MouseButton::Left, {
+                                                let should_move = should_move.clone();
+                                                move |_, _, _| {
+                                                    should_move.set(false);
+                                                }
+                                            })
+                                            .on_mouse_move({
+                                                let should_move = should_move.clone();
+                                                move |_, window, _| {
+                                                    if should_move.get() {
+                                                        should_move.set(false);
+                                                        window.start_window_move();
+                                                    }
+                                                }
+                                            })
+                                    })
+                                    .window_control_area(WindowControlArea::Drag),
                             )
-                        }),
-                )
-                .child(self.render_tab_bar(cx))
-                .child(self.render_menu_bar(page_count, current_page_num, zoom_label, cx))
-                .child(
-                    div()
-                        .h_full()
-                        .w_full()
-                        .flex()
-                        .overflow_hidden()
-                        .when(self.show_thumbnail_panel(), |this| {
-                            this.child(self.render_thumbnail_panel(page_count, thumbnail_sizes, cx))
-                        })
-                        .child(self.render_display_panel(
-                            page_count,
-                            display_sizes,
-                            display_panel_width,
-                            cx,
-                        )),
-                )
-                .when(context_menu.is_some(), |this| {
-                    this.child(context_menu.unwrap())
-                })
-                .when(drag_tab_preview.is_some(), |this| {
-                    this.child(drag_tab_preview.unwrap())
-                })
-                .when(command_panel.is_some(), |this| {
-                    this.child(command_panel.unwrap())
-                }),
-        )
+                            .when(!cfg!(target_os = "macos"), |this| {
+                                this.child(
+                                    div()
+                                        .h_full()
+                                        .pr_1()
+                                        .flex()
+                                        .items_center()
+                                        .gap_1()
+                                        .child(
+                                            Button::new("window-minimize")
+                                                .ghost()
+                                                .small()
+                                                .icon(
+                                                    Icon::new(
+                                                        crate::icons::IconName::WindowMinimize,
+                                                    )
+                                                    .text_color(cx.theme().foreground),
+                                                )
+                                                .on_click(|_, window, _| window.minimize_window()),
+                                        )
+                                        .child(
+                                            Button::new("window-maximize")
+                                                .ghost()
+                                                .small()
+                                                .icon(
+                                                    Icon::new(if window.is_maximized() {
+                                                        crate::icons::IconName::WindowRestore
+                                                    } else {
+                                                        crate::icons::IconName::WindowMaximize
+                                                    })
+                                                    .text_color(cx.theme().foreground),
+                                                )
+                                                .on_click(|_, window, _| window.zoom_window()),
+                                        )
+                                        .child(
+                                            Button::new("window-close")
+                                                .ghost()
+                                                .small()
+                                                .icon(
+                                                    Icon::new(crate::icons::IconName::WindowClose)
+                                                        .text_color(cx.theme().foreground),
+                                                )
+                                                .on_click(|_, window, _| window.remove_window()),
+                                        ),
+                                )
+                            }),
+                    )
+                    .child(self.render_tab_bar(cx))
+                    .child(self.render_menu_bar(page_count, current_page_num, zoom_label, cx))
+                    .child(
+                        div()
+                            .h_full()
+                            .w_full()
+                            .flex()
+                            .overflow_hidden()
+                            .when(self.show_thumbnail_panel(), |this| {
+                                this.child(self.render_thumbnail_panel(
+                                    page_count,
+                                    thumbnail_sizes,
+                                    cx,
+                                ))
+                            })
+                            .child(self.render_display_panel(
+                                page_count,
+                                display_sizes,
+                                display_panel_width,
+                                cx,
+                            )),
+                    )
+                    .when(context_menu.is_some(), |this| {
+                        this.child(context_menu.unwrap())
+                    })
+                    .when(drag_tab_preview.is_some(), |this| {
+                        this.child(drag_tab_preview.unwrap())
+                    })
+                    .when(command_panel.is_some(), |this| {
+                        this.child(command_panel.unwrap())
+                    }),
+            )
     }
 }

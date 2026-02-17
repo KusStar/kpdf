@@ -134,15 +134,6 @@ impl PdfViewer {
                             .text_sm()
                             .text_color(cx.theme().muted_foreground)
                             .child(zoom_label),
-                    )
-                    .child(
-                        Button::new("open-logs-dir")
-                            .ghost()
-                            .small()
-                            .label(i18n.open_logs_button())
-                            .on_click(cx.listener(|this, _, _, _| {
-                                this.open_logs_directory();
-                            })),
                     ),
             )
     }

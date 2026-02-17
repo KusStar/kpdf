@@ -98,6 +98,20 @@ impl I18n {
         }
     }
 
+    pub fn enable_logging_button(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "启用日志记录",
+            Language::EnUs => "Enable Logging",
+        }
+    }
+
+    pub fn disable_logging_button(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "关闭日志记录",
+            Language::EnUs => "Disable Logging",
+        }
+    }
+
     pub fn no_pages(self) -> &'static str {
         match self.lang {
             Language::ZhCn => "暂无页面",

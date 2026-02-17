@@ -11,6 +11,28 @@ const WINDOW_SIZE_TREE: &str = "window_size";
 const WINDOW_SIZE_KEY_WIDTH: &str = "width";
 const WINDOW_SIZE_KEY_HEIGHT: &str = "height";
 
+gpui::actions!(kpdf, [EnableLoggingMenu, DisableLoggingMenu, OpenLogsMenu]);
+
+pub(crate) fn configure_app_menus(cx: &mut App, i18n: i18n::I18n) {
+    let items = if logger::file_logging_enabled() {
+        vec![
+            MenuItem::action(i18n.open_logs_button(), OpenLogsMenu),
+            MenuItem::separator(),
+            MenuItem::action(i18n.disable_logging_button(), DisableLoggingMenu),
+        ]
+    } else {
+        vec![MenuItem::action(
+            i18n.enable_logging_button(),
+            EnableLoggingMenu,
+        )]
+    };
+
+    cx.set_menus(vec![Menu {
+        name: "kPDF".into(),
+        items,
+    }]);
+}
+
 fn window_size_db_path() -> std::path::PathBuf {
     if let Some(app_data) = std::env::var_os("APPDATA") {
         return std::path::PathBuf::from(app_data)
@@ -52,8 +74,12 @@ fn main() {
     logger::initialize();
 
     let app = Application::new().with_assets(icons::Assets);
+    let language = i18n::Language::detect();
+    let i18n = i18n::I18n::new(language);
 
     app.run(move |cx| {
+        configure_app_menus(cx, i18n);
+
         gpui_component::init(cx);
         Theme::change(cx.window_appearance(), None, cx);
 
