@@ -1,7 +1,7 @@
 use crate::icons;
 
-use super::PdfViewer;
 use super::utils::display_file_name;
+use super::PdfViewer;
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::popover::Popover;
@@ -19,6 +19,7 @@ impl PdfViewer {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let i18n = self.i18n();
+        let active_page = self.active_tab_active_page();
         let recent_files_with_positions: Vec<(PathBuf, Option<usize>)> = recent_files
             .iter()
             .cloned()
@@ -228,7 +229,7 @@ impl PdfViewer {
                                     Button::new("first-page")
                                         .ghost()
                                         .small()
-                                        .disabled(self.active_page == 0)
+                                        .disabled(active_page == 0)
                                         .icon(
                                             Icon::new(icons::IconName::ChevronFirst)
                                                 .text_color(cx.theme().foreground),
@@ -241,7 +242,7 @@ impl PdfViewer {
                                     Button::new("prev-page")
                                         .ghost()
                                         .small()
-                                        .disabled(self.active_page == 0)
+                                        .disabled(active_page == 0)
                                         .icon(
                                             Icon::new(IconName::ChevronLeft)
                                                 .text_color(cx.theme().foreground),
@@ -260,7 +261,7 @@ impl PdfViewer {
                                     Button::new("next-page")
                                         .ghost()
                                         .small()
-                                        .disabled(self.active_page + 1 >= page_count)
+                                        .disabled(active_page + 1 >= page_count)
                                         .icon(
                                             Icon::new(IconName::ChevronRight)
                                                 .text_color(cx.theme().foreground),
@@ -273,7 +274,7 @@ impl PdfViewer {
                                     Button::new("last-page")
                                         .ghost()
                                         .small()
-                                        .disabled(self.active_page + 1 >= page_count)
+                                        .disabled(active_page + 1 >= page_count)
                                         .icon(
                                             Icon::new(icons::IconName::ChevronLast)
                                                 .text_color(cx.theme().foreground),

@@ -13,6 +13,8 @@ impl PdfViewer {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let i18n = self.i18n();
+        let _active_page = self.active_tab_active_page();
+
         div()
             .h_full()
             .w(px(SIDEBAR_WIDTH))
@@ -51,13 +53,19 @@ impl PdfViewer {
                                         target_width,
                                         cx,
                                     );
+                                    
+                                    let active_page = viewer.active_tab_active_page();
+                                    
                                     visible_range
                                         .map(|ix| {
-                                            let Some(page) = viewer.pages.get(ix) else {
+                                            let Some(pages) = viewer.active_tab_pages() else {
+                                                return div().into_any_element();
+                                            };
+                                            let Some(page) = pages.get(ix) else {
                                                 return div().into_any_element();
                                             };
                                             let (_, thumb_height) = viewer.thumbnail_card_size(page);
-                                            let is_selected = ix == viewer.active_page;
+                                            let is_selected = ix == active_page;
                                             div()
                                                 .id(("thumb-row", ix))
                                                 .px_2()
@@ -172,7 +180,7 @@ impl PdfViewer {
                                         .collect::<Vec<_>>()
                                 },
                             )
-                            .track_scroll(&self.thumbnail_scroll)
+                            .track_scroll(self.active_tab_thumbnail_scroll().unwrap())
                             .into_any_element(),
                         )
                         .child(
@@ -183,7 +191,7 @@ impl PdfViewer {
                                 .right_0()
                                 .bottom_0()
                                 .child(
-                                    Scrollbar::vertical(&self.thumbnail_scroll)
+                                    Scrollbar::vertical(self.active_tab_thumbnail_scroll().unwrap())
                                         .scrollbar_show(ScrollbarShow::Always),
                                 ),
                         )

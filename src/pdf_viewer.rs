@@ -2,6 +2,8 @@
 mod display_list;
 #[path = "menu_bar.rs"]
 mod menu_bar;
+#[path = "tab.rs"]
+pub mod tab;
 #[path = "text_selection.rs"]
 mod text_selection;
 #[path = "thumbnail_list.rs"]
@@ -10,14 +12,18 @@ mod thumbnail_list;
 mod utils;
 
 use crate::i18n::{I18n, Language};
-use gpui::*;
 use gpui::prelude::FluentBuilder as _;
+use gpui::*;
 use gpui_component::{button::*, *};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
+
 use std::time::Duration;
+
+use self::tab::{PdfTab, TabBar};
+use self::text_selection::copy_to_clipboard;
+use self::utils::{display_file_name, load_display_images, load_document_summary};
 
 const ZOOM_MIN: f32 = 0.6;
 const ZOOM_MAX: f32 = 1.0;
@@ -39,34 +45,17 @@ const FILE_POSITIONS_TREE: &str = "file_positions";
 const WINDOW_SIZE_TREE: &str = "window_size";
 const WINDOW_SIZE_KEY_WIDTH: &str = "width";
 const WINDOW_SIZE_KEY_HEIGHT: &str = "height";
+const TAB_BAR_HEIGHT: f32 = 36.0;
 #[cfg(target_os = "macos")]
 const TITLE_BAR_CONTENT_LEFT_PADDING: f32 = 80.0;
 #[cfg(not(target_os = "macos"))]
 const TITLE_BAR_CONTENT_LEFT_PADDING: f32 = 12.0;
 
-use self::text_selection::{copy_to_clipboard, TextSelectionManager};
-use self::utils::{display_file_name, load_display_images, load_document_summary};
-use std::cell::RefCell;
-
-#[derive(Clone)]
-struct PageSummary {
-    index: usize,
-    width_pt: f32,
-    height_pt: f32,
-    thumbnail_image: Option<Arc<RenderImage>>,
-    thumbnail_render_width: u32,
-    thumbnail_failed: bool,
-    display_image: Option<Arc<RenderImage>>,
-    display_render_width: u32,
-    display_failed: bool,
-}
+pub use self::utils::PageSummary;
 
 pub struct PdfViewer {
     language: Language,
-    path: Option<PathBuf>,
-    pages: Vec<PageSummary>,
-    selected_page: usize,
-    active_page: usize,
+    tab_bar: TabBar,
     recent_store: Option<sled::Tree>,
     position_store: Option<sled::Tree>,
     window_size_store: Option<sled::Tree>,
@@ -76,25 +65,10 @@ pub struct PdfViewer {
     recent_popup_trigger_hovered: bool,
     recent_popup_panel_hovered: bool,
     recent_popup_hover_epoch: u64,
-    zoom: f32,
-    thumbnail_scroll: VirtualListScrollHandle,
-    display_scroll: VirtualListScrollHandle,
-    thumbnail_loading: HashSet<usize>,
-    thumbnail_inflight_tasks: usize,
-    thumbnail_epoch: u64,
-    last_thumbnail_visible_range: Option<std::ops::Range<usize>>,
-    display_loading: HashSet<usize>,
-    display_inflight_tasks: usize,
-    display_epoch: u64,
-    last_display_visible_range: Option<std::ops::Range<usize>>,
-    last_display_target_width: u32,
-    display_scroll_sync_epoch: u64,
-    last_display_scroll_offset: Option<Point<Pixels>>,
-    suppress_display_scroll_sync_once: bool,
-    last_saved_position: Option<(PathBuf, usize)>,
-    text_selection_manager: RefCell<TextSelectionManager>,
     context_menu_open: bool,
     context_menu_position: Option<Point<Pixels>>,
+    #[allow(dead_code)]
+    context_menu_tab_id: Option<usize>,
 }
 
 impl PdfViewer {
@@ -106,12 +80,13 @@ impl PdfViewer {
             .map(Self::load_recent_files_from_store)
             .unwrap_or_default();
 
+        let mut tab_bar = TabBar::new();
+        // 创建第一个空标签页
+        tab_bar.create_tab();
+
         Self {
             language,
-            path: None,
-            pages: Vec::new(),
-            selected_page: 0,
-            active_page: 0,
+            tab_bar,
             recent_store,
             position_store,
             window_size_store,
@@ -121,25 +96,9 @@ impl PdfViewer {
             recent_popup_trigger_hovered: false,
             recent_popup_panel_hovered: false,
             recent_popup_hover_epoch: 0,
-            zoom: 1.0,
-            thumbnail_scroll: VirtualListScrollHandle::new(),
-            display_scroll: VirtualListScrollHandle::new(),
-            thumbnail_loading: HashSet::new(),
-            thumbnail_inflight_tasks: 0,
-            thumbnail_epoch: 0,
-            last_thumbnail_visible_range: None,
-            display_loading: HashSet::new(),
-            display_inflight_tasks: 0,
-            display_epoch: 0,
-            last_display_visible_range: None,
-            last_display_target_width: DISPLAY_MIN_WIDTH as u32,
-            display_scroll_sync_epoch: 0,
-            last_display_scroll_offset: None,
-            suppress_display_scroll_sync_once: false,
-            last_saved_position: None,
-            text_selection_manager: RefCell::new(TextSelectionManager::new()),
             context_menu_open: false,
             context_menu_position: None,
+            context_menu_tab_id: None,
         }
     }
 
@@ -147,25 +106,28 @@ impl PdfViewer {
         I18n::new(self.language)
     }
 
-    fn reset_thumbnail_render_state(&mut self) {
-        self.thumbnail_loading.clear();
-        self.thumbnail_inflight_tasks = 0;
-        self.thumbnail_epoch = self.thumbnail_epoch.wrapping_add(1);
-        self.last_thumbnail_visible_range = None;
+    fn active_tab(&self) -> Option<&PdfTab> {
+        self.tab_bar.get_active_tab()
     }
 
-    fn reset_display_render_state(&mut self) {
-        self.display_loading.clear();
-        self.display_inflight_tasks = 0;
-        self.display_epoch = self.display_epoch.wrapping_add(1);
-        self.last_display_visible_range = None;
+    fn active_tab_mut(&mut self) -> Option<&mut PdfTab> {
+        self.tab_bar.get_active_tab_mut()
     }
 
-    fn reset_page_render_state(&mut self) {
-        self.reset_thumbnail_render_state();
-        self.reset_display_render_state();
-        self.text_selection_manager.borrow_mut().clear_cache();
-        self.text_selection_manager.borrow_mut().clear_selection();
+    #[allow(dead_code)]
+    fn with_active_tab<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&PdfTab) -> R,
+    {
+        self.active_tab().map(f)
+    }
+
+    #[allow(dead_code)]
+    fn with_active_tab_mut<F, R>(&mut self, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut PdfTab) -> R,
+    {
+        self.active_tab_mut().map(f)
     }
 
     fn open_persistent_stores() -> (Option<sled::Tree>, Option<sled::Tree>, Option<sled::Tree>) {
@@ -209,10 +171,7 @@ impl PdfViewer {
         let window_size_store = match db.open_tree(WINDOW_SIZE_TREE) {
             Ok(tree) => Some(tree),
             Err(err) => {
-                eprintln!(
-                    "[store] open tree failed: {} | {}",
-                    WINDOW_SIZE_TREE, err
-                );
+                eprintln!("[store] open tree failed: {} | {}", WINDOW_SIZE_TREE, err);
                 None
             }
         };
@@ -255,13 +214,13 @@ impl PdfViewer {
             .collect()
     }
 
-    fn open_pdf_dialog(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+    fn open_pdf_dialog(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.close_recent_popup(cx);
 
         let picker = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
-            multiple: false,
+            multiple: true,
             prompt: Some(self.i18n().open_pdf_prompt().into()),
         });
 
@@ -269,37 +228,22 @@ impl PdfViewer {
             let picker_result = picker.await;
             match picker_result {
                 Ok(Ok(Some(paths))) => {
-                    if let Some(path) = paths.into_iter().next() {
+                    for (i, path) in paths.into_iter().enumerate() {
+                        let is_first = i == 0;
                         let _ = view.update(cx, |this, cx| {
-                            this.open_pdf_path(path, cx);
-                        });
-                    } else {
-                        let _ = view.update(cx, |this, cx| {
-                            this.reset_page_render_state();
-                            cx.notify();
+                            if is_first
+                                && this.active_tab().map(|t| t.path.is_none()).unwrap_or(false)
+                            {
+                                // 第一个文件在当前标签页打开
+                                this.open_pdf_path_in_current_tab(path, cx);
+                            } else {
+                                // 其他文件在新标签页打开
+                                this.open_pdf_path_in_new_tab(path, cx);
+                            }
                         });
                     }
                 }
-                Ok(Ok(None)) => {
-                    let _ = view.update(cx, |this, cx| {
-                        this.reset_page_render_state();
-                        cx.notify();
-                    });
-                }
-                Ok(Err(err)) => {
-                    let _ = view.update(cx, |this, cx| {
-                        let _ = err;
-                        this.reset_page_render_state();
-                        cx.notify();
-                    });
-                }
-                Err(err) => {
-                    let _ = view.update(cx, |this, cx| {
-                        let _ = err;
-                        this.reset_page_render_state();
-                        cx.notify();
-                    });
-                }
+                _ => {}
             }
         })
         .detach();
@@ -313,13 +257,87 @@ impl PdfViewer {
             return;
         }
 
-        self.open_pdf_path(path, cx);
+        // 检查是否已经在某个标签页打开
+        for tab in self.tab_bar.tabs() {
+            if tab.path.as_ref() == Some(&path) {
+                // 切换到已打开的标签页
+                self.tab_bar.switch_to_tab(tab.id);
+                cx.notify();
+                return;
+            }
+        }
+
+        // 在新标签页打开
+        self.open_pdf_path_in_new_tab(path, cx);
     }
 
-    fn open_pdf_path(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        eprintln!("[pdf][open] open_pdf_path called: {}", path.display());
-        self.reset_page_render_state();
+    fn open_pdf_path_in_current_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let language = self.language;
+
+        // 先重置当前标签页
+        if let Some(tab) = self.active_tab_mut() {
+            tab.reset_page_render_state();
+        }
         cx.notify();
+
+        cx.spawn(async move |view, cx| {
+            let parsed = cx
+                .background_executor()
+                .spawn({
+                    let path = path.clone();
+                    async move { load_document_summary(&path, language) }
+                })
+                .await;
+
+            let _ = view.update(cx, |this, cx| match parsed {
+                Ok(mut pages) => {
+                    pages.sort_by_key(|p| p.index);
+
+                    let restored_page = this.load_saved_file_position(&path);
+
+                    if let Some(tab) = this.active_tab_mut() {
+                        tab.path = Some(path.clone());
+                        tab.pages = pages;
+                        let initial_page = restored_page
+                            .unwrap_or(0)
+                            .min(tab.pages.len().saturating_sub(1));
+                        tab.selected_page = initial_page;
+                        tab.active_page = initial_page;
+                        tab.zoom = 1.0;
+                        tab.reset_page_render_state();
+
+                        if !tab.pages.is_empty() {
+                            let strategy = if initial_page == 0 {
+                                ScrollStrategy::Top
+                            } else {
+                                ScrollStrategy::Center
+                            };
+                            tab.suppress_display_scroll_sync_once = true;
+                            tab.thumbnail_scroll.scroll_to_item(initial_page, strategy);
+                            tab.display_scroll
+                                .scroll_to_item(initial_page, ScrollStrategy::Top);
+                        }
+                    }
+
+                    this.remember_recent_file(&path);
+                    cx.notify();
+                }
+                Err(_) => {
+                    if let Some(tab) = this.active_tab_mut() {
+                        tab.path = Some(path.clone());
+                        tab.pages.clear();
+                        tab.selected_page = 0;
+                        tab.active_page = 0;
+                        tab.reset_page_render_state();
+                    }
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn open_pdf_path_in_new_tab(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let language = self.language;
 
         cx.spawn(async move |view, cx| {
@@ -334,60 +352,75 @@ impl PdfViewer {
             let _ = view.update(cx, |this, cx| match parsed {
                 Ok(mut pages) => {
                     pages.sort_by_key(|p| p.index);
-                    this.path = Some(path.clone());
-                    this.pages = pages;
+                    let tab_id = this.tab_bar.create_tab_with_path(path.clone(), pages);
+                    this.tab_bar.switch_to_tab(tab_id);
+
                     let restored_page = this.load_saved_file_position(&path);
-                    match restored_page {
-                        Some(page_index) => {
-                            eprintln!(
-                                "[position] restore hit: {} -> page {}",
-                                path.display(),
-                                page_index + 1
-                            );
-                        }
-                        None => {
-                            eprintln!("[position] restore miss: {}", path.display());
+
+                    if let Some(tab) = this.tab_bar.get_active_tab_mut() {
+                        let initial_page = restored_page
+                            .unwrap_or(0)
+                            .min(tab.pages.len().saturating_sub(1));
+                        tab.selected_page = initial_page;
+                        tab.active_page = initial_page;
+                        tab.zoom = 1.0;
+
+                        if !tab.pages.is_empty() {
+                            let strategy = if initial_page == 0 {
+                                ScrollStrategy::Top
+                            } else {
+                                ScrollStrategy::Center
+                            };
+                            tab.suppress_display_scroll_sync_once = true;
+                            tab.thumbnail_scroll.scroll_to_item(initial_page, strategy);
+                            tab.display_scroll
+                                .scroll_to_item(initial_page, ScrollStrategy::Top);
                         }
                     }
-                    let restored_page = restored_page.unwrap_or(0);
-                    let initial_page = restored_page.min(this.pages.len().saturating_sub(1));
-                    if initial_page != restored_page {
-                        eprintln!(
-                            "[position] restore clamp: {} requested={} available_max={}",
-                            path.display(),
-                            restored_page + 1,
-                            initial_page + 1
-                        );
-                    }
-                    this.selected_page = initial_page;
-                    this.active_page = initial_page;
-                    this.zoom = 1.0;
-                    this.reset_page_render_state();
+
                     this.remember_recent_file(&path);
-                    if !this.pages.is_empty() {
-                        let strategy = if initial_page == 0 {
-                            ScrollStrategy::Top
-                        } else {
-                            ScrollStrategy::Center
-                        };
-                        this.suppress_display_scroll_sync_once = true;
-                        this.thumbnail_scroll.scroll_to_item(initial_page, strategy);
-                        this.display_scroll.scroll_to_item(initial_page, ScrollStrategy::Top);
-                    }
                     cx.notify();
                 }
-                Err(err) => {
-                    this.path = Some(path.clone());
-                    this.pages.clear();
-                    this.selected_page = 0;
-                    this.active_page = 0;
-                    this.reset_page_render_state();
-                    let _ = err;
+                Err(_) => {
+                    let tab_id = this.tab_bar.create_tab_with_path(path.clone(), Vec::new());
+                    this.tab_bar.switch_to_tab(tab_id);
                     cx.notify();
                 }
             });
         })
         .detach();
+    }
+
+    fn create_new_tab(&mut self, cx: &mut Context<Self>) {
+        self.tab_bar.create_tab();
+        cx.notify();
+    }
+
+    fn close_tab(&mut self, tab_id: usize, cx: &mut Context<Self>) {
+        // 先持久化要关闭的标签页的位置
+        if let Some(tab) = self.tab_bar.tabs().iter().find(|t| t.id == tab_id) {
+            if let Some(ref path) = tab.path {
+                if !tab.pages.is_empty() {
+                    let page_index = tab.active_page.min(tab.pages.len().saturating_sub(1));
+                    self.save_file_position(path, page_index);
+                }
+            }
+        }
+
+        self.tab_bar.close_tab(tab_id);
+
+        // 如果没有标签页了，创建一个空的
+        if !self.tab_bar.has_tabs() {
+            self.tab_bar.create_tab();
+        }
+
+        cx.notify();
+    }
+
+    fn switch_to_tab(&mut self, tab_id: usize, cx: &mut Context<Self>) {
+        if self.tab_bar.switch_to_tab(tab_id) {
+            cx.notify();
+        }
     }
 
     fn remember_recent_file(&mut self, path: &PathBuf) {
@@ -437,68 +470,38 @@ impl PdfViewer {
         usize::try_from(u64::from_be_bytes(bytes)).ok()
     }
 
-    fn save_file_position(&mut self, path: &Path, page_index: usize) {
+    fn save_file_position(&self, path: &Path, page_index: usize) {
         let Some(store) = self.position_store.as_ref() else {
-            eprintln!(
-                "[position] save skipped (no store): {} -> page {}",
-                path.display(),
-                page_index + 1
-            );
             return;
         };
 
         let page_bytes = (page_index as u64).to_be_bytes();
-        match store.insert(Self::file_position_key(path), page_bytes.as_slice()) {
-            Ok(_) => {
-                self.last_saved_position = Some((path.to_path_buf(), page_index));
-                match store.flush() {
-                    Ok(_) => {
-                        eprintln!(
-                            "[position] save ok: {} -> page {}",
-                            path.display(),
-                            page_index + 1
-                        );
-                    }
-                    Err(err) => {
-                        eprintln!(
-                            "[position] save flush failed: {} -> page {} | {}",
-                            path.display(),
-                            page_index + 1,
-                            err
-                        );
-                    }
-                }
-            }
-            Err(err) => {
-                eprintln!(
-                    "[position] save failed: {} -> page {} | {}",
-                    path.display(),
-                    page_index + 1,
-                    err
-                );
-            }
-        }
+        let _ = store.insert(Self::file_position_key(path), page_bytes.as_slice());
+        let _ = store.flush();
     }
 
     fn persist_current_file_position(&mut self) {
-        if self.pages.is_empty() {
-            return;
-        }
-        let Some(path) = self.path.clone() else {
-            return;
-        };
+        if let Some(tab) = self.active_tab() {
+            if tab.pages.is_empty() {
+                return;
+            }
+            let Some(ref path) = tab.path else {
+                return;
+            };
 
-        let page_index = self.active_page.min(self.pages.len().saturating_sub(1));
-        if self
-            .last_saved_position
-            .as_ref()
-            .map(|(saved_path, saved_index)| saved_path == &path && *saved_index == page_index)
-            .unwrap_or(false)
-        {
-            return;
-        }
+            let page_index = tab.active_page.min(tab.pages.len().saturating_sub(1));
 
-        self.save_file_position(&path, page_index);
+            if tab
+                .last_saved_position
+                .as_ref()
+                .map(|(saved_path, saved_index)| saved_path == path && *saved_index == page_index)
+                .unwrap_or(false)
+            {
+                return;
+            }
+
+            self.save_file_position(path, page_index);
+        }
     }
 
     fn save_window_size(&self, width: f32, height: f32) {
@@ -507,10 +510,16 @@ impl PdfViewer {
         };
         let width_bytes = width.to_be_bytes();
         let height_bytes = height.to_be_bytes();
-        if store.insert(WINDOW_SIZE_KEY_WIDTH, width_bytes.as_slice()).is_err() {
+        if store
+            .insert(WINDOW_SIZE_KEY_WIDTH, width_bytes.as_slice())
+            .is_err()
+        {
             eprintln!("[window_size] save width failed");
         }
-        if store.insert(WINDOW_SIZE_KEY_HEIGHT, height_bytes.as_slice()).is_err() {
+        if store
+            .insert(WINDOW_SIZE_KEY_HEIGHT, height_bytes.as_slice())
+            .is_err()
+        {
             eprintln!("[window_size] save height failed");
         }
         let _ = store.flush();
@@ -590,53 +599,74 @@ impl PdfViewer {
     }
 
     fn select_page(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index < self.pages.len() {
-            self.selected_page = index;
-            self.active_page = index;
-            self.sync_scroll_to_selected();
-            self.persist_current_file_position();
-            cx.notify();
+        if let Some(tab) = self.active_tab_mut() {
+            if index < tab.pages.len() {
+                tab.selected_page = index;
+                tab.active_page = index;
+                self.sync_scroll_to_selected();
+                self.persist_current_file_position();
+                cx.notify();
+            }
         }
     }
 
     fn prev_page(&mut self, cx: &mut Context<Self>) {
-        if self.active_page > 0 {
-            self.select_page(self.active_page - 1, cx);
+        if let Some(tab) = self.active_tab() {
+            if tab.active_page > 0 {
+                let new_page = tab.active_page - 1;
+                self.select_page(new_page, cx);
+            }
         }
     }
 
     fn next_page(&mut self, cx: &mut Context<Self>) {
-        if self.active_page + 1 < self.pages.len() {
-            self.select_page(self.active_page + 1, cx);
+        if let Some(tab) = self.active_tab() {
+            if tab.active_page + 1 < tab.pages.len() {
+                let new_page = tab.active_page + 1;
+                self.select_page(new_page, cx);
+            }
         }
     }
 
     fn zoom_in(&mut self, cx: &mut Context<Self>) {
-        self.zoom = (self.zoom + ZOOM_STEP).clamp(ZOOM_MIN, ZOOM_MAX);
-        cx.notify();
+        if let Some(tab) = self.active_tab_mut() {
+            tab.zoom = (tab.zoom + ZOOM_STEP).clamp(ZOOM_MIN, ZOOM_MAX);
+            cx.notify();
+        }
     }
 
     fn zoom_out(&mut self, cx: &mut Context<Self>) {
-        self.zoom = (self.zoom - ZOOM_STEP).clamp(ZOOM_MIN, ZOOM_MAX);
-        cx.notify();
+        if let Some(tab) = self.active_tab_mut() {
+            tab.zoom = (tab.zoom - ZOOM_STEP).clamp(ZOOM_MIN, ZOOM_MAX);
+            cx.notify();
+        }
     }
 
     fn zoom_reset(&mut self, cx: &mut Context<Self>) {
-        self.zoom = 1.0;
-        cx.notify();
+        if let Some(tab) = self.active_tab_mut() {
+            tab.zoom = 1.0;
+            cx.notify();
+        }
     }
 
     fn sync_scroll_to_selected(&mut self) {
-        self.suppress_display_scroll_sync_once = true;
-        self.thumbnail_scroll
-            .scroll_to_item(self.selected_page, ScrollStrategy::Center);
-        self.display_scroll
-            .scroll_to_item(self.selected_page, ScrollStrategy::Top);
+        if let Some(tab) = self.active_tab_mut() {
+            tab.suppress_display_scroll_sync_once = true;
+            tab.thumbnail_scroll
+                .scroll_to_item(tab.selected_page, ScrollStrategy::Center);
+            tab.display_scroll
+                .scroll_to_item(tab.selected_page, ScrollStrategy::Top);
+        }
     }
 
     fn schedule_thumbnail_sync_after_display_scroll(&mut self, cx: &mut Context<Self>) {
-        self.display_scroll_sync_epoch = self.display_scroll_sync_epoch.wrapping_add(1);
-        let sync_epoch = self.display_scroll_sync_epoch;
+        let Some(tab) = self.active_tab_mut() else {
+            return;
+        };
+
+        tab.display_scroll_sync_epoch = tab.display_scroll_sync_epoch.wrapping_add(1);
+        let sync_epoch = tab.display_scroll_sync_epoch;
+        let tab_id = tab.id;
 
         cx.spawn(async move |view, cx| {
             cx.background_executor()
@@ -644,42 +674,78 @@ impl PdfViewer {
                 .await;
 
             let _ = view.update(cx, |this, cx| {
-                if this.display_scroll_sync_epoch != sync_epoch || this.pages.is_empty() {
-                    return;
+                let path_to_save = {
+                    let Some(tab) = this.tab_bar.get_active_tab_mut() else {
+                        return;
+                    };
+                    if tab.id != tab_id
+                        || tab.display_scroll_sync_epoch != sync_epoch
+                        || tab.pages.is_empty()
+                    {
+                        return;
+                    }
+
+                    let next_active = tab
+                        .last_display_visible_range
+                        .as_ref()
+                        .map(|range| range.start.min(tab.pages.len().saturating_sub(1)))
+                        .unwrap_or_else(|| tab.active_page.min(tab.pages.len().saturating_sub(1)));
+
+                    let page_index_changed = tab.active_page != next_active;
+
+                    if page_index_changed {
+                        tab.active_page = next_active;
+                        // Save position directly
+                        if let Some(ref path) = tab.path {
+                            if !tab.pages.is_empty() {
+                                let page_index =
+                                    tab.active_page.min(tab.pages.len().saturating_sub(1));
+                                tab.last_saved_position = Some((path.clone(), page_index));
+                                Some((path.clone(), page_index))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+
+                // Save file position outside the mutable borrow
+                if let Some((path, page_index)) = path_to_save {
+                    this.save_file_position(&path, page_index);
                 }
 
-                let next_active = this
-                    .last_display_visible_range
-                    .as_ref()
-                    .map(|range| range.start.min(this.pages.len().saturating_sub(1)))
-                    .unwrap_or_else(|| this.active_page.min(this.pages.len().saturating_sub(1)));
-                if this.active_page != next_active {
-                    this.active_page = next_active;
-                    this.persist_current_file_position();
+                // Get tab again for scroll operation
+                if let Some(tab) = this.tab_bar.get_active_tab_mut() {
+                    let next_active = tab.active_page;
+                    tab.thumbnail_scroll
+                        .scroll_to_item(next_active, ScrollStrategy::Center);
+                    cx.notify();
                 }
-
-                this.thumbnail_scroll
-                    .scroll_to_item(next_active, ScrollStrategy::Center);
-                cx.notify();
             });
         })
         .detach();
     }
 
     fn on_display_scroll_offset_changed(&mut self, cx: &mut Context<Self>) {
-        let offset = self.display_scroll.offset();
-        let has_changed = self
-            .last_display_scroll_offset
-            .map(|last| last != offset)
-            .unwrap_or(false);
-        self.last_display_scroll_offset = Some(offset);
+        if let Some(tab) = self.active_tab_mut() {
+            let offset = tab.display_scroll.offset();
+            let has_changed = tab
+                .last_display_scroll_offset
+                .map(|last| last != offset)
+                .unwrap_or(false);
+            tab.last_display_scroll_offset = Some(offset);
 
-        if has_changed && !self.pages.is_empty() {
-            if self.suppress_display_scroll_sync_once {
-                self.suppress_display_scroll_sync_once = false;
-                return;
+            if has_changed && !tab.pages.is_empty() {
+                if tab.suppress_display_scroll_sync_once {
+                    tab.suppress_display_scroll_sync_once = false;
+                    return;
+                }
+                self.schedule_thumbnail_sync_after_display_scroll(cx);
             }
-            self.schedule_thumbnail_sync_after_display_scroll(cx);
         }
     }
 
@@ -703,9 +769,9 @@ impl PdfViewer {
         height + THUMB_VERTICAL_PADDING
     }
 
-    fn thumbnail_item_sizes(&self) -> Rc<Vec<gpui::Size<Pixels>>> {
+    fn thumbnail_item_sizes(&self, pages: &[PageSummary]) -> Rc<Vec<gpui::Size<Pixels>>> {
         Rc::new(
-            self.pages
+            pages
                 .iter()
                 .map(|page| size(px(0.), px(self.thumbnail_row_height(page))))
                 .collect(),
@@ -723,15 +789,19 @@ impl PdfViewer {
         target_width: u32,
         cx: &mut Context<Self>,
     ) {
-        if candidate_order.is_empty() || self.pages.is_empty() {
+        let language = self.language;
+        let Some(tab) = self.active_tab_mut() else {
+            return;
+        };
+        if candidate_order.is_empty() || tab.pages.is_empty() {
             return;
         }
 
-        let Some(path) = self.path.clone() else {
+        let Some(path) = tab.path.clone() else {
             return;
         };
 
-        if self.thumbnail_inflight_tasks >= THUMB_MAX_PARALLEL_TASKS {
+        if tab.thumbnail_inflight_tasks >= THUMB_MAX_PARALLEL_TASKS {
             return;
         }
 
@@ -742,7 +812,7 @@ impl PdfViewer {
                 continue;
             }
 
-            let Some(page) = self.pages.get(ix) else {
+            let Some(page) = tab.pages.get(ix) else {
                 continue;
             };
 
@@ -761,12 +831,12 @@ impl PdfViewer {
         }
 
         for ix in &pending {
-            self.thumbnail_loading.insert(*ix);
+            tab.thumbnail_loading.insert(*ix);
         }
-        self.thumbnail_inflight_tasks = self.thumbnail_inflight_tasks.saturating_add(1);
-        let language = self.language;
+        tab.thumbnail_inflight_tasks = tab.thumbnail_inflight_tasks.saturating_add(1);
+        let epoch = tab.thumbnail_epoch;
+        let tab_id = tab.id;
 
-        let epoch = self.thumbnail_epoch;
         cx.spawn(async move |view, cx| {
             let load_result = cx
                 .background_executor()
@@ -777,10 +847,14 @@ impl PdfViewer {
                 .await;
 
             let _ = view.update(cx, |this, cx| {
-                this.thumbnail_inflight_tasks = this.thumbnail_inflight_tasks.saturating_sub(1);
-                if this.thumbnail_epoch != epoch {
+                let Some(tab) = this.tab_bar.get_active_tab_mut() else {
+                    return;
+                };
+                if tab.id != tab_id || tab.thumbnail_epoch != epoch {
                     return;
                 }
+
+                tab.thumbnail_inflight_tasks = tab.thumbnail_inflight_tasks.saturating_sub(1);
 
                 let (requested_indices, loaded_target_width, loaded_result) = load_result;
                 let mut loaded_indices = HashSet::new();
@@ -788,7 +862,7 @@ impl PdfViewer {
                 match loaded_result {
                     Ok(images) => {
                         for (ix, image) in images {
-                            if let Some(page) = this.pages.get_mut(ix) {
+                            if let Some(page) = tab.pages.get_mut(ix) {
                                 page.thumbnail_image = Some(image);
                                 page.thumbnail_render_width = loaded_target_width;
                                 page.thumbnail_failed = false;
@@ -800,9 +874,9 @@ impl PdfViewer {
                 }
 
                 for ix in requested_indices {
-                    this.thumbnail_loading.remove(&ix);
+                    tab.thumbnail_loading.remove(&ix);
                     if !loaded_indices.contains(&ix)
-                        && let Some(page) = this.pages.get_mut(ix)
+                        && let Some(page) = tab.pages.get_mut(ix)
                     {
                         page.thumbnail_failed = true;
                     }
@@ -819,24 +893,22 @@ impl PdfViewer {
         target_width: u32,
         cx: &mut Context<Self>,
     ) {
-        if visible_range.is_empty() || self.pages.is_empty() {
+        let Some(tab) = self.active_tab_mut() else {
+            return;
+        };
+        if visible_range.is_empty() || tab.pages.is_empty() {
             return;
         }
 
-        if self.thumbnail_inflight_tasks == 0 && !self.thumbnail_loading.is_empty() {
-            self.thumbnail_loading.clear();
+        if tab.thumbnail_inflight_tasks == 0 && !tab.thumbnail_loading.is_empty() {
+            tab.thumbnail_loading.clear();
         }
 
-        self.last_thumbnail_visible_range = Some(visible_range.clone());
-        self.trim_thumbnail_cache(visible_range.clone());
+        tab.last_thumbnail_visible_range = Some(visible_range.clone());
 
         let mut candidate_order = Vec::with_capacity(visible_range.len());
         candidate_order.extend(visible_range.clone());
         self.request_thumbnail_load_from_candidates(candidate_order, target_width, cx);
-    }
-
-    fn trim_thumbnail_cache(&mut self, visible_range: std::ops::Range<usize>) {
-        let _ = visible_range;
     }
 
     fn display_available_width(&self, window: &Window) -> f32 {
@@ -844,13 +916,13 @@ impl PdfViewer {
         (viewport_width - SIDEBAR_WIDTH).max(DISPLAY_MIN_WIDTH)
     }
 
-    fn display_panel_width(&self, window: &Window) -> f32 {
+    fn display_panel_width(&self, window: &Window, zoom: f32) -> f32 {
         let available_width = self.display_available_width(window);
-        (available_width * self.zoom).clamp(DISPLAY_MIN_WIDTH, available_width)
+        (available_width * zoom).clamp(DISPLAY_MIN_WIDTH, available_width)
     }
 
-    fn display_base_width(&self, window: &Window) -> f32 {
-        self.display_panel_width(window)
+    fn display_base_width(&self, window: &Window, zoom: f32) -> f32 {
+        self.display_panel_width(window, zoom)
     }
 
     fn display_card_size(&self, page: &PageSummary, base_width: f32) -> (f32, f32) {
@@ -869,17 +941,21 @@ impl PdfViewer {
         height
     }
 
-    fn display_item_sizes(&self, base_width: f32) -> Rc<Vec<gpui::Size<Pixels>>> {
+    fn display_item_sizes(
+        &self,
+        pages: &[PageSummary],
+        base_width: f32,
+    ) -> Rc<Vec<gpui::Size<Pixels>>> {
         Rc::new(
-            self.pages
+            pages
                 .iter()
                 .map(|page| size(px(0.), px(self.display_row_height(page, base_width))))
                 .collect(),
         )
     }
 
-    fn display_target_width(&self, window: &Window) -> u32 {
-        let width = self.display_panel_width(window) * window.scale_factor();
+    fn display_target_width(&self, window: &Window, zoom: f32) -> u32 {
+        let width = self.display_panel_width(window, zoom) * window.scale_factor();
         width.clamp(1.0, i32::MAX as f32).round() as u32
     }
 
@@ -889,15 +965,19 @@ impl PdfViewer {
         target_width: u32,
         cx: &mut Context<Self>,
     ) {
-        if candidate_order.is_empty() || self.pages.is_empty() {
+        let language = self.language;
+        let Some(tab) = self.active_tab_mut() else {
+            return;
+        };
+        if candidate_order.is_empty() || tab.pages.is_empty() {
             return;
         }
 
-        let Some(path) = self.path.clone() else {
+        let Some(path) = tab.path.clone() else {
             return;
         };
 
-        if self.display_inflight_tasks >= DISPLAY_MAX_PARALLEL_TASKS {
+        if tab.display_inflight_tasks >= DISPLAY_MAX_PARALLEL_TASKS {
             return;
         }
 
@@ -908,7 +988,7 @@ impl PdfViewer {
                 continue;
             }
 
-            let Some(page) = self.pages.get(ix) else {
+            let Some(page) = tab.pages.get(ix) else {
                 continue;
             };
 
@@ -927,12 +1007,12 @@ impl PdfViewer {
         }
 
         for ix in &pending {
-            self.display_loading.insert(*ix);
+            tab.display_loading.insert(*ix);
         }
-        self.display_inflight_tasks = self.display_inflight_tasks.saturating_add(1);
-        let language = self.language;
+        tab.display_inflight_tasks = tab.display_inflight_tasks.saturating_add(1);
+        let epoch = tab.display_epoch;
+        let tab_id = tab.id;
 
-        let epoch = self.display_epoch;
         cx.spawn(async move |view, cx| {
             let load_result = cx
                 .background_executor()
@@ -943,10 +1023,14 @@ impl PdfViewer {
                 .await;
 
             let _ = view.update(cx, |this, cx| {
-                this.display_inflight_tasks = this.display_inflight_tasks.saturating_sub(1);
-                if this.display_epoch != epoch {
+                let Some(tab) = this.tab_bar.get_active_tab_mut() else {
+                    return;
+                };
+                if tab.id != tab_id || tab.display_epoch != epoch {
                     return;
                 }
+
+                tab.display_inflight_tasks = tab.display_inflight_tasks.saturating_sub(1);
 
                 let (requested_indices, loaded_target_width, loaded_result) = load_result;
                 let mut loaded_indices = HashSet::new();
@@ -954,7 +1038,7 @@ impl PdfViewer {
                 match loaded_result {
                     Ok(images) => {
                         for (ix, image) in images {
-                            if let Some(page) = this.pages.get_mut(ix) {
+                            if let Some(page) = tab.pages.get_mut(ix) {
                                 page.display_image = Some(image);
                                 page.display_render_width = loaded_target_width;
                                 page.display_failed = false;
@@ -966,9 +1050,9 @@ impl PdfViewer {
                 }
 
                 for ix in requested_indices {
-                    this.display_loading.remove(&ix);
+                    tab.display_loading.remove(&ix);
                     if !loaded_indices.contains(&ix)
-                        && let Some(page) = this.pages.get_mut(ix)
+                        && let Some(page) = tab.pages.get_mut(ix)
                     {
                         page.display_failed = true;
                     }
@@ -985,17 +1069,18 @@ impl PdfViewer {
         target_width: u32,
         cx: &mut Context<Self>,
     ) {
-        if visible_range.is_empty() || self.pages.is_empty() {
+        let Some(tab) = self.active_tab_mut() else {
+            return;
+        };
+        if visible_range.is_empty() || tab.pages.is_empty() {
             return;
         }
 
-        if self.display_inflight_tasks == 0 && !self.display_loading.is_empty() {
-            self.display_loading.clear();
+        if tab.display_inflight_tasks == 0 && !tab.display_loading.is_empty() {
+            tab.display_loading.clear();
         }
 
-        self.last_display_visible_range = Some(visible_range.clone());
-
-        self.trim_display_cache(visible_range.clone());
+        tab.last_display_visible_range = Some(visible_range.clone());
 
         let mut candidate_order = Vec::with_capacity(visible_range.len());
         candidate_order.extend(visible_range.clone());
@@ -1003,46 +1088,40 @@ impl PdfViewer {
         self.request_display_load_from_candidates(candidate_order, target_width, cx);
     }
 
-    fn trim_display_cache(&mut self, visible_range: std::ops::Range<usize>) {
-        let _ = visible_range;
-    }
-
     pub fn copy_selected_text(&self) {
-        eprintln!("[copy] copy_selected_text called");
-        let manager = self.text_selection_manager.borrow();
-        if let Some(text) = manager.get_selected_text() {
-            eprintln!("[copy] got selected text: {} chars", text.len());
-            if !text.is_empty() {
-                if let Err(err) = copy_to_clipboard(&text) {
-                    eprintln!("[copy] failed to copy to clipboard: {}", err);
-                } else {
-                    eprintln!("[copy] copied {} characters to clipboard", text.len());
+        if let Some(tab) = self.active_tab() {
+            let manager = tab.text_selection_manager.borrow();
+            if let Some(text) = manager.get_selected_text() {
+                if !text.is_empty() {
+                    if let Err(err) = copy_to_clipboard(&text) {
+                        eprintln!("[copy] failed to copy to clipboard: {}", err);
+                    }
                 }
-            } else {
-                eprintln!("[copy] text is empty");
             }
-        } else {
-            eprintln!("[copy] no text selected");
         }
     }
 
     pub fn select_all_text(&mut self, cx: &mut Context<Self>) {
-        if self.pages.get(self.active_page).is_some() {
-            let mut manager = self.text_selection_manager.borrow_mut();
-            if let Some(cache) = manager.get_page_cache(self.active_page) {
-                let char_count = cache.chars.len();
-                if char_count > 0 {
-                    manager.start_selection(self.active_page, 0);
-                    manager.update_selection(self.active_page, char_count);
-                    manager.end_selection();
-                    cx.notify();
+        if let Some(tab) = self.active_tab() {
+            if tab.pages.get(tab.active_page).is_some() {
+                let mut manager = tab.text_selection_manager.borrow_mut();
+                if let Some(cache) = manager.get_page_cache(tab.active_page) {
+                    let char_count = cache.chars.len();
+                    if char_count > 0 {
+                        manager.start_selection(tab.active_page, 0);
+                        manager.update_selection(tab.active_page, char_count);
+                        manager.end_selection();
+                        cx.notify();
+                    }
                 }
             }
         }
     }
 
     pub fn clear_text_selection(&mut self, cx: &mut Context<Self>) {
-        self.text_selection_manager.borrow_mut().clear_selection();
+        if let Some(tab) = self.active_tab_mut() {
+            tab.text_selection_manager.borrow_mut().clear_selection();
+        }
         cx.notify();
     }
 
@@ -1059,7 +1138,136 @@ impl PdfViewer {
     }
 
     pub fn has_text_selection(&self) -> bool {
-        self.text_selection_manager.borrow().get_selected_text().is_some()
+        self.active_tab()
+            .and_then(|tab| tab.text_selection_manager.borrow().get_selected_text())
+            .is_some()
+    }
+
+    pub fn close_current_tab(&mut self, cx: &mut Context<Self>) {
+        if let Some(active_id) = self.tab_bar.active_tab_id() {
+            self.close_tab(active_id, cx);
+        }
+    }
+
+    // Convenience methods for accessing active tab data in render functions
+    pub(super) fn active_tab_display_scroll(
+        &self,
+    ) -> Option<&gpui_component::VirtualListScrollHandle> {
+        self.active_tab().map(|t| &t.display_scroll)
+    }
+
+    pub(super) fn active_tab_thumbnail_scroll(
+        &self,
+    ) -> Option<&gpui_component::VirtualListScrollHandle> {
+        self.active_tab().map(|t| &t.thumbnail_scroll)
+    }
+
+    pub(super) fn active_tab_pages(&self) -> Option<&Vec<PageSummary>> {
+        self.active_tab().map(|t| &t.pages)
+    }
+
+    pub(super) fn active_tab_zoom(&self) -> f32 {
+        self.active_tab().map(|t| t.zoom).unwrap_or(1.0)
+    }
+
+    pub(super) fn active_tab_active_page(&self) -> usize {
+        self.active_tab().map(|t| t.active_page).unwrap_or(0)
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn active_tab_selected_page(&self) -> usize {
+        self.active_tab().map(|t| t.selected_page).unwrap_or(0)
+    }
+
+    pub(super) fn active_tab_text_selection_manager(
+        &self,
+    ) -> Option<&std::cell::RefCell<crate::pdf_viewer::text_selection::TextSelectionManager>> {
+        self.active_tab().map(|t| &t.text_selection_manager)
+    }
+
+    pub(super) fn active_tab_path(&self) -> Option<&PathBuf> {
+        self.active_tab().and_then(|t| t.path.as_ref())
+    }
+
+    pub(super) fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let tabs = self.tab_bar.tabs().to_vec();
+        let active_tab_id = self.tab_bar.active_tab_id();
+
+        div()
+            .h(px(TAB_BAR_HEIGHT))
+            .w_full()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().background)
+            .flex()
+            .items_center()
+            .px_1()
+            .gap_1()
+            .overflow_x_hidden()
+            .children(tabs.iter().map(|tab| {
+                let tab_id = tab.id;
+                let is_active = active_tab_id == Some(tab_id);
+                let file_name = tab.file_name();
+                let is_untitled = tab.path.is_none();
+
+                div()
+                    .id(("tab", tab_id))
+                    .h(px(28.))
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .when(is_active, |this| this.bg(cx.theme().secondary_active))
+                    .when(!is_active, |this| {
+                        this.hover(|this| this.bg(cx.theme().secondary_hover))
+                    })
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(if is_active {
+                                cx.theme().secondary_foreground
+                            } else {
+                                cx.theme().muted_foreground
+                            })
+                            .child(file_name.clone())
+                            .when(is_untitled, |this| {
+                                this.text_color(cx.theme().muted_foreground.opacity(0.6))
+                            }),
+                    )
+                    .child(
+                        Button::new(("close-tab", tab_id))
+                            .xsmall()
+                            .ghost()
+                            .icon(
+                                Icon::new(IconName::WindowClose)
+                                    .size_3()
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.close_tab(tab_id, cx);
+                            })),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !is_active {
+                            this.switch_to_tab(tab_id, cx);
+                        }
+                    }))
+                    .into_any_element()
+            }))
+            .child(
+                Button::new("new-tab")
+                    .xsmall()
+                    .ghost()
+                    .icon(
+                        Icon::new(IconName::Plus)
+                            .size_4()
+                            .text_color(cx.theme().muted_foreground),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.create_new_tab(cx);
+                    })),
+            )
     }
 }
 
@@ -1074,28 +1282,70 @@ impl Render for PdfViewer {
             self.save_window_size(current_size.0, current_size.1);
         }
 
-        let page_count = self.pages.len();
-        let current_page_num = if page_count == 0 {
-            0
-        } else {
-            self.active_page + 1
+        let (
+            page_count,
+            current_page_num,
+            zoom,
+            file_name,
+            thumbnail_sizes,
+            display_sizes,
+            _display_base_width,
+            display_panel_width,
+        ) = {
+            let active_tab = self.active_tab();
+            let page_count = active_tab.map(|t| t.pages.len()).unwrap_or(0);
+            let current_page_num = if page_count == 0 {
+                0
+            } else {
+                active_tab.map(|t| t.active_page + 1).unwrap_or(0)
+            };
+            let zoom = active_tab.map(|t| t.zoom).unwrap_or(1.0);
+
+            let file_name = active_tab
+                .and_then(|t| t.path.as_ref())
+                .map(|p| display_file_name(p))
+                .unwrap_or_else(|| self.i18n().file_not_opened().to_string());
+
+            let display_base_width = active_tab
+                .map(|t| self.display_base_width(window, t.zoom))
+                .unwrap_or(DISPLAY_MIN_WIDTH);
+            let display_panel_width = active_tab
+                .map(|t| self.display_panel_width(window, t.zoom))
+                .unwrap_or(DISPLAY_MIN_WIDTH);
+
+            let thumbnail_sizes = active_tab
+                .map(|t| self.thumbnail_item_sizes(&t.pages))
+                .unwrap_or_else(|| Rc::new(Vec::new()));
+            let display_sizes = active_tab
+                .map(|t| self.display_item_sizes(&t.pages, display_base_width))
+                .unwrap_or_else(|| Rc::new(Vec::new()));
+
+            (
+                page_count,
+                current_page_num,
+                zoom,
+                file_name,
+                thumbnail_sizes,
+                display_sizes,
+                display_base_width,
+                display_panel_width,
+            )
         };
+
         let recent_popup_open = self.recent_popup_open();
         let recent_files = self.recent_files.clone();
-        let file_name = self
-            .path
-            .as_ref()
-            .map(|p| display_file_name(p))
-            .unwrap_or_else(|| self.i18n().file_not_opened().to_string());
-        let zoom_label: SharedString = format!("{:.0}%", self.zoom * 100.0).into();
+        let zoom_label: SharedString = format!("{:.0}%", zoom * 100.0).into();
 
-        self.last_display_target_width = self.display_target_width(window);
+        // 更新当前标签页的显示滚动偏移
+        let target_width = if let Some(tab) = self.active_tab() {
+            self.display_target_width(window, tab.zoom)
+        } else {
+            220
+        };
+        if let Some(tab) = self.active_tab_mut() {
+            tab.last_display_target_width = target_width;
+        }
         self.on_display_scroll_offset_changed(cx);
-
-        let display_base_width = self.display_base_width(window);
-        let display_panel_width = self.display_panel_width(window);
-        let thumbnail_sizes = self.thumbnail_item_sizes();
-        let display_sizes = self.display_item_sizes(display_base_width);
 
         let context_menu = self.render_context_menu(cx);
 
@@ -1189,6 +1439,7 @@ impl Render for PdfViewer {
                             )
                         }),
                 )
+                .child(self.render_tab_bar(cx))
                 .child(self.render_menu_bar(
                     page_count,
                     current_page_num,
@@ -1210,28 +1461,35 @@ impl Render for PdfViewer {
                             display_panel_width,
                             cx,
                         ))
-                        .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
-                            eprintln!("[main_key_down] key={}, platform={}", event.keystroke.key, event.keystroke.modifiers.platform);
-                            
-                            // Handle Cmd+C / Ctrl+C for copy
-                            if event.keystroke.key == "c" && event.keystroke.modifiers.platform {
-                                eprintln!("[main_key_down] Copy command detected");
-                                this.copy_selected_text();
-                                cx.stop_propagation();
-                            }
-                            // Handle Cmd+A / Ctrl+A for select all on current page
-                            else if event.keystroke.key == "a" && event.keystroke.modifiers.platform {
-                                eprintln!("[main_key_down] Select all command detected");
-                                this.select_all_text(cx);
-                                cx.stop_propagation();
-                            }
-                            // Handle Escape to clear selection
-                            else if event.keystroke.key == "escape" {
-                                eprintln!("[main_key_down] Escape command detected");
-                                this.clear_text_selection(cx);
-                                cx.stop_propagation();
-                            }
-                        })),
+                        .on_key_down(cx.listener(
+                            |this, event: &gpui::KeyDownEvent, _window, cx| {
+                                // Handle Cmd+C / Ctrl+C for copy
+                                if event.keystroke.key == "c" && event.keystroke.modifiers.platform
+                                {
+                                    this.copy_selected_text();
+                                    cx.stop_propagation();
+                                }
+                                // Handle Cmd+A / Ctrl+A for select all on current page
+                                else if event.keystroke.key == "a"
+                                    && event.keystroke.modifiers.platform
+                                {
+                                    this.select_all_text(cx);
+                                    cx.stop_propagation();
+                                }
+                                // Handle Escape to clear selection
+                                else if event.keystroke.key == "escape" {
+                                    this.clear_text_selection(cx);
+                                    cx.stop_propagation();
+                                }
+                                // Handle Cmd+W / Ctrl+W to close current tab
+                                else if event.keystroke.key == "w"
+                                    && event.keystroke.modifiers.platform
+                                {
+                                    this.close_current_tab(cx);
+                                    cx.stop_propagation();
+                                }
+                            },
+                        )),
                 )
                 .when(context_menu.is_some(), |this| {
                     this.child(context_menu.unwrap())

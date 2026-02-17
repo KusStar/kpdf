@@ -224,6 +224,7 @@ impl PageTextCache {
 }
 
 /// Manager for text selection functionality
+#[derive(Clone)]
 pub struct TextSelectionManager {
     text_caches: Arc<Mutex<HashMap<usize, PageTextCache>>>,
     current_selection: Option<TextSelection>,

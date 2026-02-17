@@ -8,7 +8,18 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 use std::time::SystemTime;
 
-use super::PageSummary;
+#[derive(Clone)]
+pub struct PageSummary {
+    pub index: usize,
+    pub width_pt: f32,
+    pub height_pt: f32,
+    pub thumbnail_image: Option<Arc<GpuiRenderImage>>,
+    pub thumbnail_render_width: u32,
+    pub thumbnail_failed: bool,
+    pub display_image: Option<Arc<GpuiRenderImage>>,
+    pub display_render_width: u32,
+    pub display_failed: bool,
+}
 
 static PDFIUM_INSTANCE: OnceLock<Result<Pdfium, String>> = OnceLock::new();
 static PDFIUM_DOCUMENT_CACHE: OnceLock<Mutex<Option<CachedPdfDocument>>> = OnceLock::new();

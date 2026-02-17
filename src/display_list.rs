@@ -15,6 +15,8 @@ impl PdfViewer {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let i18n = self.i18n();
+        let zoom = self.active_tab_zoom();
+
         div()
             .h_full()
             .flex_1()
@@ -62,7 +64,8 @@ impl PdfViewer {
                                         "display-virtual-list",
                                         display_sizes.clone(),
                                         move |viewer, visible_range, _window, cx| {
-                                            let target_width = viewer.display_target_width(_window);
+                                            let target_width =
+                                                viewer.display_target_width(_window, zoom);
                                             viewer.request_display_load_for_visible_range(
                                                 visible_range.clone(),
                                                 target_width,
@@ -74,11 +77,15 @@ impl PdfViewer {
 
                                             visible_range
                                                 .map(|ix| {
-                                                    let Some(page) = viewer.pages.get(ix) else {
+                                                    let Some(pages) = viewer.active_tab_pages()
+                                                    else {
+                                                        return div().into_any_element();
+                                                    };
+                                                    let Some(page) = pages.get(ix) else {
                                                         return div().into_any_element();
                                                     };
                                                     let display_base_width =
-                                                        viewer.display_base_width(_window);
+                                                        viewer.display_base_width(_window, zoom);
                                                     let (page_width, display_height) = viewer
                                                         .display_card_size(
                                                             page,
@@ -100,7 +107,7 @@ impl PdfViewer {
                                                 .collect::<Vec<_>>()
                                         },
                                     )
-                                    .track_scroll(&self.display_scroll)
+                                    .track_scroll(self.active_tab_display_scroll().unwrap())
                                     .into_any_element(),
                                 )
                                 .child(
@@ -111,8 +118,10 @@ impl PdfViewer {
                                         .right_0()
                                         .bottom_0()
                                         .child(
-                                            Scrollbar::vertical(&self.display_scroll)
-                                                .scrollbar_show(ScrollbarShow::Always),
+                                            Scrollbar::vertical(
+                                                self.active_tab_display_scroll().unwrap(),
+                                            )
+                                            .scrollbar_show(ScrollbarShow::Always),
                                         ),
                                 ),
                         )
@@ -295,7 +304,10 @@ impl PdfViewer {
         page_height_screen: f32,
         scale: f32,
     ) -> Vec<(f32, f32, f32, f32)> {
-        let manager = self.text_selection_manager.borrow();
+        let Some(manager_ref) = self.active_tab_text_selection_manager() else {
+            return Vec::new();
+        };
+        let manager = manager_ref.borrow();
         let Some(rects) = manager.get_selection_rects(page_index) else {
             return Vec::new();
         };
@@ -378,11 +390,18 @@ impl PdfViewer {
         page_width: f32,
         window: &mut Window,
     ) -> (f32, f32) {
-        let scroll_offset = self.display_scroll.offset();
+        let Some(scroll_handle) = self.active_tab_display_scroll() else {
+            return (0.0, 0.0);
+        };
+        let scroll_offset = scroll_handle.offset();
+        let zoom = self.active_tab_zoom();
 
         // Calculate cumulative height of all pages before this one
-        let display_base_width = self.display_base_width(window);
-        let display_sizes = self.display_item_sizes(display_base_width);
+        let display_base_width = self.display_base_width(window, zoom);
+        let Some(pages) = self.active_tab_pages() else {
+            return (0.0, 0.0);
+        };
+        let display_sizes = self.display_item_sizes(pages, display_base_width);
         let cumulative_height: f32 = display_sizes
             .iter()
             .take(page_index)
@@ -390,13 +409,14 @@ impl PdfViewer {
             .sum();
 
         // Calculate horizontal centering offset (pages are centered in the panel)
-        let display_panel_width = self.display_panel_width(window);
+        let display_panel_width = self.display_panel_width(window, zoom);
         let horizontal_offset = (display_panel_width - page_width) / 2.0;
 
         // Constants for layout offsets
         // Title bar: 34px (from pdf_viewer.rs)
+        // Tab bar: 36px
         // Menu bar: 40px (h_10 from menu_bar.rs)
-        let content_offset_y = 74.0; // 34 + 40
+        let content_offset_y = 110.0; // 34 + 36 + 40
         let sidebar_width = super::SIDEBAR_WIDTH;
 
         // Convert window coordinates to local page container coordinates
@@ -423,11 +443,17 @@ impl PdfViewer {
         // Ensure text is loaded before handling mouse down
         self.ensure_page_text_loaded(page_index);
 
-        let manager = self.text_selection_manager.borrow();
+        let Some(manager_ref) = self.active_tab_text_selection_manager() else {
+            return;
+        };
+        let manager = manager_ref.borrow();
 
         // Get cache page dimensions - these must match the dimensions used in get_char_bounds_for_page
         let Some(cache) = manager.get_page_cache(page_index) else {
-            self.text_selection_manager.borrow_mut().clear_selection();
+            drop(manager);
+            if let Some(manager_ref) = self.active_tab_text_selection_manager() {
+                manager_ref.borrow_mut().clear_selection();
+            }
             cx.notify();
             return;
         };
@@ -449,11 +475,15 @@ impl PdfViewer {
         drop(manager); // Release borrow before mutable borrow
 
         if let Some(char_index) = char_index {
-            self.text_selection_manager
-                .borrow_mut()
-                .start_selection(page_index, char_index);
+            if let Some(manager_ref) = self.active_tab_text_selection_manager() {
+                manager_ref
+                    .borrow_mut()
+                    .start_selection(page_index, char_index);
+            }
         } else {
-            self.text_selection_manager.borrow_mut().clear_selection();
+            if let Some(manager_ref) = self.active_tab_text_selection_manager() {
+                manager_ref.borrow_mut().clear_selection();
+            }
         }
         cx.notify();
     }
@@ -470,7 +500,10 @@ impl PdfViewer {
         // Ensure text is loaded before handling mouse move
         self.ensure_page_text_loaded(page_index);
 
-        let manager = self.text_selection_manager.borrow();
+        let Some(manager_ref) = self.active_tab_text_selection_manager() else {
+            return;
+        };
+        let manager = manager_ref.borrow();
 
         if !manager.is_selecting() {
             return;
@@ -498,35 +531,38 @@ impl PdfViewer {
         drop(manager);
 
         if let Some(char_index) = char_index {
-            self.text_selection_manager
-                .borrow_mut()
-                .update_selection(page_index, char_index);
+            if let Some(manager_ref) = self.active_tab_text_selection_manager() {
+                manager_ref
+                    .borrow_mut()
+                    .update_selection(page_index, char_index);
+            }
             cx.notify();
         }
     }
 
     fn handle_text_mouse_up(&mut self, cx: &mut Context<Self>) {
-        self.text_selection_manager.borrow_mut().end_selection();
+        if let Some(manager_ref) = self.active_tab_text_selection_manager() {
+            manager_ref.borrow_mut().end_selection();
+        }
         cx.notify();
     }
 
     fn ensure_page_text_loaded(&self, page_index: usize) {
         // Check if already loaded
-        if self
-            .text_selection_manager
-            .borrow()
-            .get_page_cache(page_index)
-            .is_some()
-        {
+        let Some(manager_ref) = self.active_tab_text_selection_manager() else {
+            return;
+        };
+
+        if manager_ref.borrow().get_page_cache(page_index).is_some() {
             return;
         }
 
         // Load text synchronously (pdfium is not thread-safe)
-        if let Some(path) = &self.path {
+        if let Some(path) = self.active_tab_path() {
             match crate::pdf_viewer::utils::load_page_text_for_selection(path, page_index) {
                 Ok(Some((page_index, page_width, page_height, chars))) => {
                     let _char_count = chars.len();
-                    if let Ok(mut manager) = self.text_selection_manager.try_borrow_mut() {
+                    if let Ok(mut manager) = manager_ref.try_borrow_mut() {
                         manager.load_cached_text(page_index, page_width, page_height, chars);
                     }
                 }
