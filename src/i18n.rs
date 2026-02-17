@@ -305,6 +305,49 @@ impl I18n {
         }
     }
 
+    pub fn close_all_tabs_button(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "关闭所有标签页",
+            Language::EnUs => "Close All Tabs",
+        }
+    }
+
+    pub fn close_other_tabs_button(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "关闭其他标签页",
+            Language::EnUs => "Close Other Tabs",
+        }
+    }
+
+    pub fn reveal_in_file_manager_button(self) -> &'static str {
+        #[cfg(target_os = "macos")]
+        {
+            return match self.lang {
+                Language::ZhCn => "在 Finder 中显示",
+                Language::EnUs => "Reveal in Finder",
+            };
+        }
+        #[cfg(target_os = "windows")]
+        {
+            return match self.lang {
+                Language::ZhCn => "在资源管理器中显示",
+                Language::EnUs => "Reveal in Explorer",
+            };
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            return match self.lang {
+                Language::ZhCn => "打开所在文件夹",
+                Language::EnUs => "Open Containing Folder",
+            };
+        }
+        #[allow(unreachable_code)]
+        match self.lang {
+            Language::ZhCn => "打开所在文件夹",
+            Language::EnUs => "Open Containing Folder",
+        }
+    }
+
     pub fn cannot_create_image_buffer(self, width: u32, height: u32) -> String {
         match self.lang {
             Language::ZhCn => format!("无法创建图像缓冲区: {}x{}", width, height),

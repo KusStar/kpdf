@@ -117,7 +117,6 @@ pub struct PdfViewer {
     _command_panel_input_subscription: Subscription,
     context_menu_open: bool,
     context_menu_position: Option<Point<Pixels>>,
-    #[allow(dead_code)]
     context_menu_tab_id: Option<usize>,
     hovered_tab_id: Option<usize>,
     // 拖放相关状态
@@ -667,6 +666,73 @@ impl PdfViewer {
         self.load_pdf_path_into_tab(tab_id, path, true, cx);
     }
 
+    fn reveal_path_in_file_manager(&self, path: &Path) {
+        let status = {
+            #[cfg(target_os = "macos")]
+            {
+                std::process::Command::new("open")
+                    .arg("-R")
+                    .arg(path)
+                    .status()
+            }
+            #[cfg(target_os = "windows")]
+            {
+                let select_arg = format!("/select,{}", path.to_string_lossy());
+                std::process::Command::new("explorer")
+                    .arg(select_arg)
+                    .status()
+            }
+            #[cfg(all(unix, not(target_os = "macos")))]
+            {
+                let open_target = if path.is_dir() {
+                    path.to_path_buf()
+                } else {
+                    path.parent()
+                        .map(PathBuf::from)
+                        .unwrap_or_else(|| path.to_path_buf())
+                };
+                std::process::Command::new("xdg-open")
+                    .arg(&open_target)
+                    .status()
+            }
+        };
+
+        match status {
+            Ok(exit_status) if exit_status.success() => {
+                crate::debug_log!("[tab] revealed in file manager: {}", path.display());
+            }
+            Ok(exit_status) => {
+                crate::debug_log!(
+                    "[tab] failed to reveal in file manager: {} | exit={}",
+                    path.display(),
+                    exit_status
+                );
+            }
+            Err(err) => {
+                crate::debug_log!(
+                    "[tab] failed to reveal in file manager: {} | {}",
+                    path.display(),
+                    err
+                );
+            }
+        }
+    }
+
+    fn reveal_tab_in_file_manager(&self, tab_id: usize) {
+        let tab_path = self
+            .tab_bar
+            .tabs()
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .and_then(|tab| tab.path.as_ref());
+        let Some(path) = tab_path else {
+            crate::debug_log!("[tab] cannot reveal tab {}: no file path", tab_id);
+            return;
+        };
+
+        self.reveal_path_in_file_manager(path);
+    }
+
     fn open_logs_directory(&self) {
         let Some(log_file_path) = crate::logger::log_file_path() else {
             crate::debug_log!("[log] cannot open logs directory: unresolved log path");
@@ -892,18 +958,28 @@ impl PdfViewer {
         cx.notify();
     }
 
-    fn close_tab(&mut self, tab_id: usize, cx: &mut Context<Self>) {
-        // 先持久化要关闭的标签页的位置
-        if let Some(tab) = self.tab_bar.tabs().iter().find(|t| t.id == tab_id) {
-            if let Some(ref path) = tab.path {
-                if !tab.pages.is_empty() {
-                    let page_index = tab.active_page.min(tab.pages.len().saturating_sub(1));
-                    self.save_file_position(path, page_index);
-                }
-            }
+    fn save_tab_position_if_needed(&self, tab_id: usize) {
+        if let Some(tab) = self.tab_bar.tabs().iter().find(|t| t.id == tab_id)
+            && let Some(path) = tab.path.as_ref()
+            && !tab.pages.is_empty()
+        {
+            let page_index = tab.active_page.min(tab.pages.len().saturating_sub(1));
+            self.save_file_position(path, page_index);
+        }
+    }
+
+    fn close_tabs_by_ids(&mut self, tab_ids: Vec<usize>, cx: &mut Context<Self>) {
+        if tab_ids.is_empty() {
+            return;
         }
 
-        self.tab_bar.close_tab(tab_id);
+        for tab_id in &tab_ids {
+            self.save_tab_position_if_needed(*tab_id);
+        }
+
+        for tab_id in tab_ids {
+            self.tab_bar.close_tab(tab_id);
+        }
 
         // 如果没有标签页了，创建一个空的
         if !self.tab_bar.has_tabs() {
@@ -911,12 +987,44 @@ impl PdfViewer {
         }
 
         self.persist_open_tabs();
+        self.scroll_tab_bar_to_active_tab();
         if let Some(active_tab_id) = self.tab_bar.active_tab_id()
             && self.load_tab_if_needed(active_tab_id, cx)
         {
             return;
         }
         cx.notify();
+    }
+
+    fn close_all_tabs(&mut self, cx: &mut Context<Self>) {
+        let tab_ids = self.tab_bar.tabs().iter().map(|tab| tab.id).collect();
+        self.close_tabs_by_ids(tab_ids, cx);
+    }
+
+    fn close_other_tabs(&mut self, keep_tab_id: usize, cx: &mut Context<Self>) {
+        if self.tab_bar.get_tab_index_by_id(keep_tab_id).is_none() {
+            return;
+        }
+
+        let _ = self.tab_bar.switch_to_tab(keep_tab_id);
+        let tab_ids = self
+            .tab_bar
+            .tabs()
+            .iter()
+            .filter_map(|tab| (tab.id != keep_tab_id).then_some(tab.id))
+            .collect::<Vec<_>>();
+        if tab_ids.is_empty() {
+            self.persist_open_tabs();
+            self.scroll_tab_bar_to_active_tab();
+            cx.notify();
+            return;
+        }
+
+        self.close_tabs_by_ids(tab_ids, cx);
+    }
+
+    fn close_tab(&mut self, tab_id: usize, cx: &mut Context<Self>) {
+        self.close_tabs_by_ids(vec![tab_id], cx);
     }
 
     fn switch_to_tab(&mut self, tab_id: usize, cx: &mut Context<Self>) {
@@ -2149,12 +2257,37 @@ impl PdfViewer {
     pub fn open_context_menu(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
         self.context_menu_open = true;
         self.context_menu_position = Some(position);
+        self.context_menu_tab_id = None;
+        cx.notify();
+    }
+
+    pub fn open_tab_context_menu(
+        &mut self,
+        tab_id: usize,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.tab_bar.get_tab_index_by_id(tab_id).is_none() {
+            return;
+        }
+
+        self.context_menu_open = true;
+        self.context_menu_position = Some(position);
+        self.context_menu_tab_id = Some(tab_id);
         cx.notify();
     }
 
     pub fn close_context_menu(&mut self, cx: &mut Context<Self>) {
+        if !self.context_menu_open
+            && self.context_menu_position.is_none()
+            && self.context_menu_tab_id.is_none()
+        {
+            return;
+        }
+
         self.context_menu_open = false;
         self.context_menu_position = None;
+        self.context_menu_tab_id = None;
         cx.notify();
     }
 
@@ -2541,6 +2674,12 @@ impl PdfViewer {
                                             }
                                         }),
                                     )
+                                    .on_mouse_down(
+                                        MouseButton::Right,
+                                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                            this.open_tab_context_menu(tab_id, event.position, cx);
+                                        }),
+                                    )
                                     .on_mouse_up(
                                         MouseButton::Left,
                                         cx.listener(move |this, _, _, cx| {
@@ -2785,7 +2924,8 @@ impl Render for PdfViewer {
                     ))
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|this, _, window, _cx| {
+                        cx.listener(|this, _, window, cx| {
+                            this.close_context_menu(cx);
                             window.focus(&this.focus_handle);
                         }),
                     )

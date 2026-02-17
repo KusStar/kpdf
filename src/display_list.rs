@@ -653,6 +653,68 @@ impl PdfViewer {
         let x: f32 = position.x.into();
         let y: f32 = position.y.into();
 
+        if let Some(tab_id) = self.context_menu_tab_id {
+            let tab_count = self.tab_bar.tabs().len();
+            let can_close_others = tab_count > 1;
+            let can_reveal = self
+                .tab_bar
+                .tabs()
+                .iter()
+                .any(|tab| tab.id == tab_id && tab.path.is_some());
+
+            return Some(
+                div()
+                    .id(("tab-context-menu", tab_id))
+                    .absolute()
+                    .left(px(x))
+                    .top(px(y))
+                    .w(px(196.))
+                    .v_flex()
+                    .gap_1()
+                    .popover_style(cx)
+                    .p_1()
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|_, _: &gpui::MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                        }),
+                    )
+                    .child(
+                        Button::new(("tab-close-all", tab_id))
+                            .small()
+                            .w_full()
+                            .label(i18n.close_all_tabs_button())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.close_context_menu(cx);
+                                this.close_all_tabs(cx);
+                            })),
+                    )
+                    .child(
+                        Button::new(("tab-close-others", tab_id))
+                            .small()
+                            .w_full()
+                            .disabled(!can_close_others)
+                            .label(i18n.close_other_tabs_button())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.close_context_menu(cx);
+                                this.close_other_tabs(tab_id, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new(("tab-reveal", tab_id))
+                            .small()
+                            .w_full()
+                            .disabled(!can_reveal)
+                            .label(i18n.reveal_in_file_manager_button())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.reveal_tab_in_file_manager(tab_id);
+                                this.close_context_menu(cx);
+                            })),
+                    )
+                    .into_any_element(),
+            );
+        }
+
         Some(
             div()
                 .id("context-menu")
