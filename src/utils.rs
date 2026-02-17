@@ -43,37 +43,59 @@ fn shared_pdfium(language: Language) -> Result<&'static Pdfium> {
     }
 }
 
+fn app_resources_lib_dir() -> Option<PathBuf> {
+    let current_exe = std::env::current_exe().ok()?;
+    let macos_dir = current_exe.parent()?;
+    if macos_dir.file_name()?.to_string_lossy() != "MacOS" {
+        return None;
+    }
+    let contents_dir = macos_dir.parent()?;
+    if contents_dir.file_name()?.to_string_lossy() != "Contents" {
+        return None;
+    }
+
+    Some(contents_dir.join("Resources").join("lib"))
+}
+
 fn init_pdfium(language: Language) -> Result<Pdfium> {
     let i18n = I18n::new(language);
 
     eprintln!("[pdfium] starting init...");
 
-    let lib_path = "./lib";
-    eprintln!("[pdfium] trying path: {}", lib_path);
-    let bindings = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(lib_path));
-    match &bindings {
-        Ok(_) => eprintln!("[pdfium] loaded from {}", lib_path),
-        Err(e) => eprintln!("[pdfium] {} failed: {}", lib_path, e),
+    let mut library_paths = Vec::new();
+    let is_running_in_app_bundle = if let Some(resources_lib_dir) = app_resources_lib_dir() {
+        library_paths.push(resources_lib_dir);
+        true
+    } else {
+        false
+    };
+
+    if !is_running_in_app_bundle {
+        library_paths.push(PathBuf::from("./lib"));
+        library_paths.push(PathBuf::from("./"));
     }
-    let bindings = bindings.or_else(|_| {
-        eprintln!("[pdfium] trying path: ./");
-        Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
-    });
-    match &bindings {
-        Ok(_) => eprintln!("[pdfium] loaded from ./"),
-        Err(e) => eprintln!("[pdfium] ./ failed: {}", e),
+
+    for lib_path in &library_paths {
+        let display = lib_path.to_string_lossy();
+        eprintln!("[pdfium] trying path: {}", display);
+        match Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path(lib_path)) {
+            Ok(bindings) => {
+                eprintln!("[pdfium] loaded from {}", display);
+                eprintln!("[pdfium] init success!");
+                return Ok(Pdfium::new(bindings));
+            }
+            Err(e) => eprintln!("[pdfium] {} failed: {}", display, e),
+        }
     }
-    let bindings = bindings.or_else(|_| {
-        eprintln!("[pdfium] trying system library");
-        Pdfium::bind_to_system_library()
-    });
+
+    eprintln!("[pdfium] trying system library");
+    let bindings = Pdfium::bind_to_system_library();
     match &bindings {
         Ok(_) => eprintln!("[pdfium] loaded from system"),
         Err(e) => eprintln!("[pdfium] system failed: {}", e),
     }
 
     let bindings = bindings.context(i18n.pdfium_not_found())?;
-
     eprintln!("[pdfium] init success!");
     Ok(Pdfium::new(bindings))
 }

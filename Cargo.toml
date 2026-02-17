@@ -12,3 +12,9 @@ pdfium-render = { version = "0.8.37", features = ["sync"] }
 image = "0.25.9"
 sled = "0.34.7"
 rust-embed = "8.11.0"
+
+[package.metadata.bundle]
+name = "KPDF"
+identifier = "com.kuss.kpdf"
+category = "Productivity"
+resources=["lib"]

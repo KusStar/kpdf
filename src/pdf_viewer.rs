@@ -1,7 +1,7 @@
-#[path = "display_list.rs"]
-mod display_list;
 #[path = "command_panel.rs"]
 mod command_panel;
+#[path = "display_list.rs"]
+mod display_list;
 #[path = "menu_bar.rs"]
 mod menu_bar;
 #[path = "tab.rs"]
