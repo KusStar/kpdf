@@ -21,6 +21,15 @@ use std::rc::Rc;
 
 use std::time::Duration;
 
+// 定义拖放状态
+#[derive(Debug, Clone)]
+pub enum DragState {
+    None,
+    Started { source_tab_id: usize },
+    Over { source_tab_id: usize, target_tab_id: usize },
+    Completed,
+}
+
 use self::tab::{PdfTab, TabBar};
 use self::text_selection::copy_to_clipboard;
 use self::utils::{display_file_name, load_display_images, load_document_summary};
@@ -69,6 +78,9 @@ pub struct PdfViewer {
     context_menu_position: Option<Point<Pixels>>,
     #[allow(dead_code)]
     context_menu_tab_id: Option<usize>,
+    hovered_tab_id: Option<usize>,
+    // 拖放相关状态
+    drag_state: DragState,
 }
 
 impl PdfViewer {
@@ -99,6 +111,8 @@ impl PdfViewer {
             context_menu_open: false,
             context_menu_position: None,
             context_menu_tab_id: None,
+            hovered_tab_id: None,
+            drag_state: DragState::None,
         }
     }
 
@@ -1193,7 +1207,7 @@ impl PdfViewer {
     pub(super) fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let tabs = self.tab_bar.tabs().to_vec();
         let active_tab_id = self.tab_bar.active_tab_id();
-        
+
         // 检查是否有文件打开，如果有，则过滤掉空的 Home 标签
         let has_file_open = tabs.iter().any(|tab| tab.path.is_some());
         let tabs_to_show: Vec<_> = tabs.iter().filter(|tab| {
@@ -1206,6 +1220,14 @@ impl PdfViewer {
             }
         }).collect();
 
+        // 计算拖动指示器位置（基于可见 tab 的索引）
+        let insertion_indicator_pos = match &self.drag_state {
+            DragState::Over { target_tab_id, .. } => tabs_to_show
+                .iter()
+                .position(|tab| tab.id == *target_tab_id),
+            _ => None,
+        };
+
         div()
             .h(px(TAB_BAR_HEIGHT))
             .w_full()
@@ -1216,58 +1238,185 @@ impl PdfViewer {
             .items_center()
             .px_1()
             .gap_1()
-            .children(tabs_to_show.iter().map(|tab| {
-                let tab_id = tab.id;
-                let is_active = active_tab_id == Some(tab_id);
-                let file_name = tab.file_name();
-                let is_home = tab.path.is_none();
+            .relative() // 使子元素可以使用绝对定位
+            .children({
+                let mut elements = Vec::new();
 
-                div()
-                    .id(("tab", tab_id))
-                    .h(px(28.))
-                    .px_2()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .when(is_active, |this| this.bg(cx.theme().secondary.opacity(0.85)))
-                    .when(!is_active, |this| {
-                        this.hover(|this| this.bg(cx.theme().secondary.opacity(0.3)))
-                    })
-                    .child(
+                for (index, tab) in tabs_to_show.iter().enumerate() {
+                    let tab_id = tab.id;
+                    let is_active = active_tab_id == Some(tab_id);
+                    let show_close_button = is_active || self.hovered_tab_id == Some(tab_id);
+                    let close_icon_color = if show_close_button {
+                        cx.theme().muted_foreground
+                    } else {
+                        cx.theme().muted_foreground.opacity(0.0)
+                    };
+                    let file_name = tab.file_name();
+                    let is_home = tab.path.is_none();
+
+                    // 在目标位置前插入垂直线指示器
+                    if insertion_indicator_pos == Some(index) {
+                        elements.push(
+                            div()
+                                .id(("indicator", index))
+                                .w_px()
+                                .h_6()
+                                .rounded_sm()
+                                .bg(cx.theme().primary)
+                                .into_any_element()
+                        );
+                    }
+
+                    elements.push(
                         div()
-                            .text_sm()
-                            .text_color(if is_active {
-                                cx.theme().foreground
-                            } else {
-                                cx.theme().muted_foreground
+                            .id(("tab", tab_id))
+                            .h(px(28.))
+                            .px_2()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .rounded_md()
+                            .cursor_grab()
+                            .when(is_active, |this| this.bg(cx.theme().secondary.opacity(0.85)))
+                            .when(!is_active, |this| {
+                                this.hover(|this| this.bg(cx.theme().secondary.opacity(0.3)))
                             })
-                            .child(file_name.clone())
-                            .when(is_home, |this| {
-                                this.text_color(cx.theme().muted_foreground.opacity(0.6))
-                            }),
-                    )
-                    .child(
-                        Button::new(("close-tab", tab_id))
-                            .xsmall()
-                            .ghost()
-                            .icon(
-                                Icon::new(crate::icons::IconName::WindowClose)
-                                    .size_3()
-                                    .text_color(cx.theme().muted_foreground),
+                            .on_hover({
+                                let viewer = cx.entity();
+                                move |hovered, _, cx| {
+                                    let _ = viewer.update(cx, |this, cx| {
+                                        if *hovered {
+                                            if this.hovered_tab_id != Some(tab_id) {
+                                                this.hovered_tab_id = Some(tab_id);
+                                                cx.notify();
+                                            }
+                                        } else if this.hovered_tab_id == Some(tab_id) {
+                                            this.hovered_tab_id = None;
+                                            cx.notify();
+                                        }
+                                    });
+                                }
+                            })
+                            .on_mouse_move(cx.listener(move |this, _event: &MouseMoveEvent, _, cx| {
+                                let source_tab_id = match &this.drag_state {
+                                    DragState::Started { source_tab_id } => Some(*source_tab_id),
+                                    DragState::Over { source_tab_id, .. } => Some(*source_tab_id),
+                                    _ => None,
+                                };
+
+                                if let Some(source_tab_id) = source_tab_id
+                                    && tab_id != source_tab_id
+                                {
+                                    this.drag_state = DragState::Over {
+                                        source_tab_id,
+                                        target_tab_id: tab_id,
+                                    };
+                                    cx.notify();
+                                }
+                            }))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    if this.tab_bar.get_tab_index_by_id(tab_id).is_some() {
+                                        this.drag_state = DragState::Started {
+                                            source_tab_id: tab_id,
+                                        };
+                                        cx.notify();
+                                    }
+                                }),
+                            )
+                            .on_mouse_up(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    if let DragState::Over { source_tab_id, target_tab_id } = this.drag_state {
+                                        let source_index = this.tab_bar.get_tab_index_by_id(source_tab_id);
+                                        let target_index = this.tab_bar.get_tab_index_by_id(target_tab_id);
+
+                                        // 执行标签重新排序
+                                        if let (Some(source_index), Some(target_index)) = (source_index, target_index) {
+                                            if source_index != target_index {
+                                                // 使用 TabBar 提供的 move_tab 方法来移动标签
+                                                this.tab_bar.move_tab(source_index, target_index);
+                                            }
+                                        }
+                                        this.drag_state = DragState::Completed;
+                                        cx.notify();
+
+                                        // 立即重置状态
+                                        this.drag_state = DragState::None;
+                                        cx.notify();
+                                    } else if matches!(this.drag_state, DragState::Started { .. }) {
+                                        // 如果只是点击而未移动，则取消拖动
+                                        this.drag_state = DragState::None;
+                                        cx.notify();
+                                    }
+                                }),
+                            )
+                            .when(matches!(self.drag_state, DragState::Started { source_tab_id, .. } if source_tab_id == tab_id)
+                                || matches!(self.drag_state, DragState::Over { source_tab_id, .. } if source_tab_id == tab_id), |div| {
+                                // 如果这个标签正在被拖动，给它特殊的视觉样式
+                                div.border_1()
+                                    .border_color(cx.theme().primary)
+                                    .bg(cx.theme().selection)
+                                    .shadow_lg()
+                            })
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(if is_active
+                                        || matches!(self.drag_state, DragState::Started { source_tab_id, .. } if source_tab_id == tab_id)
+                                        || matches!(self.drag_state, DragState::Over { source_tab_id, .. } if source_tab_id == tab_id) {
+                                        cx.theme().foreground
+                                    } else {
+                                        cx.theme().muted_foreground
+                                    })
+                                    .child(file_name.clone())
+                                    .when(is_home, |this| {
+                                        this.text_color(if matches!(self.drag_state, DragState::Started { source_tab_id, .. } if source_tab_id == tab_id)
+                                            || matches!(self.drag_state, DragState::Over { source_tab_id, .. } if source_tab_id == tab_id) {
+                                            cx.theme().foreground
+                                        } else {
+                                            cx.theme().muted_foreground.opacity(0.6)
+                                        })
+                                    }),
+                            )
+                            .child(
+                                Button::new(("close-tab", tab_id))
+                                    .xsmall()
+                                    .ghost()
+                                    .icon(
+                                        Icon::new(crate::icons::IconName::WindowClose)
+                                            .size_3()
+                                            .text_color(close_icon_color),
+                                    )
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.close_tab(tab_id, cx);
+                                    })),
                             )
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.close_tab(tab_id, cx);
-                            })),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if !is_active {
-                            this.switch_to_tab(tab_id, cx);
-                        }
-                    }))
-                    .into_any_element()
-            }))
+                                if !is_active {
+                                    this.switch_to_tab(tab_id, cx);
+                                }
+                            }))
+                            .into_any_element()
+                    );
+                }
+
+                // 处理拖动到末尾的情况
+                if insertion_indicator_pos == Some(tabs_to_show.len()) {
+                    elements.push(
+                        div()
+                            .id(("indicator", tabs_to_show.len()))
+                            .w_px()
+                            .h_6()
+                            .rounded_sm()
+                            .bg(cx.theme().primary)
+                            .into_any_element()
+                    );
+                }
+
+                elements
+            })
             .child(
                 Button::new("new-tab")
                     .xsmall()

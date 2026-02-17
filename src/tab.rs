@@ -97,6 +97,11 @@ pub struct TabBar {
     tabs: Vec<PdfTab>,
     active_tab_id: Option<usize>,
     next_tab_id: usize,
+    // 注意：这些字段在当前实现中没有使用，因为我们完全在 PdfViewer 中处理拖动状态
+    // 保留它们是为了将来可能的重构需求
+    drag_source_index: Option<usize>,
+    drag_target_index: Option<usize>,
+    is_dragging: bool,
 }
 
 impl TabBar {
@@ -105,6 +110,9 @@ impl TabBar {
             tabs: Vec::new(),
             active_tab_id: None,
             next_tab_id: 1,
+            drag_source_index: None,
+            drag_target_index: None,
+            is_dragging: false,
         }
     }
 
@@ -183,5 +191,83 @@ impl TabBar {
     #[allow(dead_code)]
     pub fn tab_count(&self) -> usize {
         self.tabs.len()
+    }
+
+    /// Move a tab from one index to another
+    pub fn move_tab(&mut self, from_index: usize, to_index: usize) -> bool {
+        if from_index >= self.tabs.len() || to_index >= self.tabs.len() {
+            return false;
+        }
+
+        if from_index == to_index {
+            return true; // No movement needed
+        }
+
+        let tab = self.tabs.remove(from_index);
+        self.tabs.insert(to_index, tab);
+        true
+    }
+
+    /// Get mutable reference to tabs
+    pub fn tabs_mut(&mut self) -> &mut Vec<PdfTab> {
+        &mut self.tabs
+    }
+}
+
+// 拖动相关方法
+impl TabBar {
+    pub fn start_drag(&mut self, tab_index: usize) {
+        self.drag_source_index = Some(tab_index);
+        self.is_dragging = true;
+    }
+
+    pub fn update_drag(&mut self, tab_index: usize) {
+        if self.is_dragging {
+            self.drag_target_index = Some(tab_index);
+        }
+    }
+
+    pub fn end_drag(&mut self) -> Option<(usize, usize)> {
+        let result = if let (Some(source_idx), Some(target_idx)) = (self.drag_source_index, self.drag_target_index) {
+            if source_idx != target_idx {
+                Some((source_idx, target_idx))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        self.drag_source_index = None;
+        self.drag_target_index = None;
+        self.is_dragging = false;
+
+        if let Some((source_idx, target_idx)) = result {
+            // 重新排列标签页
+            if source_idx < target_idx {
+                // 向右拖动：将源元素插入到目标位置之后
+                let tab = self.tabs.remove(source_idx);
+                self.tabs.insert(target_idx, tab);
+            } else {
+                // 向左拖动：将源元素插入到目标位置
+                let tab = self.tabs.remove(source_idx);
+                self.tabs.insert(target_idx, tab);
+            }
+            Some((source_idx, target_idx))
+        } else {
+            None
+        }
+    }
+
+    pub fn is_dragging(&self) -> bool {
+        self.is_dragging
+    }
+
+    pub fn drag_target_index(&self) -> Option<usize> {
+        self.drag_target_index
+    }
+
+    pub fn get_tab_index_by_id(&self, tab_id: usize) -> Option<usize> {
+        self.tabs.iter().position(|tab| tab.id == tab_id)
     }
 }
