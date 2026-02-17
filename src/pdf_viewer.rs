@@ -1196,7 +1196,12 @@ impl PdfViewer {
 
     fn display_available_width(&self, window: &Window) -> f32 {
         let viewport_width: f32 = window.viewport_size().width.into();
-        (viewport_width - SIDEBAR_WIDTH).max(DISPLAY_MIN_WIDTH)
+        let sidebar_width = if self.show_thumbnail_panel() {
+            SIDEBAR_WIDTH
+        } else {
+            0.0
+        };
+        (viewport_width - sidebar_width).max(DISPLAY_MIN_WIDTH)
     }
 
     fn display_panel_width(&self, window: &Window, zoom: f32) -> f32 {
@@ -1470,6 +1475,10 @@ impl PdfViewer {
 
     pub(super) fn active_tab_path(&self) -> Option<&PathBuf> {
         self.active_tab().and_then(|t| t.path.as_ref())
+    }
+
+    fn show_thumbnail_panel(&self) -> bool {
+        self.active_tab_path().is_some()
     }
 
     fn current_drag_source_tab_id(&self) -> Option<usize> {
@@ -1988,7 +1997,9 @@ impl Render for PdfViewer {
                         .w_full()
                         .flex()
                         .overflow_hidden()
-                        .child(self.render_thumbnail_panel(page_count, thumbnail_sizes, cx))
+                        .when(self.show_thumbnail_panel(), |this| {
+                            this.child(self.render_thumbnail_panel(page_count, thumbnail_sizes, cx))
+                        })
                         .child(self.render_display_panel(
                             page_count,
                             display_sizes,

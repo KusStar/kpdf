@@ -457,7 +457,11 @@ impl PdfViewer {
         // Tab bar: 36px
         // Menu bar: 40px (h_10 from menu_bar.rs)
         let content_offset_y = 110.0; // 34 + 36 + 40
-        let sidebar_width = super::SIDEBAR_WIDTH;
+        let sidebar_width = if self.show_thumbnail_panel() {
+            super::SIDEBAR_WIDTH
+        } else {
+            0.0
+        };
 
         // Convert window coordinates to local page container coordinates
         // Note: Do NOT subtract content centering offset here.
