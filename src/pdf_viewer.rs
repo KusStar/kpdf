@@ -20,6 +20,7 @@ use gpui_component::input::{InputEvent, InputState};
 use gpui_component::popover::{Popover, PopoverState};
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use gpui_component::{button::*, *};
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -2294,7 +2295,38 @@ impl Render for PdfViewer {
                                     })
                                 })
                                 .when(!cfg!(target_os = "macos"), |this| {
+                                    let should_move = Rc::new(Cell::new(false));
                                     this.on_double_click(|_, window, _| window.zoom_window())
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            {
+                                                let should_move = should_move.clone();
+                                                move |_, _, _| {
+                                                    should_move.set(true);
+                                                }
+                                            },
+                                        )
+                                        .on_mouse_down_out({
+                                            let should_move = should_move.clone();
+                                            move |_, _, _| {
+                                                should_move.set(false);
+                                            }
+                                        })
+                                        .on_mouse_up(MouseButton::Left, {
+                                            let should_move = should_move.clone();
+                                            move |_, _, _| {
+                                                should_move.set(false);
+                                            }
+                                        })
+                                        .on_mouse_move({
+                                            let should_move = should_move.clone();
+                                            move |_, window, _| {
+                                                if should_move.get() {
+                                                    should_move.set(false);
+                                                    window.start_window_move();
+                                                }
+                                            }
+                                        })
                                 })
                                 .window_control_area(WindowControlArea::Drag),
                         )
