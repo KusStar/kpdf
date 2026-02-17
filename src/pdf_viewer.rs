@@ -2172,9 +2172,11 @@ impl Render for PdfViewer {
 
         let bounds = window.bounds();
         let current_size = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+        let mut window_size_changed = false;
         if self.last_window_size != Some(current_size) {
             self.last_window_size = Some(current_size);
             self.save_window_size(current_size.0, current_size.1);
+            window_size_changed = true;
         }
 
         let (
@@ -2235,10 +2237,40 @@ impl Render for PdfViewer {
         } else {
             220
         };
+        let mut display_layout_changed = false;
         if let Some(tab) = self.active_tab_mut() {
-            tab.last_display_target_width = target_width;
+            let target_width_changed = tab.last_display_target_width != target_width;
+            display_layout_changed = window_size_changed || target_width_changed;
+
+            if display_layout_changed {
+                // Invalidate pending scroll-to-page sync jobs from previous layout.
+                tab.display_scroll_sync_epoch = tab.display_scroll_sync_epoch.wrapping_add(1);
+            }
+
+            if target_width_changed {
+                tab.last_display_target_width = target_width;
+            }
+
+            if display_layout_changed {
+                if tab.pages.is_empty() {
+                    tab.last_display_scroll_offset = Some(tab.display_scroll.offset());
+                } else {
+                    // Keep the current page stable across resize/maximize/restore.
+                    let keep_page = tab.active_page.min(tab.pages.len().saturating_sub(1));
+                    tab.active_page = keep_page;
+                    tab.selected_page = keep_page;
+                    tab.last_display_visible_range =
+                        Some(keep_page..keep_page.saturating_add(1).min(tab.pages.len()));
+                    tab.thumbnail_scroll
+                        .scroll_to_item(keep_page, ScrollStrategy::Center);
+                    tab.display_scroll.scroll_to_item(keep_page, ScrollStrategy::Top);
+                    tab.last_display_scroll_offset = Some(tab.display_scroll.offset());
+                }
+            }
         }
-        self.on_display_scroll_offset_changed(cx);
+        if !display_layout_changed {
+            self.on_display_scroll_offset_changed(cx);
+        }
 
         let context_menu = self.render_context_menu(cx);
         let drag_tab_preview = self.render_drag_tab_preview(cx);
@@ -2271,6 +2303,7 @@ impl Render for PdfViewer {
                 )
                 .child(
                     div()
+                        .id("title-bar")
                         .h(px(TITLE_BAR_HEIGHT))
                         .w_full()
                         .flex()
@@ -2279,6 +2312,9 @@ impl Render for PdfViewer {
                         .border_b_1()
                         .border_color(cx.theme().title_bar_border)
                         .bg(cx.theme().title_bar)
+                        .when(!cfg!(target_os = "macos"), |this| {
+                            this.on_double_click(|_, window, _| window.zoom_window())
+                        })
                         .child(
                             div()
                                 .id("title-drag-area")
