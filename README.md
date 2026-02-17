@@ -6,6 +6,10 @@
 
 kPDF is a lightweight desktop PDF viewer built with Rust + GPUI, focused on smooth reading, fast file switching, and session restore.
 
+## Screenshots
+
+<img src="assets/screenshots/macos.png" alt="kPDF Screenshot on macOS" width="1024" />
+
 ## Features
 
 - Multi-tab reading with draggable tab reordering

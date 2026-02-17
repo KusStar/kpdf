@@ -6,6 +6,10 @@
 
 kPDF 是一个基于 Rust + GPUI 的轻量级桌面 PDF 阅读器，专注于流畅阅读、快速切换文件与会话恢复。
 
+## 截图展示
+
+<img src="assets/screenshots/macos.png" alt="kPDF 在 macOS 上的截图" width="1024" />
+
 ## 功能特性
 
 - 多标签阅读：支持同时打开多个 PDF，标签可拖拽排序
