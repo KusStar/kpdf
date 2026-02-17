@@ -14,7 +14,8 @@ sled = "0.34.7"
 rust-embed = "8.11.0"
 
 [package.metadata.bundle]
-name = "KPDF"
+name = "kPDF"
 identifier = "com.kuss.kpdf"
 category = "Productivity"
+icon = ["assets/app.png"]
 resources=["lib"]
