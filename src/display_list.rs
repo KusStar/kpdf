@@ -16,6 +16,8 @@ impl PdfViewer {
     ) -> impl IntoElement {
         let i18n = self.i18n();
         let zoom = self.active_tab_zoom();
+        let is_home_tab = self.active_tab_path().is_none();
+        let recent_files_with_positions = self.recent_files_with_positions(&self.recent_files);
 
         div()
             .h_full()
@@ -30,7 +32,45 @@ impl PdfViewer {
                     .v_flex()
                     .items_center()
                     .overflow_hidden()
-                    .when(page_count == 0, |this| {
+                    .when(page_count == 0 && is_home_tab, |this| {
+                        this.child(
+                            div()
+                                .h_full()
+                                .w(px(display_panel_width))
+                                .v_flex()
+                                .items_center()
+                                .justify_center()
+                                .p_4()
+                                .child(
+                                    div()
+                                        .w(px(display_panel_width.min(560.0)))
+                                        .max_w_full()
+                                        .v_flex()
+                                        .gap_3()
+                                        .popover_style(cx)
+                                        .p_4()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .font_medium()
+                                                .text_color(cx.theme().foreground)
+                                                .child(i18n.file_not_opened()),
+                                        )
+                                        .child(
+                                            Self::render_recent_files_list_content(
+                                                2,
+                                                i18n,
+                                                cx.entity(),
+                                                recent_files_with_positions.clone(),
+                                                &self.recent_home_list_scroll,
+                                                true,
+                                                cx,
+                                            ),
+                                        ),
+                                ),
+                        )
+                    })
+                    .when(page_count == 0 && !is_home_tab, |this| {
                         this.child(
                             div()
                                 .h_full()
@@ -40,7 +80,7 @@ impl PdfViewer {
                                 .justify_center()
                                 .gap_3()
                                 .child(
-                                    Icon::new(crate::icons::IconName::FolderOpen)
+                                    Icon::new(crate::icons::IconName::File)
                                         .size_8()
                                         .text_color(cx.theme().muted_foreground),
                                 )
@@ -48,7 +88,7 @@ impl PdfViewer {
                                     div()
                                         .text_sm()
                                         .text_color(cx.theme().muted_foreground)
-                                        .child(i18n.no_document_hint()),
+                                        .child(i18n.no_pages()),
                                 ),
                         )
                     })

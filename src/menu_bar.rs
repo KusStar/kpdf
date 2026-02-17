@@ -1,33 +1,20 @@
 use crate::icons;
 
-use super::utils::display_file_name;
 use super::PdfViewer;
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
-use gpui_component::popover::Popover;
 use gpui_component::{button::*, *};
-use std::path::PathBuf;
 
 impl PdfViewer {
     pub(super) fn render_menu_bar(
         &self,
         page_count: usize,
         current_page_num: usize,
-        recent_popup_open: bool,
-        recent_files: Vec<PathBuf>,
         zoom_label: SharedString,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let i18n = self.i18n();
         let active_page = self.active_tab_active_page();
-        let recent_files_with_positions: Vec<(PathBuf, Option<usize>)> = recent_files
-            .iter()
-            .cloned()
-            .map(|path| {
-                let last_seen = self.load_saved_file_position(&path);
-                (path, last_seen)
-            })
-            .collect();
 
         div()
             .h_10()
@@ -44,247 +31,66 @@ impl PdfViewer {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(
-                        Popover::new("open-pdf-popover")
-                            .anchor(Corner::TopLeft)
-                            .appearance(false)
-                            .overlay_closable(false)
-                            .open(recent_popup_open)
-                            .trigger(
-                                Button::new("open-pdf")
-                                    .small()
-                                    .icon(
-                                        Icon::new(icons::IconName::FolderOpen)
-                                            .text_color(cx.theme().foreground),
-                                    )
-                                    .label(i18n.open_button())
-                                    .on_hover({
-                                        let viewer = cx.entity();
-                                        move |hovered, _, cx| {
-                                            let _ = viewer.update(cx, |this, cx| {
-                                                this.set_recent_popup_trigger_hovered(*hovered, cx);
-                                            });
-                                        }
-                                    }),
-                            )
-                            .content({
-                                let viewer = cx.entity();
-                                let recent_files_with_positions =
-                                    recent_files_with_positions.clone();
-                                move |_, _window, cx| {
-                                    div()
-                                        .id("open-pdf-popup")
-                                        .relative()
-                                        .top(px(-1.))
-                                        .w(px(340.))
-                                        .v_flex()
-                                        .gap_1()
-                                        .popover_style(cx)
-                                        .p_2()
-                                        .on_hover({
-                                            let viewer = viewer.clone();
-                                            move |hovered, _, cx| {
-                                                let _ = viewer.update(cx, |this, cx| {
-                                                    this.set_recent_popup_panel_hovered(*hovered, cx);
-                                                });
-                                            }
-                                        })
-                                        .child(
-                                            Button::new("open-pdf-dialog")
-                                                .small()
-                                                .w_full()
-                                                .icon(
-                                                    Icon::new(icons::IconName::FolderOpen)
-                                                        .text_color(cx.theme().foreground),
-                                                )
-                                                .label(i18n.choose_file_button())
-                                                .on_click({
-                                                    let viewer = viewer.clone();
-                                                    move |_, window, cx| {
-                                                        let _ = viewer.update(cx, |this, cx| {
-                                                            this.close_recent_popup(cx);
-                                                            this.open_pdf_dialog(window, cx);
-                                                        });
-                                                    }
-                                                }),
-                                        )
-                                        .child(div().h(px(1.)).my_1().bg(cx.theme().border))
-                                        .when(recent_files_with_positions.is_empty(), |this| {
-                                            this.child(
-                                                div()
-                                                    .px_2()
-                                                    .py_1()
-                                                    .text_xs()
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .child(i18n.no_recent_files()),
-                                            )
-                                        })
-                                        .when(!recent_files_with_positions.is_empty(), |this| {
-                                            this.children(
-                                                recent_files_with_positions
-                                                    .iter()
-                                                    .enumerate()
-                                                    .map(|(ix, (path, last_seen_page))| {
-                                                        let path = path.clone();
-                                                        let file_name = display_file_name(&path);
-                                                        let path_text = path.display().to_string();
-                                                        let last_seen_text = last_seen_page
-                                                            .map(|page_index| {
-                                                                i18n.last_seen_page(page_index + 1)
-                                                            });
-                                                        div()
-                                                            .id(("recent-pdf", ix))
-                                                            .w_full()
-                                                            .rounded_md()
-                                                            .px_2()
-                                                            .py_1()
-                                                            .cursor_pointer()
-                                                            .hover(|this| {
-                                                                this.bg(
-                                                                    cx.theme()
-                                                                        .secondary
-                                                                        .opacity(0.6),
-                                                                )
-                                                            })
-                                                            .active(|this| {
-                                                                this.bg(
-                                                                    cx.theme()
-                                                                        .secondary
-                                                                        .opacity(0.9),
-                                                                )
-                                                            })
-                                                            .child(
-                                                                div()
-                                                                    .w_full()
-                                                                    .v_flex()
-                                                                    .items_start()
-                                                                    .gap_1()
-                                                                    .child(
-                                                                        div()
-                                                                            .w_full()
-                                                                            .whitespace_normal()
-                                                                            .text_sm()
-                                                                            .text_color(
-                                                                                cx.theme()
-                                                                                    .popover_foreground,
-                                                                            )
-                                                                            .child(file_name),
-                                                                    )
-                                                                    .child(
-                                                                        div()
-                                                                            .w_full()
-                                                                            .whitespace_normal()
-                                                                            .text_xs()
-                                                                            .text_color(
-                                                                                cx.theme()
-                                                                                    .muted_foreground,
-                                                                            )
-                                                                            .child(path_text),
-                                                                    )
-                                                                    .when_some(
-                                                                        last_seen_text,
-                                                                        |this, label| {
-                                                                            this.child(
-                                                                                div()
-                                                                                    .w_full()
-                                                                                    .whitespace_normal()
-                                                                                    .text_xs()
-                                                                                    .text_color(
-                                                                                        cx.theme()
-                                                                                            .muted_foreground,
-                                                                                    )
-                                                                                    .child(label),
-                                                                            )
-                                                                        },
-                                                                    ),
-                                                            )
-                                                            .on_click({
-                                                                let viewer = viewer.clone();
-                                                                move |_, _, cx| {
-                                                                    let _ =
-                                                                        viewer.update(cx, |this, cx| {
-                                                                            this.close_recent_popup(cx);
-                                                                            this.open_recent_pdf(
-                                                                                path.clone(),
-                                                                                cx,
-                                                                            );
-                                                                        });
-                                                                }
-                                                            })
-                                                            .into_any_element()
-                                                    })
-                                                    .collect::<Vec<_>>(),
-                                            )
-                                        })
-                                }
-                            }),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .when(page_count > 0, |this| {
-                                this.child(
-                                    Button::new("first-page")
-                                        .ghost()
-                                        .small()
-                                        .disabled(active_page == 0)
-                                        .icon(
-                                            Icon::new(icons::IconName::ChevronFirst)
-                                                .text_color(cx.theme().foreground),
-                                        )
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.select_page(0, cx);
-                                        })),
+                    .when(page_count > 0, |this| {
+                        this.child(
+                            Button::new("first-page")
+                                .ghost()
+                                .small()
+                                .disabled(active_page == 0)
+                                .icon(
+                                    Icon::new(icons::IconName::ChevronFirst)
+                                        .text_color(cx.theme().foreground),
                                 )
-                                .child(
-                                    Button::new("prev-page")
-                                        .ghost()
-                                        .small()
-                                        .disabled(active_page == 0)
-                                        .icon(
-                                            Icon::new(icons::IconName::ChevronLeft)
-                                                .text_color(cx.theme().foreground),
-                                        )
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.prev_page(cx);
-                                        })),
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.select_page(0, cx);
+                                })),
+                        )
+                        .child(
+                            Button::new("prev-page")
+                                .ghost()
+                                .small()
+                                .disabled(active_page == 0)
+                                .icon(
+                                    Icon::new(icons::IconName::ChevronLeft)
+                                        .text_color(cx.theme().foreground),
                                 )
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(format!("{} / {}", current_page_num, page_count)),
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.prev_page(cx);
+                                })),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(format!("{} / {}", current_page_num, page_count)),
+                        )
+                        .child(
+                            Button::new("next-page")
+                                .ghost()
+                                .small()
+                                .disabled(active_page + 1 >= page_count)
+                                .icon(
+                                    Icon::new(icons::IconName::ChevronRight)
+                                        .text_color(cx.theme().foreground),
                                 )
-                                .child(
-                                    Button::new("next-page")
-                                        .ghost()
-                                        .small()
-                                        .disabled(active_page + 1 >= page_count)
-                                        .icon(
-                                            Icon::new(icons::IconName::ChevronRight)
-                                                .text_color(cx.theme().foreground),
-                                        )
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.next_page(cx);
-                                        })),
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.next_page(cx);
+                                })),
+                        )
+                        .child(
+                            Button::new("last-page")
+                                .ghost()
+                                .small()
+                                .disabled(active_page + 1 >= page_count)
+                                .icon(
+                                    Icon::new(icons::IconName::ChevronLast)
+                                        .text_color(cx.theme().foreground),
                                 )
-                                .child(
-                                    Button::new("last-page")
-                                        .ghost()
-                                        .small()
-                                        .disabled(active_page + 1 >= page_count)
-                                        .icon(
-                                            Icon::new(icons::IconName::ChevronLast)
-                                                .text_color(cx.theme().foreground),
-                                        )
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.select_page(page_count.saturating_sub(1), cx);
-                                        })),
-                                )
-                            }),
-                    ),
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.select_page(page_count.saturating_sub(1), cx);
+                                })),
+                        )
+                    }),
             )
             .child(
                 div()

@@ -14,6 +14,8 @@ mod utils;
 use crate::i18n::{I18n, Language};
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
+use gpui_component::popover::{Popover, PopoverState};
+use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use gpui_component::{button::*, *};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -27,7 +29,12 @@ pub enum DragState {
     None,
     Started { source_tab_id: usize },
     Over { source_tab_id: usize, target_tab_id: usize },
-    Completed,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum RecentPopupAnchor {
+    OpenButton,
+    TabAddButton,
 }
 
 use self::tab::{PdfTab, TabBar};
@@ -48,12 +55,14 @@ const DISPLAY_BATCH_SIZE: usize = 1;
 const DISPLAY_MAX_PARALLEL_TASKS: usize = 1;
 const DISPLAY_SCROLL_SYNC_DELAY_MS: u64 = 140;
 const MAX_RECENT_FILES: usize = 12;
+const RECENT_FILES_LIST_MAX_HEIGHT: f32 = 280.0;
 const RECENT_POPUP_CLOSE_DELAY_MS: u64 = 120;
 const RECENT_FILES_TREE: &str = "recent_files";
 const FILE_POSITIONS_TREE: &str = "file_positions";
 const WINDOW_SIZE_TREE: &str = "window_size";
 const WINDOW_SIZE_KEY_WIDTH: &str = "width";
 const WINDOW_SIZE_KEY_HEIGHT: &str = "height";
+const TITLE_BAR_HEIGHT: f32 = 34.0;
 const TAB_BAR_HEIGHT: f32 = 36.0;
 #[cfg(target_os = "macos")]
 const TITLE_BAR_CONTENT_LEFT_PADDING: f32 = 80.0;
@@ -72,8 +81,12 @@ pub struct PdfViewer {
     recent_files: Vec<PathBuf>,
     recent_popup_open: bool,
     recent_popup_trigger_hovered: bool,
+    recent_popup_tab_trigger_hovered: bool,
     recent_popup_panel_hovered: bool,
     recent_popup_hover_epoch: u64,
+    recent_popup_anchor: Option<RecentPopupAnchor>,
+    recent_popup_list_scroll: ScrollHandle,
+    recent_home_list_scroll: ScrollHandle,
     context_menu_open: bool,
     context_menu_position: Option<Point<Pixels>>,
     #[allow(dead_code)]
@@ -81,6 +94,7 @@ pub struct PdfViewer {
     hovered_tab_id: Option<usize>,
     // 拖放相关状态
     drag_state: DragState,
+    drag_mouse_position: Option<Point<Pixels>>,
 }
 
 impl PdfViewer {
@@ -106,13 +120,18 @@ impl PdfViewer {
             recent_files,
             recent_popup_open: false,
             recent_popup_trigger_hovered: false,
+            recent_popup_tab_trigger_hovered: false,
             recent_popup_panel_hovered: false,
             recent_popup_hover_epoch: 0,
+            recent_popup_anchor: None,
+            recent_popup_list_scroll: ScrollHandle::new(),
+            recent_home_list_scroll: ScrollHandle::new(),
             context_menu_open: false,
             context_menu_position: None,
             context_menu_tab_id: None,
             hovered_tab_id: None,
             drag_state: DragState::None,
+            drag_mouse_position: None,
         }
     }
 
@@ -540,13 +559,38 @@ impl PdfViewer {
         let _ = store.flush();
     }
 
-    fn recent_popup_open(&self) -> bool {
-        self.recent_popup_open
+    fn recent_popup_open_for(&self, anchor: RecentPopupAnchor) -> bool {
+        self.recent_popup_open && self.recent_popup_anchor == Some(anchor)
     }
 
-    fn set_recent_popup_trigger_hovered(&mut self, hovered: bool, cx: &mut Context<Self>) {
-        if self.recent_popup_trigger_hovered != hovered {
-            self.recent_popup_trigger_hovered = hovered;
+    fn set_recent_popup_trigger_hovered(
+        &mut self,
+        anchor: RecentPopupAnchor,
+        hovered: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let mut changed = false;
+        match anchor {
+            RecentPopupAnchor::OpenButton => {
+                if self.recent_popup_trigger_hovered != hovered {
+                    self.recent_popup_trigger_hovered = hovered;
+                    changed = true;
+                }
+            }
+            RecentPopupAnchor::TabAddButton => {
+                if self.recent_popup_tab_trigger_hovered != hovered {
+                    self.recent_popup_tab_trigger_hovered = hovered;
+                    changed = true;
+                }
+            }
+        }
+
+        if hovered && self.recent_popup_anchor != Some(anchor) {
+            self.recent_popup_anchor = Some(anchor);
+            changed = true;
+        }
+
+        if changed {
             self.update_recent_popup_visibility(cx);
         }
     }
@@ -559,10 +603,31 @@ impl PdfViewer {
     }
 
     fn update_recent_popup_visibility(&mut self, cx: &mut Context<Self>) {
-        if self.recent_popup_trigger_hovered || self.recent_popup_panel_hovered {
+        if self.recent_popup_trigger_hovered
+            || self.recent_popup_tab_trigger_hovered
+            || self.recent_popup_panel_hovered
+        {
             self.recent_popup_hover_epoch = self.recent_popup_hover_epoch.wrapping_add(1);
+            let desired_anchor = if self.recent_popup_tab_trigger_hovered {
+                RecentPopupAnchor::TabAddButton
+            } else if self.recent_popup_trigger_hovered {
+                RecentPopupAnchor::OpenButton
+            } else {
+                self.recent_popup_anchor.unwrap_or(RecentPopupAnchor::OpenButton)
+            };
+
+            let mut changed = false;
+            if self.recent_popup_anchor != Some(desired_anchor) {
+                self.recent_popup_anchor = Some(desired_anchor);
+                changed = true;
+            }
+
             if !self.recent_popup_open {
                 self.recent_popup_open = true;
+                changed = true;
+            }
+
+            if changed {
                 cx.notify();
             }
             return;
@@ -580,11 +645,15 @@ impl PdfViewer {
                 if this.recent_popup_hover_epoch != close_epoch {
                     return;
                 }
-                if this.recent_popup_trigger_hovered || this.recent_popup_panel_hovered {
+                if this.recent_popup_trigger_hovered
+                    || this.recent_popup_tab_trigger_hovered
+                    || this.recent_popup_panel_hovered
+                {
                     return;
                 }
                 if this.recent_popup_open {
                     this.recent_popup_open = false;
+                    this.recent_popup_anchor = None;
                     cx.notify();
                 }
             });
@@ -600,6 +669,10 @@ impl PdfViewer {
             self.recent_popup_trigger_hovered = false;
             has_changed = true;
         }
+        if self.recent_popup_tab_trigger_hovered {
+            self.recent_popup_tab_trigger_hovered = false;
+            has_changed = true;
+        }
         if self.recent_popup_panel_hovered {
             self.recent_popup_panel_hovered = false;
             has_changed = true;
@@ -608,9 +681,204 @@ impl PdfViewer {
             self.recent_popup_open = false;
             has_changed = true;
         }
+        if self.recent_popup_anchor.is_some() {
+            self.recent_popup_anchor = None;
+            has_changed = true;
+        }
         if has_changed {
             cx.notify();
         }
+    }
+
+    fn recent_files_with_positions(
+        &self,
+        recent_files: &[PathBuf],
+    ) -> Vec<(PathBuf, Option<usize>)> {
+        recent_files
+            .iter()
+            .cloned()
+            .map(|path| {
+                let last_seen = self.load_saved_file_position(&path);
+                (path, last_seen)
+            })
+            .collect()
+    }
+
+    fn render_recent_files_list_content(
+        list_key: usize,
+        i18n: I18n,
+        viewer: Entity<Self>,
+        recent_files_with_positions: Vec<(PathBuf, Option<usize>)>,
+        scroll_handle: &ScrollHandle,
+        show_choose_file_button: bool,
+        cx: &App,
+    ) -> AnyElement {
+        div()
+            .w_full()
+            .v_flex()
+            .gap_1()
+            .when(show_choose_file_button, |this| {
+                this.child(
+                    Button::new(("open-pdf-dialog", list_key))
+                        .small()
+                        .w_full()
+                        .icon(
+                            Icon::new(crate::icons::IconName::FolderOpen)
+                                .text_color(cx.theme().foreground),
+                        )
+                        .label(i18n.choose_file_button())
+                        .on_click({
+                            let viewer = viewer.clone();
+                            move |_, window, cx| {
+                                let _ = viewer.update(cx, |this, cx| {
+                                    this.close_recent_popup(cx);
+                                    this.open_pdf_dialog(window, cx);
+                                });
+                            }
+                        }),
+                )
+                .child(div().h(px(1.)).my_1().bg(cx.theme().border))
+            })
+            .when(recent_files_with_positions.is_empty(), |this| {
+                this.child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(i18n.no_recent_files()),
+                )
+            })
+            .when(!recent_files_with_positions.is_empty(), |this| {
+                this.child(
+                    div()
+                        .id(("recent-files-scroll-wrap", list_key))
+                        .w_full()
+                        .max_h(px(RECENT_FILES_LIST_MAX_HEIGHT))
+                        .relative()
+                        .child(
+                            div()
+                                .id(("recent-files-scroll", list_key))
+                                .w_full()
+                                .max_h(px(RECENT_FILES_LIST_MAX_HEIGHT))
+                                .overflow_y_scroll()
+                                .track_scroll(scroll_handle)
+                                .pr(px(10.))
+                                .v_flex()
+                                .gap_1()
+                                .children(
+                                    recent_files_with_positions
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(ix, (path, last_seen_page))| {
+                                            let path = path.clone();
+                                            let file_name = display_file_name(&path);
+                                            let path_text = path.display().to_string();
+                                            let last_seen_text = last_seen_page
+                                                .map(|page_index| i18n.last_seen_page(page_index + 1));
+                                            div()
+                                                .id(("recent-pdf", list_key * MAX_RECENT_FILES + ix))
+                                                .w_full()
+                                                .rounded_md()
+                                                .px_2()
+                                                .py_1()
+                                                .cursor_pointer()
+                                                .hover(|this| this.bg(cx.theme().secondary.opacity(0.6)))
+                                                .active(|this| this.bg(cx.theme().secondary.opacity(0.9)))
+                                                .child(
+                                                    div()
+                                                        .w_full()
+                                                        .v_flex()
+                                                        .items_start()
+                                                        .gap_1()
+                                                        .child(
+                                                            div()
+                                                                .w_full()
+                                                                .whitespace_normal()
+                                                                .text_sm()
+                                                                .text_color(cx.theme().popover_foreground)
+                                                                .child(file_name),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .w_full()
+                                                                .whitespace_normal()
+                                                                .text_xs()
+                                                                .text_color(cx.theme().muted_foreground)
+                                                                .child(path_text),
+                                                        )
+                                                        .when_some(last_seen_text, |this, label| {
+                                                            this.child(
+                                                                div()
+                                                                    .w_full()
+                                                                    .whitespace_normal()
+                                                                    .text_xs()
+                                                                    .text_color(cx.theme().muted_foreground)
+                                                                    .child(label),
+                                                            )
+                                                        }),
+                                                )
+                                                .on_click({
+                                                    let viewer = viewer.clone();
+                                                    move |_, _, cx| {
+                                                        let _ = viewer.update(cx, |this, cx| {
+                                                            this.close_recent_popup(cx);
+                                                            this.open_recent_pdf(path.clone(), cx);
+                                                        });
+                                                    }
+                                                })
+                                                .into_any_element()
+                                        })
+                                        .collect::<Vec<_>>(),
+                                ),
+                        )
+                        .child(
+                            div().absolute().top_0().left_0().right_0().bottom_0().child(
+                                Scrollbar::vertical(scroll_handle)
+                                    .scrollbar_show(ScrollbarShow::Always),
+                            ),
+                        ),
+                )
+            })
+            .into_any_element()
+    }
+
+    fn render_recent_files_popup_panel(
+        popup_id: &'static str,
+        popup_key: usize,
+        i18n: I18n,
+        viewer: Entity<Self>,
+        recent_files_with_positions: Vec<(PathBuf, Option<usize>)>,
+        scroll_handle: &ScrollHandle,
+        cx: &mut Context<PopoverState>,
+    ) -> AnyElement {
+        div()
+            .id(popup_id)
+            .relative()
+            .top(px(-1.))
+            .w(px(340.))
+            .v_flex()
+            .gap_1()
+            .popover_style(cx)
+            .p_2()
+            .on_hover({
+                let viewer = viewer.clone();
+                move |hovered, _, cx| {
+                    let _ = viewer.update(cx, |this, cx| {
+                        this.set_recent_popup_panel_hovered(*hovered, cx);
+                    });
+                }
+            })
+            .child(Self::render_recent_files_list_content(
+                popup_key,
+                i18n,
+                viewer,
+                recent_files_with_positions,
+                scroll_handle,
+                true,
+                cx,
+            ))
+            .into_any_element()
     }
 
     fn select_page(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -1204,9 +1472,107 @@ impl PdfViewer {
         self.active_tab().and_then(|t| t.path.as_ref())
     }
 
+    fn current_drag_source_tab_id(&self) -> Option<usize> {
+        match self.drag_state {
+            DragState::Started { source_tab_id } => Some(source_tab_id),
+            DragState::Over { source_tab_id, .. } => Some(source_tab_id),
+            _ => None,
+        }
+    }
+
+    fn update_drag_mouse_position(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(source_tab_id) = self.current_drag_source_tab_id() else {
+            return;
+        };
+
+        let mut should_notify = false;
+        if self.drag_mouse_position != Some(position) {
+            self.drag_mouse_position = Some(position);
+            should_notify = true;
+        }
+
+        // When cursor leaves tab bar band, clear stale target to avoid "stuck" drag feedback.
+        let y: f32 = position.y.into();
+        let tab_bar_bottom = TITLE_BAR_HEIGHT + TAB_BAR_HEIGHT;
+        if !(TITLE_BAR_HEIGHT..=tab_bar_bottom).contains(&y)
+            && !matches!(self.drag_state, DragState::Started { source_tab_id: id } if id == source_tab_id)
+        {
+            self.drag_state = DragState::Started { source_tab_id };
+            should_notify = true;
+        }
+
+        if should_notify {
+            cx.notify();
+        }
+    }
+
+    fn finish_tab_drag(&mut self, cx: &mut Context<Self>) {
+        match self.drag_state.clone() {
+            DragState::Over {
+                source_tab_id,
+                target_tab_id,
+            } => {
+                let source_index = self.tab_bar.get_tab_index_by_id(source_tab_id);
+                let target_index = self.tab_bar.get_tab_index_by_id(target_tab_id);
+                if let (Some(source_index), Some(target_index)) = (source_index, target_index)
+                    && source_index != target_index
+                {
+                    self.tab_bar.move_tab(source_index, target_index);
+                }
+                self.drag_state = DragState::None;
+                self.drag_mouse_position = None;
+                cx.notify();
+            }
+            DragState::Started { .. } => {
+                self.drag_state = DragState::None;
+                self.drag_mouse_position = None;
+                cx.notify();
+            }
+            DragState::None => {}
+        }
+    }
+
+    fn render_drag_tab_preview(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let source_tab_id = self.current_drag_source_tab_id()?;
+        let position = self.drag_mouse_position?;
+        let tab = self.tab_bar.tabs().iter().find(|tab| tab.id == source_tab_id)?;
+
+        let x: f32 = position.x.into();
+        let y: f32 = position.y.into();
+
+        Some(
+            div()
+                .id("drag-tab-preview")
+                .absolute()
+                // Keep the pointer outside the preview hit area.
+                .left(px(x + 6.0))
+                .top(px(y + 6.0))
+                .h(px(28.))
+                .px_2()
+                .flex()
+                .items_center()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().primary.opacity(0.65))
+                .bg(cx.theme().secondary.opacity(0.65))
+                .shadow_lg()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().foreground.opacity(0.95))
+                        .child(tab.file_name()),
+                )
+                .into_any_element(),
+        )
+    }
+
     pub(super) fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let tabs = self.tab_bar.tabs().to_vec();
         let active_tab_id = self.tab_bar.active_tab_id();
+        let recent_files_with_positions = self.recent_files_with_positions(&self.recent_files);
+        let tab_recent_popup_open = self.recent_popup_open_for(RecentPopupAnchor::TabAddButton);
+        let recent_popup_list_scroll = self.recent_popup_list_scroll.clone();
+        let i18n = self.i18n();
 
         // 检查是否有文件打开，如果有，则过滤掉空的 Home 标签
         let has_file_open = tabs.iter().any(|tab| tab.path.is_some());
@@ -1236,9 +1602,54 @@ impl PdfViewer {
             .bg(cx.theme().background)
             .flex()
             .items_center()
-            .px_1()
+            .px_3()
             .gap_1()
             .relative() // 使子元素可以使用绝对定位
+            .child(
+                Popover::new("new-tab-popover")
+                    .anchor(Corner::TopLeft)
+                    .appearance(false)
+                    .overlay_closable(false)
+                    .open(tab_recent_popup_open)
+                    .trigger(
+                        Button::new("new-tab")
+                            .xsmall()
+                            .ghost()
+                            .icon(
+                                Icon::new(crate::icons::IconName::Plus)
+                                    .size_4()
+                                    .text_color(cx.theme().muted_foreground),
+                            )
+                            .on_hover({
+                                let viewer = cx.entity();
+                                move |hovered, _, cx| {
+                                    let _ = viewer.update(cx, |this, cx| {
+                                        this.set_recent_popup_trigger_hovered(
+                                            RecentPopupAnchor::TabAddButton,
+                                            *hovered,
+                                            cx,
+                                        );
+                                    });
+                                }
+                            }),
+                    )
+                    .content({
+                        let viewer = cx.entity();
+                        let recent_files_with_positions = recent_files_with_positions.clone();
+                        let i18n = i18n;
+                        move |_, _window, cx| {
+                            Self::render_recent_files_popup_panel(
+                                "new-tab-popup",
+                                1,
+                                i18n,
+                                viewer.clone(),
+                                recent_files_with_positions.clone(),
+                                &recent_popup_list_scroll,
+                                cx,
+                            )
+                        }
+                    }),
+            )
             .children({
                 let mut elements = Vec::new();
 
@@ -1292,20 +1703,26 @@ impl PdfViewer {
                                             }
                                         } else if this.hovered_tab_id == Some(tab_id) {
                                             this.hovered_tab_id = None;
+                                            if let DragState::Over {
+                                                source_tab_id,
+                                                target_tab_id,
+                                            } = this.drag_state.clone()
+                                                && target_tab_id == tab_id
+                                            {
+                                                this.drag_state = DragState::Started {
+                                                    source_tab_id,
+                                                };
+                                            }
                                             cx.notify();
                                         }
                                     });
                                 }
                             })
-                            .on_mouse_move(cx.listener(move |this, _event: &MouseMoveEvent, _, cx| {
-                                let source_tab_id = match &this.drag_state {
-                                    DragState::Started { source_tab_id } => Some(*source_tab_id),
-                                    DragState::Over { source_tab_id, .. } => Some(*source_tab_id),
-                                    _ => None,
-                                };
-
-                                if let Some(source_tab_id) = source_tab_id
+                            .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
+                                this.update_drag_mouse_position(event.position, cx);
+                                if let Some(source_tab_id) = this.current_drag_source_tab_id()
                                     && tab_id != source_tab_id
+                                    && !matches!(this.drag_state, DragState::Over { source_tab_id: current_source, target_tab_id: current_target } if current_source == source_tab_id && current_target == tab_id)
                                 {
                                     this.drag_state = DragState::Over {
                                         source_tab_id,
@@ -1316,11 +1733,12 @@ impl PdfViewer {
                             }))
                             .on_mouse_down(
                                 MouseButton::Left,
-                                cx.listener(move |this, _, _, cx| {
+                                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
                                     if this.tab_bar.get_tab_index_by_id(tab_id).is_some() {
                                         this.drag_state = DragState::Started {
                                             source_tab_id: tab_id,
                                         };
+                                        this.drag_mouse_position = Some(event.position);
                                         cx.notify();
                                     }
                                 }),
@@ -1328,28 +1746,7 @@ impl PdfViewer {
                             .on_mouse_up(
                                 MouseButton::Left,
                                 cx.listener(move |this, _, _, cx| {
-                                    if let DragState::Over { source_tab_id, target_tab_id } = this.drag_state {
-                                        let source_index = this.tab_bar.get_tab_index_by_id(source_tab_id);
-                                        let target_index = this.tab_bar.get_tab_index_by_id(target_tab_id);
-
-                                        // 执行标签重新排序
-                                        if let (Some(source_index), Some(target_index)) = (source_index, target_index) {
-                                            if source_index != target_index {
-                                                // 使用 TabBar 提供的 move_tab 方法来移动标签
-                                                this.tab_bar.move_tab(source_index, target_index);
-                                            }
-                                        }
-                                        this.drag_state = DragState::Completed;
-                                        cx.notify();
-
-                                        // 立即重置状态
-                                        this.drag_state = DragState::None;
-                                        cx.notify();
-                                    } else if matches!(this.drag_state, DragState::Started { .. }) {
-                                        // 如果只是点击而未移动，则取消拖动
-                                        this.drag_state = DragState::None;
-                                        cx.notify();
-                                    }
+                                    this.finish_tab_drag(cx);
                                 }),
                             )
                             .when(matches!(self.drag_state, DragState::Started { source_tab_id, .. } if source_tab_id == tab_id)
@@ -1417,19 +1814,6 @@ impl PdfViewer {
 
                 elements
             })
-            .child(
-                Button::new("new-tab")
-                    .xsmall()
-                    .ghost()
-                    .icon(
-                        Icon::new(crate::icons::IconName::Plus)
-                            .size_4()
-                            .text_color(cx.theme().muted_foreground),
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_pdf_dialog(window, cx);
-                    })),
-            )
     }
 }
 
@@ -1494,8 +1878,6 @@ impl Render for PdfViewer {
             )
         };
 
-        let recent_popup_open = self.recent_popup_open();
-        let recent_files = self.recent_files.clone();
         let zoom_label: SharedString = format!("{:.0}%", zoom * 100.0).into();
 
         // 更新当前标签页的显示滚动偏移
@@ -1510,6 +1892,7 @@ impl Render for PdfViewer {
         self.on_display_scroll_offset_changed(cx);
 
         let context_menu = self.render_context_menu(cx);
+        let drag_tab_preview = self.render_drag_tab_preview(cx);
 
         window_border().child(
             div()
@@ -1517,9 +1900,18 @@ impl Render for PdfViewer {
                 .size_full()
                 .bg(cx.theme().background)
                 .relative()
+                .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                    this.update_drag_mouse_position(event.position, cx);
+                }))
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.finish_tab_drag(cx);
+                    }),
+                )
                 .child(
                     div()
-                        .h(px(34.))
+                        .h(px(TITLE_BAR_HEIGHT))
                         .w_full()
                         .flex()
                         .items_center()
@@ -1587,8 +1979,6 @@ impl Render for PdfViewer {
                 .child(self.render_menu_bar(
                     page_count,
                     current_page_num,
-                    recent_popup_open,
-                    recent_files,
                     zoom_label,
                     cx,
                 ))
@@ -1637,6 +2027,9 @@ impl Render for PdfViewer {
                 )
                 .when(context_menu.is_some(), |this| {
                     this.child(context_menu.unwrap())
+                })
+                .when(drag_tab_preview.is_some(), |this| {
+                    this.child(drag_tab_preview.unwrap())
                 }),
         )
     }
