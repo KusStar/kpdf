@@ -56,17 +56,15 @@ impl PdfViewer {
                                                 .text_color(cx.theme().foreground)
                                                 .child(i18n.file_not_opened()),
                                         )
-                                        .child(
-                                            Self::render_recent_files_list_content(
-                                                2,
-                                                i18n,
-                                                cx.entity(),
-                                                recent_files_with_positions.clone(),
-                                                &self.recent_home_list_scroll,
-                                                true,
-                                                cx,
-                                            ),
-                                        ),
+                                        .child(Self::render_recent_files_list_content(
+                                            2,
+                                            i18n,
+                                            cx.entity(),
+                                            recent_files_with_positions.clone(),
+                                            &self.recent_home_list_scroll,
+                                            true,
+                                            cx,
+                                        )),
                                 ),
                         )
                     })
@@ -238,7 +236,7 @@ impl PdfViewer {
                             .left_0()
                             .w_full()
                             .h_full()
-                            .cursor(gpui::CursorStyle::IBeam)
+                            .cursor(self.text_cursor_style_for_page(page_index))
                             .on_mouse_down(
                                 gpui::MouseButton::Left,
                                 cx.listener(
@@ -495,6 +493,7 @@ impl PdfViewer {
         // Get cache page dimensions - these must match the dimensions used in get_char_bounds_for_page
         let Some(cache) = manager.get_page_cache(page_index) else {
             drop(manager);
+            let _ = self.set_text_hover_hit(page_index, false);
             if let Some(manager_ref) = self.active_tab_text_selection_manager() {
                 manager_ref.borrow_mut().clear_selection();
             }
@@ -508,8 +507,8 @@ impl PdfViewer {
         // Calculate scale factor (same as in render_page_with_text_selection)
         let scale = page_width_screen / page_width_pt;
 
-        // Use the improved method to find character at screen position
-        let char_index = cache.find_char_at_screen_position(
+        // Only allow entering text-edit/selection state when the pointer is on text.
+        let char_index = cache.hit_test_char_at_screen_position(
             local_x,
             local_y,
             (0.0, 0.0, page_width_screen, page_height_screen), // Relative to page container
@@ -517,6 +516,7 @@ impl PdfViewer {
         );
 
         drop(manager); // Release borrow before mutable borrow
+        let _ = self.set_text_hover_hit(page_index, char_index.is_some());
 
         if let Some(char_index) = char_index {
             if let Some(manager_ref) = self.active_tab_text_selection_manager() {
@@ -549,12 +549,12 @@ impl PdfViewer {
         };
         let manager = manager_ref.borrow();
 
-        if !manager.is_selecting() {
-            return;
-        }
-
         // Get cache page dimensions - these must match the dimensions used in get_char_bounds_for_page
         let Some(cache) = manager.get_page_cache(page_index) else {
+            drop(manager);
+            if self.set_text_hover_hit(page_index, false) {
+                cx.notify();
+            }
             return;
         };
 
@@ -564,15 +564,36 @@ impl PdfViewer {
         // Use the same scale as passed to rendering functions
         let scale = page_width_screen / page_width_pt;
 
-        // Use the improved method to find character at screen position
-        let char_index = cache.find_char_at_screen_position(
-            local_x,
-            local_y,
-            (0.0, 0.0, page_width_screen, page_height_screen), // Relative to page container
-            scale,
-        );
+        let is_over_text = cache
+            .hit_test_char_at_screen_position(
+                local_x,
+                local_y,
+                (0.0, 0.0, page_width_screen, page_height_screen), // Relative to page container
+                scale,
+            )
+            .is_some();
+        let is_selecting = manager.is_selecting();
+        let char_index = if is_selecting {
+            // Keep nearest-character behavior during dragging for smoother range selection.
+            cache.find_char_at_screen_position(
+                local_x,
+                local_y,
+                (0.0, 0.0, page_width_screen, page_height_screen), // Relative to page container
+                scale,
+            )
+        } else {
+            None
+        };
 
         drop(manager);
+        let hover_changed = self.set_text_hover_hit(page_index, is_over_text);
+
+        if !is_selecting {
+            if hover_changed {
+                cx.notify();
+            }
+            return;
+        }
 
         if let Some(char_index) = char_index {
             if let Some(manager_ref) = self.active_tab_text_selection_manager() {
@@ -580,6 +601,8 @@ impl PdfViewer {
                     .borrow_mut()
                     .update_selection(page_index, char_index);
             }
+            cx.notify();
+        } else if hover_changed {
             cx.notify();
         }
     }

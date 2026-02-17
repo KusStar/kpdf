@@ -1,5 +1,5 @@
 use crate::i18n::{I18n, Language};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use gpui::RenderImage as GpuiRenderImage;
 use image::{Frame as RasterFrame, RgbaImage};
 use pdfium_render::prelude::*;

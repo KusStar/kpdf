@@ -101,7 +101,9 @@ impl PdfViewer {
                         Button::new("zoom-out")
                             .ghost()
                             .small()
-                            .icon(Icon::new(icons::IconName::Minus).text_color(cx.theme().foreground))
+                            .icon(
+                                Icon::new(icons::IconName::Minus).text_color(cx.theme().foreground),
+                            )
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.zoom_out(cx);
                             })),
@@ -119,7 +121,9 @@ impl PdfViewer {
                         Button::new("zoom-in")
                             .ghost()
                             .small()
-                            .icon(Icon::new(icons::IconName::Plus).text_color(cx.theme().foreground))
+                            .icon(
+                                Icon::new(icons::IconName::Plus).text_color(cx.theme().foreground),
+                            )
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.zoom_in(cx);
                             })),

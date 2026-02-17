@@ -27,8 +27,13 @@ use std::time::Duration;
 #[derive(Debug, Clone)]
 pub enum DragState {
     None,
-    Started { source_tab_id: usize },
-    Over { source_tab_id: usize, target_tab_id: usize },
+    Started {
+        source_tab_id: usize,
+    },
+    Over {
+        source_tab_id: usize,
+        target_tab_id: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -95,6 +100,7 @@ pub struct PdfViewer {
     // 拖放相关状态
     drag_state: DragState,
     drag_mouse_position: Option<Point<Pixels>>,
+    text_hover_target: Option<(usize, usize)>, // (tab_id, page_index)
 }
 
 impl PdfViewer {
@@ -132,6 +138,7 @@ impl PdfViewer {
             hovered_tab_id: None,
             drag_state: DragState::None,
             drag_mouse_position: None,
+            text_hover_target: None,
         }
     }
 
@@ -613,7 +620,8 @@ impl PdfViewer {
             } else if self.recent_popup_trigger_hovered {
                 RecentPopupAnchor::OpenButton
             } else {
-                self.recent_popup_anchor.unwrap_or(RecentPopupAnchor::OpenButton)
+                self.recent_popup_anchor
+                    .unwrap_or(RecentPopupAnchor::OpenButton)
             };
 
             let mut changed = false;
@@ -774,17 +782,25 @@ impl PdfViewer {
                                             let path = path.clone();
                                             let file_name = display_file_name(&path);
                                             let path_text = path.display().to_string();
-                                            let last_seen_text = last_seen_page
-                                                .map(|page_index| i18n.last_seen_page(page_index + 1));
+                                            let last_seen_text = last_seen_page.map(|page_index| {
+                                                i18n.last_seen_page(page_index + 1)
+                                            });
                                             div()
-                                                .id(("recent-pdf", list_key * MAX_RECENT_FILES + ix))
+                                                .id((
+                                                    "recent-pdf",
+                                                    list_key * MAX_RECENT_FILES + ix,
+                                                ))
                                                 .w_full()
                                                 .rounded_md()
                                                 .px_2()
                                                 .py_1()
                                                 .cursor_pointer()
-                                                .hover(|this| this.bg(cx.theme().secondary.opacity(0.6)))
-                                                .active(|this| this.bg(cx.theme().secondary.opacity(0.9)))
+                                                .hover(|this| {
+                                                    this.bg(cx.theme().secondary.opacity(0.6))
+                                                })
+                                                .active(|this| {
+                                                    this.bg(cx.theme().secondary.opacity(0.9))
+                                                })
                                                 .child(
                                                     div()
                                                         .w_full()
@@ -796,7 +812,9 @@ impl PdfViewer {
                                                                 .w_full()
                                                                 .whitespace_normal()
                                                                 .text_sm()
-                                                                .text_color(cx.theme().popover_foreground)
+                                                                .text_color(
+                                                                    cx.theme().popover_foreground,
+                                                                )
                                                                 .child(file_name),
                                                         )
                                                         .child(
@@ -804,19 +822,27 @@ impl PdfViewer {
                                                                 .w_full()
                                                                 .whitespace_normal()
                                                                 .text_xs()
-                                                                .text_color(cx.theme().muted_foreground)
+                                                                .text_color(
+                                                                    cx.theme().muted_foreground,
+                                                                )
                                                                 .child(path_text),
                                                         )
-                                                        .when_some(last_seen_text, |this, label| {
-                                                            this.child(
-                                                                div()
-                                                                    .w_full()
-                                                                    .whitespace_normal()
-                                                                    .text_xs()
-                                                                    .text_color(cx.theme().muted_foreground)
-                                                                    .child(label),
-                                                            )
-                                                        }),
+                                                        .when_some(
+                                                            last_seen_text,
+                                                            |this, label| {
+                                                                this.child(
+                                                                    div()
+                                                                        .w_full()
+                                                                        .whitespace_normal()
+                                                                        .text_xs()
+                                                                        .text_color(
+                                                                            cx.theme()
+                                                                                .muted_foreground,
+                                                                        )
+                                                                        .child(label),
+                                                                )
+                                                            },
+                                                        ),
                                                 )
                                                 .on_click({
                                                     let viewer = viewer.clone();
@@ -833,10 +859,16 @@ impl PdfViewer {
                                 ),
                         )
                         .child(
-                            div().absolute().top_0().left_0().right_0().bottom_0().child(
-                                Scrollbar::vertical(scroll_handle)
-                                    .scrollbar_show(ScrollbarShow::Always),
-                            ),
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .right_0()
+                                .bottom_0()
+                                .child(
+                                    Scrollbar::vertical(scroll_handle)
+                                        .scrollbar_show(ScrollbarShow::Always),
+                                ),
                         ),
                 )
             })
@@ -1431,6 +1463,35 @@ impl PdfViewer {
             .is_some()
     }
 
+    pub(super) fn set_text_hover_hit(&mut self, page_index: usize, is_over_text: bool) -> bool {
+        let next = if is_over_text {
+            self.tab_bar
+                .active_tab_id()
+                .map(|tab_id| (tab_id, page_index))
+        } else {
+            None
+        };
+
+        if self.text_hover_target != next {
+            self.text_hover_target = next;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(super) fn text_cursor_style_for_page(&self, page_index: usize) -> gpui::CursorStyle {
+        let target = self
+            .tab_bar
+            .active_tab_id()
+            .map(|tab_id| (tab_id, page_index));
+        if self.text_hover_target == target {
+            gpui::CursorStyle::IBeam
+        } else {
+            gpui::CursorStyle::Arrow
+        }
+    }
+
     pub fn close_current_tab(&mut self, cx: &mut Context<Self>) {
         if let Some(active_id) = self.tab_bar.active_tab_id() {
             self.close_tab(active_id, cx);
@@ -1544,7 +1605,11 @@ impl PdfViewer {
     fn render_drag_tab_preview(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let source_tab_id = self.current_drag_source_tab_id()?;
         let position = self.drag_mouse_position?;
-        let tab = self.tab_bar.tabs().iter().find(|tab| tab.id == source_tab_id)?;
+        let tab = self
+            .tab_bar
+            .tabs()
+            .iter()
+            .find(|tab| tab.id == source_tab_id)?;
 
         let x: f32 = position.x.into();
         let y: f32 = position.y.into();
@@ -1585,21 +1650,24 @@ impl PdfViewer {
 
         // 检查是否有文件打开，如果有，则过滤掉空的 Home 标签
         let has_file_open = tabs.iter().any(|tab| tab.path.is_some());
-        let tabs_to_show: Vec<_> = tabs.iter().filter(|tab| {
-            if has_file_open {
-                // 有文件打开时，只显示有文件的标签
-                tab.path.is_some()
-            } else {
-                // 没有文件时，显示所有标签（包括 Home）
-                true
-            }
-        }).collect();
+        let tabs_to_show: Vec<_> = tabs
+            .iter()
+            .filter(|tab| {
+                if has_file_open {
+                    // 有文件打开时，只显示有文件的标签
+                    tab.path.is_some()
+                } else {
+                    // 没有文件时，显示所有标签（包括 Home）
+                    true
+                }
+            })
+            .collect();
 
         // 计算拖动指示器位置（基于可见 tab 的索引）
         let insertion_indicator_pos = match &self.drag_state {
-            DragState::Over { target_tab_id, .. } => tabs_to_show
-                .iter()
-                .position(|tab| tab.id == *target_tab_id),
+            DragState::Over { target_tab_id, .. } => {
+                tabs_to_show.iter().position(|tab| tab.id == *target_tab_id)
+            }
             _ => None,
         };
 
@@ -1937,7 +2005,7 @@ impl Render for PdfViewer {
                                 .flex()
                                 .items_center()
                                 .gap_2()
-                                .window_control_area(WindowControlArea::Drag)
+                                .window_control_area(WindowControlArea::Drag),
                         )
                         .when(!cfg!(target_os = "macos"), |this| {
                             this.child(
@@ -1985,12 +2053,7 @@ impl Render for PdfViewer {
                         }),
                 )
                 .child(self.render_tab_bar(cx))
-                .child(self.render_menu_bar(
-                    page_count,
-                    current_page_num,
-                    zoom_label,
-                    cx,
-                ))
+                .child(self.render_menu_bar(page_count, current_page_num, zoom_label, cx))
                 .child(
                     div()
                         .h_full()

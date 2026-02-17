@@ -1,5 +1,5 @@
-use crate::pdf_viewer::text_selection::TextSelectionManager;
 use crate::pdf_viewer::PageSummary;
+use crate::pdf_viewer::text_selection::TextSelectionManager;
 use gpui::*;
 use gpui_component::VirtualListScrollHandle;
 use std::cell::RefCell;
@@ -228,7 +228,9 @@ impl TabBar {
     }
 
     pub fn end_drag(&mut self) -> Option<(usize, usize)> {
-        let result = if let (Some(source_idx), Some(target_idx)) = (self.drag_source_index, self.drag_target_index) {
+        let result = if let (Some(source_idx), Some(target_idx)) =
+            (self.drag_source_index, self.drag_target_index)
+        {
             if source_idx != target_idx {
                 Some((source_idx, target_idx))
             } else {

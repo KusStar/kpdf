@@ -12,10 +12,14 @@ const WINDOW_SIZE_KEY_HEIGHT: &str = "height";
 
 fn window_size_db_path() -> std::path::PathBuf {
     if let Some(app_data) = std::env::var_os("APPDATA") {
-        return std::path::PathBuf::from(app_data).join("kpdf").join("recent_files_db");
+        return std::path::PathBuf::from(app_data)
+            .join("kpdf")
+            .join("recent_files_db");
     }
     if let Some(home) = std::env::var_os("HOME") {
-        return std::path::PathBuf::from(home).join(".kpdf").join("recent_files_db");
+        return std::path::PathBuf::from(home)
+            .join(".kpdf")
+            .join("recent_files_db");
     }
     std::path::PathBuf::from("kpdf_recent_files_db")
 }

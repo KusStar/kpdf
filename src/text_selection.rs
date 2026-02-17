@@ -35,15 +35,38 @@ pub struct TextCharInfo {
 }
 
 impl TextCharInfo {
+    const DEFAULT_HIT_TOLERANCE_PDF: f32 = 2.0;
+
     /// Check if a point (in PDF coordinates) is inside this character's bounds
     /// PDF coordinates: origin at bottom-left, y increases upward
     pub fn contains_point(&self, x: f32, y: f32) -> bool {
-        // Add some tolerance for easier selection
-        let tolerance = 2.0;
+        self.contains_point_with_tolerance(x, y, Self::DEFAULT_HIT_TOLERANCE_PDF)
+    }
+
+    pub fn contains_point_with_tolerance(&self, x: f32, y: f32, tolerance: f32) -> bool {
         x >= (self.left - tolerance)
             && x <= (self.right + tolerance)
             && y >= (self.bottom - tolerance)
             && y <= (self.top + tolerance)
+    }
+
+    /// Distance from a point to the character bounds (0 when inside).
+    pub fn distance_to_point(&self, x: f32, y: f32) -> f32 {
+        let dx = if x < self.left {
+            self.left - x
+        } else if x > self.right {
+            x - self.right
+        } else {
+            0.0
+        };
+        let dy = if y < self.bottom {
+            self.bottom - y
+        } else if y > self.top {
+            y - self.top
+        } else {
+            0.0
+        };
+        (dx * dx + dy * dy).sqrt()
     }
 
     /// Get center point of the character
@@ -64,13 +87,41 @@ pub struct PageTextCache {
 }
 
 impl PageTextCache {
+    const DEFAULT_HIT_TOLERANCE_PDF: f32 = 2.0;
+    const HOVER_HIT_TOLERANCE_PX: f32 = 20.0;
+
+    /// Find a character only when the point is inside its bounds.
+    pub fn find_char_containing_position(&self, x: f32, y: f32) -> Option<usize> {
+        self.chars
+            .iter()
+            .position(|char_info| char_info.contains_point(x, y))
+    }
+
+    pub fn find_nearest_char_within_distance(
+        &self,
+        x: f32,
+        y: f32,
+        max_distance: f32,
+    ) -> Option<usize> {
+        let mut nearest: Option<usize> = None;
+        let mut nearest_distance = max_distance;
+
+        for (index, char_info) in self.chars.iter().enumerate() {
+            let distance = char_info.distance_to_point(x, y);
+            if distance <= nearest_distance {
+                nearest_distance = distance;
+                nearest = Some(index);
+            }
+        }
+
+        nearest
+    }
+
     /// Find the closest character to a point
     pub fn find_char_at_position(&self, x: f32, y: f32) -> Option<usize> {
         // First, try to find a character that contains the point
-        for (index, char_info) in self.chars.iter().enumerate() {
-            if char_info.contains_point(x, y) {
-                return Some(index);
-            }
+        if let Some(index) = self.find_char_containing_position(x, y) {
+            return Some(index);
         }
 
         // If no character contains the point, find the closest one
@@ -179,6 +230,36 @@ impl PageTextCache {
         page_bounds: (f32, f32, f32, f32), // (left, top, right, bottom) in screen coordinates
         page_scale: f32,
     ) -> Option<usize> {
+        let (pdf_x, pdf_y) =
+            self.screen_to_pdf_coordinates(screen_x, screen_y, page_bounds, page_scale)?;
+        // Use the existing nearest-character method for drag selection continuity.
+        self.find_char_at_position(pdf_x, pdf_y)
+    }
+
+    /// Strict hit-test in screen space: only returns a character when the cursor is on text.
+    pub fn hit_test_char_at_screen_position(
+        &self,
+        screen_x: f32,
+        screen_y: f32,
+        page_bounds: (f32, f32, f32, f32), // (left, top, right, bottom) in screen coordinates
+        page_scale: f32,
+    ) -> Option<usize> {
+        let (pdf_x, pdf_y) =
+            self.screen_to_pdf_coordinates(screen_x, screen_y, page_bounds, page_scale)?;
+        // Keep hit sensitivity stable in screen pixels across zoom levels.
+        let scale = page_scale.max(0.001);
+        let hover_tolerance_pdf =
+            (Self::HOVER_HIT_TOLERANCE_PX / scale).max(Self::DEFAULT_HIT_TOLERANCE_PDF);
+        self.find_nearest_char_within_distance(pdf_x, pdf_y, hover_tolerance_pdf)
+    }
+
+    fn screen_to_pdf_coordinates(
+        &self,
+        screen_x: f32,
+        screen_y: f32,
+        page_bounds: (f32, f32, f32, f32), // (left, top, right, bottom) in screen coordinates
+        page_scale: f32,
+    ) -> Option<(f32, f32)> {
         let (page_left, page_top, page_right, page_bottom) = page_bounds;
         let page_width_screen = page_right - page_left;
         let page_height_screen = page_bottom - page_top;
@@ -218,8 +299,7 @@ impl PageTextCache {
         let pdf_x = content_relative_x / page_scale;
         let pdf_y = (content_height_screen - content_relative_y) / page_scale;
 
-        // Use the existing find_char_at_position method
-        self.find_char_at_position(pdf_x, pdf_y)
+        Some((pdf_x, pdf_y))
     }
 }
 
@@ -279,11 +359,7 @@ impl TextSelectionManager {
         let selection = self.current_selection.as_ref()?;
         let cache = self.get_page_cache(selection.page_index)?;
         let text = cache.get_text(selection);
-        if text.is_empty() {
-            None
-        } else {
-            Some(text)
-        }
+        if text.is_empty() { None } else { Some(text) }
     }
 
     pub fn get_selection_rects(&self, page_index: usize) -> Option<Vec<(f32, f32, f32, f32)>> {
