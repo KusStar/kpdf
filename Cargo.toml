@@ -19,3 +19,10 @@ identifier = "com.kuss.kpdf"
 category = "Productivity"
 icon = ["assets/app.png"]
 resources=["lib"]
+
+[package.metadata.packager]
+product-name = "kPDF"
+identifier = "com.kuss.kpdf"
+before-packaging-command = "cargo build --release"
+resources = ["lib"]
+icons = ["assets/app.png"]
