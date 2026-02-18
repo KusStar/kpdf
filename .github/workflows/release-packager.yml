@@ -200,35 +200,33 @@ jobs:
             exit 1
           fi
 
-          original_dmg="${dmg_files[0]}"
-          rw_dmg="${RUNNER_TEMP}/kpdf-signed-rw.dmg"
-          signed_dmg="${original_dmg%.dmg}-signed.dmg"
-          mount_point="${RUNNER_TEMP}/kpdf-dmg-mount"
-
-          cleanup_mount() {
-            hdiutil detach "${mount_point}" -force >/dev/null 2>&1 || true
-          }
-          trap cleanup_mount EXIT
-
-          rm -f "${rw_dmg}" "${signed_dmg}"
-          rm -rf "${mount_point}"
-          mkdir -p "${mount_point}"
-
-          # Keep original DMG layout/style by updating the app inside the packaged DMG.
-          hdiutil convert "${original_dmg}" -format UDRW -o "${rw_dmg}" -ov
-          hdiutil attach "${rw_dmg}" -mountpoint "${mount_point}" -nobrowse -noverify
-
           app_name="$(basename "${app_path}")"
-          rm -rf "${mount_point}/${app_name}"
-          ditto "${app_path}" "${mount_point}/${app_name}"
+          for original_dmg in "${dmg_files[@]}"; do
+            rw_dmg="${RUNNER_TEMP}/kpdf-repack-${RANDOM}.dmg"
+            repacked_dmg="${RUNNER_TEMP}/kpdf-repacked-${RANDOM}.dmg"
+            mount_point="${RUNNER_TEMP}/kpdf-dmg-mount-${RANDOM}"
 
-          hdiutil detach "${mount_point}"
-          trap - EXIT
+            cleanup_mount() {
+              hdiutil detach "${mount_point}" -force >/dev/null 2>&1 || true
+            }
+            trap cleanup_mount EXIT
 
-          hdiutil convert "${rw_dmg}" -format UDZO -imagekey zlib-level=9 -o "${signed_dmg}" -ov
-          codesign --force --timestamp --sign "${MACOS_SIGNING_IDENTITY}" "${signed_dmg}"
+            rm -f "${rw_dmg}" "${repacked_dmg}"
+            rm -rf "${mount_point}"
+            mkdir -p "${mount_point}"
 
-          echo "SIGNED_DMG_PATH=${signed_dmg}" >> "${GITHUB_ENV}"
+            # Replace only the app bundle in the original DMG layout.
+            hdiutil convert "${original_dmg}" -format UDRW -o "${rw_dmg}" -ov
+            hdiutil attach "${rw_dmg}" -mountpoint "${mount_point}" -nobrowse -noverify
+            rm -rf "${mount_point}/${app_name}"
+            ditto "${app_path}" "${mount_point}/${app_name}"
+            hdiutil detach "${mount_point}"
+            trap - EXIT
+
+            hdiutil convert "${rw_dmg}" -format UDZO -imagekey zlib-level=9 -o "${repacked_dmg}" -ov
+            mv -f "${repacked_dmg}" "${original_dmg}"
+            rm -f "${rw_dmg}"
+          done
 
       - name: Collect package files
         shell: bash
@@ -250,18 +248,14 @@ jobs:
             # zip target/release/kPDF.app
             ditto -c -k --sequesterRsrc --keepParent "${app_path}" "${out_dir}/macos-kPDF.app.zip"
 
-            if [[ -n "${SIGNED_DMG_PATH:-}" && -f "${SIGNED_DMG_PATH}" ]]; then
-              dmg_files=("${SIGNED_DMG_PATH}")
-            else
-              shopt -s nullglob
-              dmg_files=(target/release/*.dmg)
-              shopt -u nullglob
+            shopt -s nullglob
+            dmg_files=(target/release/*.dmg)
+            shopt -u nullglob
 
-              if [[ ${#dmg_files[@]} -eq 0 ]]; then
-                while IFS= read -r -d '' file; do
-                  dmg_files+=("${file}")
-                done < <(find target -type f -name "*.dmg" -print0)
-              fi
+            if [[ ${#dmg_files[@]} -eq 0 ]]; then
+              while IFS= read -r -d '' file; do
+                dmg_files+=("${file}")
+              done < <(find target -type f -name "*.dmg" -print0)
             fi
 
             if [[ ${#dmg_files[@]} -eq 0 ]]; then
