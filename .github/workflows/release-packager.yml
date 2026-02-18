@@ -7,6 +7,15 @@ on:
         description: 'Release tag to publish (for example: v0.1.0)'
         required: true
         type: string
+      platform:
+        description: 'Platform to package'
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - macos
+          - windows
   push:
     tags:
       - "**"
@@ -20,17 +29,21 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_tag: ${{ steps.resolve.outputs.release_tag }}
+      platform_matrix: ${{ steps.resolve.outputs.platform_matrix }}
     steps:
       - name: Resolve tag
         id: resolve
         env:
           INPUT_TAG: ${{ github.event.inputs.tag }}
+          INPUT_PLATFORM: ${{ github.event.inputs.platform }}
         run: |
           set -euo pipefail
           if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
             tag="${GITHUB_REF_NAME}"
+            platform="all"
           else
             tag="${INPUT_TAG}"
+            platform="${INPUT_PLATFORM:-all}"
           fi
 
           if [[ -z "${tag}" ]]; then
@@ -38,8 +51,27 @@ jobs:
             exit 1
           fi
 
+          case "${platform}" in
+            all)
+              matrix='{"include":[{"platform":"macos","runner":"macos-latest"},{"platform":"windows","runner":"windows-latest"}]}'
+              ;;
+            macos)
+              matrix='{"include":[{"platform":"macos","runner":"macos-latest"}]}'
+              ;;
+            windows)
+              matrix='{"include":[{"platform":"windows","runner":"windows-latest"}]}'
+              ;;
+            *)
+              echo "::error::Unsupported platform input: ${platform} (expected all/macos/windows)."
+              exit 1
+              ;;
+          esac
+
           echo "release_tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "platform_matrix=${matrix}" >> "${GITHUB_OUTPUT}"
           echo "Release tag: ${tag}"
+          echo "Platform selection: ${platform}"
+
 
   package:
     name: Package (${{ matrix.platform }})
@@ -47,12 +79,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - platform: macos
-            runner: macos-latest
-          - platform: windows
-            runner: windows-latest
+      matrix: ${{ fromJson(needs.prepare.outputs.platform_matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -87,6 +114,86 @@ jobs:
         shell: bash
         run: cargo packager --release
 
+      - name: Import macOS signing certificate
+        if: matrix.platform == 'macos'
+        shell: bash
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${MACOS_CERT_P12_BASE64:-}" ]]; then
+            echo "::error::Missing secret MACOS_CERT_P12_BASE64 (base64 encoded .p12)."
+            exit 1
+          fi
+          if [[ -z "${MACOS_CERT_PASSWORD:-}" ]]; then
+            echo "::error::Missing secret MACOS_CERT_PASSWORD."
+            exit 1
+          fi
+
+          cert_path="${RUNNER_TEMP}/macos-signing-cert.p12"
+          keychain_path="${RUNNER_TEMP}/kpdf-signing.keychain-db"
+          keychain_password="${MACOS_KEYCHAIN_PASSWORD:-kpdf-temp-keychain-password}"
+
+          if ! printf '%s' "${MACOS_CERT_P12_BASE64}" | base64 --decode > "${cert_path}" 2>/dev/null; then
+            printf '%s' "${MACOS_CERT_P12_BASE64}" | base64 -D > "${cert_path}"
+          fi
+
+          security create-keychain -p "${keychain_password}" "${keychain_path}"
+          security set-keychain-settings -lut 21600 "${keychain_path}"
+          security unlock-keychain -p "${keychain_password}" "${keychain_path}"
+          security import "${cert_path}" -k "${keychain_path}" -P "${MACOS_CERT_PASSWORD}" -T /usr/bin/codesign -T /usr/bin/security
+          security list-keychains -d user -s "${keychain_path}" login.keychain-db
+          security default-keychain -s "${keychain_path}"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${keychain_password}" "${keychain_path}"
+
+          identity="${MACOS_SIGNING_IDENTITY:-}"
+          if [[ -z "${identity}" ]]; then
+            identity="$(
+              security find-identity -v -p codesigning "${keychain_path}" \
+                | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p' \
+                | head -n 1
+            )"
+          fi
+          if [[ -z "${identity}" ]]; then
+            echo "::error::Unable to resolve signing identity. Set MACOS_SIGNING_IDENTITY secret."
+            security find-identity -v -p codesigning "${keychain_path}" || true
+            exit 1
+          fi
+
+          echo "MACOS_SIGNING_IDENTITY=${identity}" >> "${GITHUB_ENV}"
+
+      - name: Sign macOS app
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          app_path="target/release/kPDF.app"
+          if [[ ! -d "${app_path}" ]]; then
+            echo "::error::Missing app bundle for signing: ${app_path}"
+            exit 1
+          fi
+
+          # Sign embedded dynamic libraries first, then sign the whole app bundle.
+          while IFS= read -r -d '' dylib; do
+            codesign --force --timestamp --sign "${MACOS_SIGNING_IDENTITY}" "${dylib}"
+          done < <(find "${app_path}" -type f -name "*.dylib" -print0)
+
+          codesign --force --deep --options runtime --timestamp --sign "${MACOS_SIGNING_IDENTITY}" "${app_path}"
+          codesign --verify --deep --strict --verbose=2 "${app_path}"
+          spctl -a -vv --type execute "${app_path}" || true
+
+          signed_dmg="target/release/kPDF-signed.dmg"
+          rm -f "${signed_dmg}"
+          hdiutil create -volname "kPDF" -srcfolder "${app_path}" -ov -format UDZO "${signed_dmg}"
+          codesign --force --timestamp --sign "${MACOS_SIGNING_IDENTITY}" "${signed_dmg}"
+
+          echo "SIGNED_DMG_PATH=${signed_dmg}" >> "${GITHUB_ENV}"
+
       - name: Collect package files
         shell: bash
         run: |
@@ -107,14 +214,18 @@ jobs:
             # zip target/release/kPDF.app
             ditto -c -k --sequesterRsrc --keepParent "${app_path}" "${out_dir}/macos-kPDF.app.zip"
 
-            shopt -s nullglob
-            dmg_files=(target/release/*.dmg)
-            shopt -u nullglob
+            if [[ -n "${SIGNED_DMG_PATH:-}" && -f "${SIGNED_DMG_PATH}" ]]; then
+              dmg_files=("${SIGNED_DMG_PATH}")
+            else
+              shopt -s nullglob
+              dmg_files=(target/release/*.dmg)
+              shopt -u nullglob
 
-            if [[ ${#dmg_files[@]} -eq 0 ]]; then
-              while IFS= read -r -d '' file; do
-                dmg_files+=("${file}")
-              done < <(find target -type f -name "*.dmg" -print0)
+              if [[ ${#dmg_files[@]} -eq 0 ]]; then
+                while IFS= read -r -d '' file; do
+                  dmg_files+=("${file}")
+                done < <(find target -type f -name "*.dmg" -print0)
+              fi
             fi
 
             if [[ ${#dmg_files[@]} -eq 0 ]]; then
