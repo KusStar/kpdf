@@ -218,6 +218,18 @@ jobs:
             # Replace only the app bundle in the original DMG layout.
             hdiutil convert "${original_dmg}" -format UDRW -o "${rw_dmg}" -ov
             hdiutil attach "${rw_dmg}" -mountpoint "${mount_point}" -nobrowse -noverify
+            layout_backup_dir="${RUNNER_TEMP}/kpdf-layout-${RANDOM}"
+            rm -rf "${layout_backup_dir}"
+            mkdir -p "${layout_backup_dir}"
+
+            # Preserve Finder window/icon layout metadata.
+            if [[ -f "${mount_point}/.DS_Store" ]]; then
+              cp -a "${mount_point}/.DS_Store" "${layout_backup_dir}/.DS_Store"
+            fi
+            if [[ -d "${mount_point}/.background" ]]; then
+              cp -a "${mount_point}/.background" "${layout_backup_dir}/.background"
+            fi
+
             if [[ ! -d "${mount_point}/${app_name}" ]]; then
               echo "::error::Expected app bundle not found in mounted DMG: ${mount_point}/${app_name}"
               exit 1
@@ -226,12 +238,22 @@ jobs:
             # Keep the existing app bundle directory entry to preserve Finder layout metadata.
             find "${mount_point}/${app_name}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
             ditto "${app_path}" "${mount_point}/${app_name}"
+
+            if [[ -f "${layout_backup_dir}/.DS_Store" ]]; then
+              cp -a "${layout_backup_dir}/.DS_Store" "${mount_point}/.DS_Store"
+            fi
+            if [[ -d "${layout_backup_dir}/.background" ]]; then
+              rm -rf "${mount_point}/.background"
+              cp -a "${layout_backup_dir}/.background" "${mount_point}/.background"
+            fi
+
             hdiutil detach "${mount_point}"
             trap - EXIT
 
             hdiutil convert "${rw_dmg}" -format UDZO -imagekey zlib-level=9 -o "${repacked_dmg}" -ov
             mv -f "${repacked_dmg}" "${original_dmg}"
             rm -f "${rw_dmg}"
+            rm -rf "${layout_backup_dir}"
           done
 
       - name: Collect package files
