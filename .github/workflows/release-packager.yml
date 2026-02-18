@@ -164,7 +164,13 @@ jobs:
 
       - name: Package
         shell: bash
-        run: cargo packager --release
+        run: |
+          set -euo pipefail
+          if [[ "${{ matrix.platform }}" == "macos" ]]; then
+            CI=false cargo packager --release
+          else
+            cargo packager --release
+          fi
 
       - name: Collect package files
         shell: bash
