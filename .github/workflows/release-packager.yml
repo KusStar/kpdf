@@ -90,25 +90,56 @@ jobs:
           out_dir="release-artifacts/${{ matrix.platform }}"
           mkdir -p "${out_dir}"
 
-          found=0
-          while IFS= read -r -d '' file; do
-            found=1
-            rel="${file#target/}"
-            safe_name="${rel//\//_}"
-            cp "${file}" "${out_dir}/${{ matrix.platform }}-${safe_name}"
-          done < <(
-            find target -type f \
-              \( -path "*/bundle/*" -o -path "*/packager/*" -o -path "*/dist/*" \) \
-              \( -name "*.dmg" -o -name "*.pkg" -o -name "*.msi" -o -name "*.exe" -o -name "*.zip" -o -name "*.tar.gz" \) \
-              -print0
-          )
+          if [[ "${{ matrix.platform }}" == "macos" ]]; then
+            app_path="target/release/kPDF.app"
+            if [[ ! -d "${app_path}" ]]; then
+              echo "::group::target/release"
+              ls -lah target/release || true
+              echo "::endgroup::"
+              echo "::error::Missing app bundle: ${app_path}"
+              exit 1
+            fi
 
-          if [[ "${found}" -eq 0 ]]; then
-            echo "::group::target tree"
-            find target -maxdepth 4 -type d | sed -n '1,200p'
-            echo "::endgroup::"
-            echo "::error::No packager output found."
-            exit 1
+            # zip target/release/kPDF.app
+            ditto -c -k --sequesterRsrc --keepParent "${app_path}" "${out_dir}/macos-kPDF.app.zip"
+
+            shopt -s nullglob
+            dmg_files=(target/release/*.dmg)
+            shopt -u nullglob
+
+            if [[ ${#dmg_files[@]} -eq 0 ]]; then
+              while IFS= read -r -d '' file; do
+                dmg_files+=("${file}")
+              done < <(find target -type f -name "*.dmg" -print0)
+            fi
+
+            if [[ ${#dmg_files[@]} -eq 0 ]]; then
+              echo "::group::target/release"
+              ls -lah target/release || true
+              echo "::endgroup::"
+              echo "::error::No dmg found (expected target/release/kPDF_*.dmg)."
+              exit 1
+            fi
+
+            for file in "${dmg_files[@]}"; do
+              cp "${file}" "${out_dir}/macos-$(basename "${file}")"
+            done
+          else
+            shopt -s nullglob
+            exe_files=(target/release/kpdf_*_x64-setup.exe)
+            shopt -u nullglob
+
+            if [[ ${#exe_files[@]} -eq 0 ]]; then
+              echo "::group::target/release"
+              ls -lah target/release || true
+              echo "::endgroup::"
+              echo "::error::No Windows setup exe found (expected target/release/kpdf_*_x64-setup.exe)."
+              exit 1
+            fi
+
+            for file in "${exe_files[@]}"; do
+              cp "${file}" "${out_dir}/windows-$(basename "${file}")"
+            done
           fi
 
           echo "Collected files:"
