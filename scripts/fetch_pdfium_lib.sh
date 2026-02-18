@@ -2,9 +2,10 @@
 set -euo pipefail
 
 REPO="bblanchon/pdfium-binaries"
-TAG="chromium%2F7690"
+TAG_ALIAS="chromium"
 TMP_DIR=""
 CANDIDATES=()
+TAG_ENCODED=""
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
@@ -16,7 +17,7 @@ usage() {
 Usage: fetch_pdfium_lib.sh [options]
 
 Download the latest PDFium binary matching the current OS/arch from:
-https://github.com/bblanchon/pdfium-binaries/releases/tag/${TAG}
+https://github.com/bblanchon/pdfium-binaries/releases/tag/chromium
 
 Options:
   -o, --output-dir <dir>   Output directory for the dynamic library (default: ./lib)
@@ -100,6 +101,37 @@ build_candidates() {
   esac
 }
 
+url_encode_tag() {
+  local tag="$1"
+  tag="${tag//\//%2F}"
+  printf '%s\n' "${tag}"
+}
+
+decode_tag_component() {
+  local tag="$1"
+  tag="${tag//%2F/\/}"
+  tag="${tag//%2f/\/}"
+  printf '%s\n' "${tag}"
+}
+
+resolve_download_tag() {
+  local raw_tag
+  raw_tag="$(
+    curl -fsSL --retry 3 --retry-delay 1 -H "Accept: application/vnd.github+json" \
+      "https://api.github.com/repos/${REPO}/releases?per_page=100" \
+      | grep -Eo '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+      | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/' \
+      | grep '^chromium/' \
+      | head -n 1 || true
+  )"
+
+  if [[ -z "${raw_tag}" ]]; then
+    raw_tag="${TAG_ALIAS}"
+  fi
+
+  TAG_ENCODED="$(url_encode_tag "${raw_tag}")"
+}
+
 library_name_for_os() {
   local os="$1"
   case "${os}" in
@@ -112,12 +144,14 @@ library_name_for_os() {
 
 download_asset() {
   local archive="$1"
+  local tag="$2"
+  shift
   shift
   local selected=""
 
   for asset in "$@"; do
-    local url="https://github.com/${REPO}/releases/download/${TAG}/${asset}"
-    printf 'Trying asset: %s\n' "${asset}" >&2
+    local url="https://github.com/${REPO}/releases/download/${tag}/${asset}"
+    printf 'Trying tag/asset: %s / %s\n' "$(decode_tag_component "${tag}")" "${asset}" >&2
     if curl -fsSL --retry 3 --retry-delay 1 -A "kpdf-pdfium-fetch/1.0" "${url}" -o "${archive}"; then
       selected="${asset}"
       break
@@ -125,7 +159,7 @@ download_asset() {
   done
 
   if [[ -z "${selected}" ]]; then
-    die "Could not download a matching asset from tag '${TAG}'."
+    return 1
   fi
 
   printf '%s\n' "${selected}"
@@ -187,7 +221,7 @@ main() {
   build_candidates "${os}" "${arch}"
   [[ "${#CANDIDATES[@]}" -gt 0 ]] || die "No download candidates for ${os}/${arch}"
 
-  local archive extract_dir selected_asset src_lib target_lib
+  local archive extract_dir selected_asset src_lib target_lib selected_tag
   TMP_DIR="$(mktemp -d)"
   trap cleanup EXIT
 
@@ -195,7 +229,14 @@ main() {
   extract_dir="${TMP_DIR}/extract"
   mkdir -p "${extract_dir}"
 
-  selected_asset="$(download_asset "${archive}" "${CANDIDATES[@]}")"
+  resolve_download_tag
+  if selected_asset="$(download_asset "${archive}" "${TAG_ENCODED}" "${CANDIDATES[@]}")"; then
+    selected_tag="${TAG_ENCODED}"
+  elif selected_asset="$(download_asset "${archive}" "$(url_encode_tag "${TAG_ALIAS}")" "${CANDIDATES[@]}")"; then
+    selected_tag="$(url_encode_tag "${TAG_ALIAS}")"
+  else
+    die "Could not download a matching asset from tag alias '${TAG_ALIAS}'."
+  fi
 
   tar -xzf "${archive}" -C "${extract_dir}"
   src_lib="$(find_library "${extract_dir}" "${lib_name}")"
@@ -204,6 +245,7 @@ main() {
   target_lib="${OUTPUT_DIR}/${lib_name}"
   cp -f "${src_lib}" "${target_lib}"
 
+  printf 'Resolved tag: %s\n' "$(decode_tag_component "${selected_tag}")"
   printf 'Downloaded: %s\n' "${selected_asset}"
   printf 'Copied: %s\n' "${target_lib}"
 }

@@ -2,7 +2,8 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 set "REPO=bblanchon/pdfium-binaries"
-set "TAG_ALIAS=chromium%2F7690"
+set "TAG_ALIAS=chromium"
+set "TAG_ALIAS_ENCODED=chromium"
 
 for %%I in ("%~dp0..") do set "ROOT_DIR=%%~fI"
 set "OUTPUT_DIR=%ROOT_DIR%\lib"
@@ -12,6 +13,7 @@ set "ARCHIVE="
 set "EXTRACT_DIR="
 set "ARCH="
 set "TAG_ENCODED="
+set "TAG_DISPLAY="
 set "SELECTED_ASSET="
 set "ERRMSG="
 set "SHOW_HELP="
@@ -49,6 +51,13 @@ mkdir "%EXTRACT_DIR%" >nul 2>nul || (
 )
 
 call :download_for_arch
+if errorlevel 1 (
+  if /I not "!TAG_ENCODED!"=="%TAG_ALIAS_ENCODED%" (
+    set "TAG_ENCODED=%TAG_ALIAS_ENCODED%"
+    set "TAG_DISPLAY=%TAG_ALIAS%"
+    call :download_for_arch
+  )
+)
 if errorlevel 1 goto fail
 
 tar -xzf "%ARCHIVE%" -C "%EXTRACT_DIR%" >nul
@@ -76,7 +85,7 @@ if errorlevel 1 (
   goto fail
 )
 
-echo Resolved tag: !TAG_ENCODED!
+echo Resolved tag: !TAG_DISPLAY!
 echo Downloaded: !SELECTED_ASSET!
 echo Copied: %OUTPUT_DIR%\pdfium.dll
 call :cleanup
@@ -152,11 +161,18 @@ set "ERRMSG=Unsupported architecture: %RAW_ARCH%"
 exit /b 1
 
 :resolve_tag
-for /f "usebackq delims=" %%T in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { $headers = @{ 'User-Agent' = 'kpdf-pdfium-fetch-bat/1.0' }; $releases = Invoke-RestMethod -Uri 'https://api.github.com/repos/%REPO%/releases?per_page=100' -Headers $headers; $tag = ($releases | ForEach-Object { $_.tag_name } | Where-Object { $_ -like 'chromium/*' } | Select-Object -First 1); if (-not $tag) { $tag = '%TAG_ALIAS%' }; [System.Uri]::EscapeDataString($tag) } catch { [System.Uri]::EscapeDataString('%TAG_ALIAS%') }"`) do (
+set "TAG_RAW="
+for /f "usebackq delims=" %%T in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { $headers = @{ 'User-Agent' = 'kpdf-pdfium-fetch-bat/1.0' }; $releases = Invoke-RestMethod -Uri 'https://api.github.com/repos/%REPO%/releases?per_page=100' -Headers $headers; $tag = ($releases | ForEach-Object { $_.tag_name } | Where-Object { $_ -like 'chromium/*' } | Select-Object -First 1); if (-not $tag) { $tag = '%TAG_ALIAS%' }; $tag } catch { '%TAG_ALIAS%' }"`) do (
+  set "TAG_RAW=%%T"
+)
+if not defined TAG_RAW set "TAG_RAW=%TAG_ALIAS%"
+set "TAG_DISPLAY=%TAG_RAW%"
+
+for /f "usebackq delims=" %%T in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "[System.Uri]::EscapeDataString('%TAG_RAW%')"`) do (
   set "TAG_ENCODED=%%T"
 )
 
-if not defined TAG_ENCODED set "TAG_ENCODED=%TAG_ALIAS%"
+if not defined TAG_ENCODED set "TAG_ENCODED=%TAG_ALIAS_ENCODED%"
 exit /b 0
 
 :download_for_arch
@@ -192,7 +208,7 @@ set "ASSET=%~1"
 if not defined ASSET exit /b 1
 
 set "URL=https://github.com/%REPO%/releases/download/!TAG_ENCODED!/!ASSET!"
-echo Trying tag/asset: !TAG_ENCODED! / !ASSET!
+echo Trying tag/asset: !TAG_DISPLAY! / !ASSET!
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; try { Invoke-WebRequest -Uri '!URL!' -OutFile '!ARCHIVE!' -Headers @{ 'User-Agent' = 'kpdf-pdfium-fetch-bat/1.0' } -ErrorAction Stop; exit 0 } catch { exit 1 }" >nul
 if errorlevel 1 exit /b 1
