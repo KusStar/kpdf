@@ -14,6 +14,9 @@ sled = "0.34.7"
 rust-embed = "8.11.0"
 tklog = "0.3.0"
 
+[build-dependencies]
+winresource = "0.1.20"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.3"
 objc2-foundation = "0.3.2"
@@ -29,3 +32,6 @@ identifier = "com.kuss.kpdf"
 before-packaging-command = "cargo build --release"
 resources = ["lib"]
 icons = ["assets/app.icns", "assets/app.ico"]
+
+[package.metadata.packager.nsis]
+installer-icon = "assets/app.ico"
