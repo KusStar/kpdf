@@ -218,7 +218,13 @@ jobs:
             # Replace only the app bundle in the original DMG layout.
             hdiutil convert "${original_dmg}" -format UDRW -o "${rw_dmg}" -ov
             hdiutil attach "${rw_dmg}" -mountpoint "${mount_point}" -nobrowse -noverify
-            rm -rf "${mount_point}/${app_name}"
+            if [[ ! -d "${mount_point}/${app_name}" ]]; then
+              echo "::error::Expected app bundle not found in mounted DMG: ${mount_point}/${app_name}"
+              exit 1
+            fi
+
+            # Keep the existing app bundle directory entry to preserve Finder layout metadata.
+            find "${mount_point}/${app_name}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
             ditto "${app_path}" "${mount_point}/${app_name}"
             hdiutil detach "${mount_point}"
             trap - EXIT
