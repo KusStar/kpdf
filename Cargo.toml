@@ -25,4 +25,4 @@ identifier = "com.kuss.kpdf"
 before-packaging-command = "cargo build --release"
 before-each-package-command = "bash ./scripts/sign_app_before_dmg.sh"
 resources = ["lib"]
-icons = ["assets/app.png"]
+icons = ["assets/app.png", "assets/app.icns", "assets/app.ico"]
