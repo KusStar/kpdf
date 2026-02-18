@@ -247,6 +247,38 @@ jobs:
               cp -a "${layout_backup_dir}/.background" "${mount_point}/.background"
             fi
 
+            # Force a compact Finder layout for the DMG window.
+            volume_name="$(/usr/sbin/diskutil info "${mount_point}" | awk -F': *' '/Volume Name/ {print $2; exit}')"
+            if [[ -n "${volume_name}" ]]; then
+              osascript \
+                -e "tell application \"Finder\"" \
+                -e "tell disk \"${volume_name}\"" \
+                -e "open" \
+                -e "delay 1" \
+                -e "tell container window" \
+                -e "set current view to icon view" \
+                -e "set toolbar visible to false" \
+                -e "set statusbar visible to false" \
+                -e "set bounds to {120, 120, 1020, 680}" \
+                -e "set viewOptions to the icon view options" \
+                -e "set arrangement of viewOptions to not arranged" \
+                -e "set icon size of viewOptions to 144" \
+                -e "set text size of viewOptions to 16" \
+                -e "try" \
+                -e "set position of item \"${app_name}\" to {260, 300}" \
+                -e "end try" \
+                -e "try" \
+                -e "set position of item \"Applications\" to {620, 300}" \
+                -e "end try" \
+                -e "close" \
+                -e "open" \
+                -e "update without registering applications" \
+                -e "delay 1" \
+                -e "end tell" \
+                -e "end tell" \
+                -e "end tell" || true
+            fi
+
             hdiutil detach "${mount_point}"
             trap - EXIT
 
