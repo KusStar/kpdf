@@ -189,13 +189,6 @@ impl I18n {
         }
     }
 
-    pub fn page_badge(self, page_num: usize) -> String {
-        match self.lang {
-            Language::ZhCn => format!("第 {} 页", page_num),
-            Language::EnUs => format!("Page {}", page_num),
-        }
-    }
-
     pub fn open_pdf_prompt(self) -> &'static str {
         match self.lang {
             Language::ZhCn => "打开 PDF",

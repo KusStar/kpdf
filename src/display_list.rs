@@ -317,20 +317,6 @@ impl PdfViewer {
                                     .into_any_element()
                             }),
                     )
-                    .child(
-                        div()
-                            .absolute()
-                            .left_2()
-                            .top_2()
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .bg(cx.theme().background.opacity(0.9))
-                            .text_xs()
-                            .font_medium()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(i18n.page_badge(page.index + 1)),
-                    ),
             )
             .into_any_element()
     }
