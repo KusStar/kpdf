@@ -17,15 +17,14 @@ impl PdfViewer {
         let active_page = self.active_tab_active_page();
 
         div()
-            .h_10()
-            .w_full()
-            .px_3()
+            .id("title-nav-bar")
+            .h_full()
+            .flex_1()
+            .min_w(px(0.))
+            .px_1()
             .flex()
             .items_center()
             .justify_between()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().background)
             .child(
                 div()
                     .flex()
