@@ -162,23 +162,6 @@ jobs:
 
           echo "MACOS_SIGNING_IDENTITY=${identity}" >> "${GITHUB_ENV}"
 
-      - name: Inject macOS signing identity into Cargo metadata
-        if: matrix.platform == 'macos'
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ -z "${MACOS_SIGNING_IDENTITY:-}" ]]; then
-            echo "::error::Missing MACOS_SIGNING_IDENTITY after certificate import."
-            exit 1
-          fi
-
-          {
-            echo
-            echo "[package.metadata.packager.macos]"
-            printf 'signing-identity = "%s"\n' "${MACOS_SIGNING_IDENTITY}"
-          } >> Cargo.toml
-
       - name: Package
         shell: bash
         run: cargo packager --release
