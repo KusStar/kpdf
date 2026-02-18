@@ -3091,9 +3091,11 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "pdfium-render",
+ "raw-window-handle",
  "rust-embed",
  "sled",
  "tklog",
+ "windows 0.61.3",
 ]
 
 [[package]]

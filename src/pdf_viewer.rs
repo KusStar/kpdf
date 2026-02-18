@@ -27,12 +27,18 @@ use gpui_component::input::{InputEvent, InputState};
 use gpui_component::popover::{Popover, PopoverState};
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use gpui_component::{button::*, *};
+#[cfg(target_os = "windows")]
+use raw_window_handle::RawWindowHandle;
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use std::time::Duration;
+#[cfg(target_os = "windows")]
+use windows::Win32::Foundation::HWND;
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::{SW_RESTORE, ShowWindowAsync};
 
 // 定义拖放状态
 #[derive(Debug, Clone)]
@@ -91,6 +97,34 @@ const TITLE_BAR_CONTENT_LEFT_PADDING: f32 = 80.0;
 const TITLE_BAR_CONTENT_LEFT_PADDING: f32 = 12.0;
 
 pub use self::utils::PageSummary;
+
+#[cfg(target_os = "windows")]
+fn restore_window_native(window: &Window) -> bool {
+    let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(window) else {
+        return false;
+    };
+
+    let RawWindowHandle::Win32(win32) = handle.as_raw() else {
+        return false;
+    };
+
+    // raw-window-handle guarantees non-zero HWND for Win32 handles.
+    let hwnd = HWND(win32.hwnd.get() as _);
+    unsafe {
+        ShowWindowAsync(hwnd, SW_RESTORE).as_bool()
+    }
+}
+
+fn zoom_or_restore_window(window: &Window) {
+    #[cfg(target_os = "windows")]
+    {
+        if window.is_maximized() && restore_window_native(window) {
+            return;
+        }
+    }
+
+    window.zoom_window();
+}
 
 pub struct PdfViewer {
     focus_handle: FocusHandle,
@@ -3091,7 +3125,7 @@ impl Render for PdfViewer {
                                                             .text_color(cx.theme().foreground),
                                                         )
                                                         .on_click(|_, window, _| {
-                                                            window.zoom_window()
+                                                            zoom_or_restore_window(window)
                                                         }),
                                                 )
                                                 .child(
