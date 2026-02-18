@@ -22,6 +22,9 @@ https://github.com/bblanchon/pdfium-binaries/releases/tag/chromium
 Options:
   -o, --output-dir <dir>   Output directory for the dynamic library (default: ./lib)
   -h, --help               Show this help message
+
+Environment:
+  GITHUB_TOKEN / GH_TOKEN  Optional token to avoid GitHub API rate limits
 EOF
 }
 
@@ -114,16 +117,38 @@ decode_tag_component() {
   printf '%s\n' "${tag}"
 }
 
+curl_github() {
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    curl -H "Authorization: Bearer ${GITHUB_TOKEN}" "$@"
+  elif [[ -n "${GH_TOKEN:-}" ]]; then
+    curl -H "Authorization: Bearer ${GH_TOKEN}" "$@"
+  else
+    curl "$@"
+  fi
+}
+
 resolve_download_tag() {
   local raw_tag
   raw_tag="$(
-    curl -fsSL --retry 3 --retry-delay 1 -H "Accept: application/vnd.github+json" \
+    curl_github -fsSL --retry 3 --retry-delay 1 -A "kpdf-pdfium-fetch/1.0" \
+      -H "Accept: application/vnd.github+json" \
       "https://api.github.com/repos/${REPO}/releases?per_page=100" \
       | grep -Eo '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
       | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/' \
       | grep '^chromium/' \
       | head -n 1 || true
   )"
+
+  if [[ -z "${raw_tag}" ]]; then
+    raw_tag="$(
+      curl_github -fsSL --retry 3 --retry-delay 1 -A "kpdf-pdfium-fetch/1.0" \
+        -H "Accept: application/vnd.github+json" \
+        "https://api.github.com/repos/${REPO}/releases/latest" \
+        | grep -Eo '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+        | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/' \
+        | head -n 1 || true
+    )"
+  fi
 
   if [[ -z "${raw_tag}" ]]; then
     raw_tag="${TAG_ALIAS}"
@@ -152,7 +177,28 @@ download_asset() {
   for asset in "$@"; do
     local url="https://github.com/${REPO}/releases/download/${tag}/${asset}"
     printf 'Trying tag/asset: %s / %s\n' "$(decode_tag_component "${tag}")" "${asset}" >&2
-    if curl -fsSL --retry 3 --retry-delay 1 -A "kpdf-pdfium-fetch/1.0" "${url}" -o "${archive}"; then
+    if curl_github -fsSL --retry 3 --retry-delay 1 -A "kpdf-pdfium-fetch/1.0" "${url}" -o "${archive}"; then
+      selected="${asset}"
+      break
+    fi
+  done
+
+  if [[ -z "${selected}" ]]; then
+    return 1
+  fi
+
+  printf '%s\n' "${selected}"
+}
+
+download_latest_asset() {
+  local archive="$1"
+  shift
+  local selected=""
+
+  for asset in "$@"; do
+    local url="https://github.com/${REPO}/releases/latest/download/${asset}"
+    printf 'Trying latest asset: %s\n' "${asset}" >&2
+    if curl_github -fsSL --retry 3 --retry-delay 1 -A "kpdf-pdfium-fetch/1.0" "${url}" -o "${archive}"; then
       selected="${asset}"
       break
     fi
@@ -229,13 +275,17 @@ main() {
   extract_dir="${TMP_DIR}/extract"
   mkdir -p "${extract_dir}"
 
-  resolve_download_tag
-  if selected_asset="$(download_asset "${archive}" "${TAG_ENCODED}" "${CANDIDATES[@]}")"; then
-    selected_tag="${TAG_ENCODED}"
-  elif selected_asset="$(download_asset "${archive}" "$(url_encode_tag "${TAG_ALIAS}")" "${CANDIDATES[@]}")"; then
-    selected_tag="$(url_encode_tag "${TAG_ALIAS}")"
+  if selected_asset="$(download_latest_asset "${archive}" "${CANDIDATES[@]}")"; then
+    selected_tag="latest"
   else
-    die "Could not download a matching asset from tag alias '${TAG_ALIAS}'."
+    resolve_download_tag
+    if selected_asset="$(download_asset "${archive}" "${TAG_ENCODED}" "${CANDIDATES[@]}")"; then
+      selected_tag="${TAG_ENCODED}"
+    elif selected_asset="$(download_asset "${archive}" "$(url_encode_tag "${TAG_ALIAS}")" "${CANDIDATES[@]}")"; then
+      selected_tag="$(url_encode_tag "${TAG_ALIAS}")"
+    else
+      die "Could not download a matching asset from latest release or tag alias '${TAG_ALIAS}'."
+    fi
   fi
 
   tar -xzf "${archive}" -C "${extract_dir}"

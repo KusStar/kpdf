@@ -162,7 +162,7 @@ exit /b 1
 
 :resolve_tag
 set "TAG_RAW="
-for /f "usebackq delims=" %%T in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { $headers = @{ 'User-Agent' = 'kpdf-pdfium-fetch-bat/1.0' }; $releases = Invoke-RestMethod -Uri 'https://api.github.com/repos/%REPO%/releases?per_page=100' -Headers $headers; $tag = ($releases | ForEach-Object { $_.tag_name } | Where-Object { $_ -like 'chromium/*' } | Select-Object -First 1); if (-not $tag) { $tag = '%TAG_ALIAS%' }; $tag } catch { '%TAG_ALIAS%' }"`) do (
+for /f "usebackq delims=" %%T in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { $headers = @{ 'User-Agent' = 'kpdf-pdfium-fetch-bat/1.0' }; if ($env:GITHUB_TOKEN) { $headers['Authorization'] = 'Bearer ' + $env:GITHUB_TOKEN } elseif ($env:GH_TOKEN) { $headers['Authorization'] = 'Bearer ' + $env:GH_TOKEN }; $releases = Invoke-RestMethod -Uri 'https://api.github.com/repos/%REPO%/releases?per_page=100' -Headers $headers; $tag = ($releases | ForEach-Object { $_.tag_name } | Where-Object { $_ -like 'chromium/*' } | Select-Object -First 1); if (-not $tag) { $tag = '%TAG_ALIAS%' }; $tag } catch { '%TAG_ALIAS%' }"`) do (
   set "TAG_RAW=%%T"
 )
 if not defined TAG_RAW set "TAG_RAW=%TAG_ALIAS%"
@@ -210,7 +210,7 @@ if not defined ASSET exit /b 1
 set "URL=https://github.com/%REPO%/releases/download/!TAG_ENCODED!/!ASSET!"
 echo Trying tag/asset: !TAG_DISPLAY! / !ASSET!
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; try { Invoke-WebRequest -Uri '!URL!' -OutFile '!ARCHIVE!' -Headers @{ 'User-Agent' = 'kpdf-pdfium-fetch-bat/1.0' } -ErrorAction Stop; exit 0 } catch { exit 1 }" >nul
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference='SilentlyContinue'; try { $headers = @{ 'User-Agent' = 'kpdf-pdfium-fetch-bat/1.0' }; if ($env:GITHUB_TOKEN) { $headers['Authorization'] = 'Bearer ' + $env:GITHUB_TOKEN } elseif ($env:GH_TOKEN) { $headers['Authorization'] = 'Bearer ' + $env:GH_TOKEN }; Invoke-WebRequest -Uri '!URL!' -OutFile '!ARCHIVE!' -Headers $headers -ErrorAction Stop; exit 0 } catch { exit 1 }" >nul
 if errorlevel 1 exit /b 1
 
 set "SELECTED_ASSET=!ASSET!"

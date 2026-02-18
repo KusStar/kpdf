@@ -70,6 +70,8 @@ jobs:
       - name: Fetch PDFium (macOS)
         if: matrix.platform == 'macos'
         shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           chmod +x ./scripts/fetch_pdfium_lib.sh
           ./scripts/fetch_pdfium_lib.sh -o ./lib
@@ -77,6 +79,8 @@ jobs:
       - name: Fetch PDFium (Windows)
         if: matrix.platform == 'windows'
         shell: cmd
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: .\scripts\fetch_pdfium_lib.bat -o .\lib
 
       - name: Package
