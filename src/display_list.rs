@@ -316,7 +316,7 @@ impl PdfViewer {
                                     .opacity(0.3)
                                     .into_any_element()
                             }),
-                    )
+                    ),
             )
             .into_any_element()
     }

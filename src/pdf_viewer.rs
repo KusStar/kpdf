@@ -2656,6 +2656,13 @@ impl PdfViewer {
                         for (index, tab) in tabs_to_show.iter().enumerate() {
                             let tab_id = tab.id;
                             let is_active = active_tab_id == Some(tab_id);
+                            let is_drag_source = matches!(
+                                self.drag_state,
+                                DragState::Started { source_tab_id, .. } if source_tab_id == tab_id
+                            ) || matches!(
+                                self.drag_state,
+                                DragState::Over { source_tab_id, .. } if source_tab_id == tab_id
+                            );
                             let show_close_button = is_active || self.hovered_tab_id == Some(tab_id);
                             let close_icon_color = if show_close_button {
                                 cx.theme().muted_foreground
@@ -2689,7 +2696,6 @@ impl PdfViewer {
                                     .items_center()
                                     .gap_2()
                                     .rounded_md()
-                                    .cursor_grab()
                                     .when(is_active, |this| this.bg(cx.theme().secondary.opacity(0.85)))
                                     .when(!is_active, |this| {
                                         this.hover(|this| this.bg(cx.theme().secondary.opacity(0.3)))
@@ -2806,6 +2812,8 @@ impl PdfViewer {
                                             this.switch_to_tab(tab_id, cx);
                                         }
                                     }))
+                                    .when(is_drag_source, |this| this.cursor_grab())
+                                    .when(!is_drag_source, |this| this.cursor_pointer())
                                     .into_any_element(),
                             );
                         }
