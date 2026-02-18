@@ -1,3 +1,5 @@
+#![cfg_attr(target_os = "macos", allow(unexpected_cfgs))]
+
 pub mod i18n;
 pub mod icons;
 pub mod logger;

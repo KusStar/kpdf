@@ -3083,10 +3083,12 @@ name = "kpdf"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cocoa 0.26.0",
  "gpui",
  "gpui-component",
  "gpui-component-assets",
  "image",
+ "objc",
  "pdfium-render",
  "rust-embed",
  "sled",

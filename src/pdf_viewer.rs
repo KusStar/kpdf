@@ -2,6 +2,9 @@
 mod command_panel;
 #[path = "display_list.rs"]
 mod display_list;
+#[cfg(target_os = "macos")]
+#[path = "macos_context_menu.rs"]
+mod macos_context_menu;
 #[path = "menu_bar.rs"]
 mod menu_bar;
 #[path = "tab.rs"]
@@ -2271,10 +2274,46 @@ impl PdfViewer {
             return;
         }
 
-        self.context_menu_open = true;
-        self.context_menu_position = Some(position);
-        self.context_menu_tab_id = Some(tab_id);
-        cx.notify();
+        #[cfg(target_os = "macos")]
+        {
+            let _ = position;
+            let i18n = self.i18n();
+            let can_close_others = self.tab_bar.tabs().len() > 1;
+            let can_reveal = self
+                .tab_bar
+                .tabs()
+                .iter()
+                .any(|tab| tab.id == tab_id && tab.path.is_some());
+            self.close_context_menu(cx);
+            if let Some(action) = self::macos_context_menu::show_tab_context_menu(
+                i18n.close_all_tabs_button(),
+                i18n.close_other_tabs_button(),
+                i18n.reveal_in_file_manager_button(),
+                can_close_others,
+                can_reveal,
+            ) {
+                match action {
+                    self::macos_context_menu::MacTabContextMenuAction::CloseAllTabs => {
+                        self.close_all_tabs(cx);
+                    }
+                    self::macos_context_menu::MacTabContextMenuAction::CloseOtherTabs => {
+                        self.close_other_tabs(tab_id, cx);
+                    }
+                    self::macos_context_menu::MacTabContextMenuAction::RevealInFinder => {
+                        self.reveal_tab_in_file_manager(tab_id);
+                    }
+                }
+            }
+            return;
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.context_menu_open = true;
+            self.context_menu_position = Some(position);
+            self.context_menu_tab_id = Some(tab_id);
+            cx.notify();
+        }
     }
 
     pub fn close_context_menu(&mut self, cx: &mut Context<Self>) {
