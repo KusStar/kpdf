@@ -2588,7 +2588,7 @@ impl PdfViewer {
             .w_full()
             .border_b_1()
             .border_color(cx.theme().border)
-            .bg(cx.theme().background)
+            .bg(cx.theme().secondary)
             .flex()
             .items_center()
             .px_3()
@@ -2696,9 +2696,10 @@ impl PdfViewer {
                                     .items_center()
                                     .gap_2()
                                     .rounded_md()
-                                    .when(is_active, |this| this.bg(cx.theme().secondary.opacity(0.85)))
+                                    .bg(cx.theme().secondary)
+                                    .when(is_active, |this| this.bg(cx.theme().background))
                                     .when(!is_active, |this| {
-                                        this.hover(|this| this.bg(cx.theme().secondary.opacity(0.3)))
+                                        this.hover(|this| this.bg(cx.theme().secondary.opacity(0.85)))
                                     })
                                     .on_hover({
                                         let viewer = cx.entity();
