@@ -162,6 +162,27 @@ jobs:
 
           echo "MACOS_SIGNING_IDENTITY=${identity}" >> "${GITHUB_ENV}"
 
+      - name: Inject macOS-only pre-package hook
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("Cargo.toml")
+          text = path.read_text(encoding="utf-8")
+          marker = "[package.metadata.packager]\n"
+          hook = 'before-each-package-command = "bash ./scripts/sign_app_before_dmg.sh"\n'
+
+          if marker not in text:
+              raise SystemExit("Missing [package.metadata.packager] section in Cargo.toml")
+
+          if hook not in text:
+              text = text.replace(marker, marker + hook, 1)
+              path.write_text(text, encoding="utf-8")
+          PY
+
       - name: Package
         shell: bash
         run: |
