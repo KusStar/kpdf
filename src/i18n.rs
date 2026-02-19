@@ -119,6 +119,13 @@ impl I18n {
         }
     }
 
+    pub fn check_updates_button(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "检查更新...",
+            Language::EnUs => "Check for Updates...",
+        }
+    }
+
     pub fn about_dialog_title(self) -> &'static str {
         match self.lang {
             Language::ZhCn => "关于",
@@ -144,6 +151,55 @@ impl I18n {
         match self.lang {
             Language::ZhCn => "官网",
             Language::EnUs => "Website",
+        }
+    }
+
+    pub fn updates_label(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "更新",
+            Language::EnUs => "Updates",
+        }
+    }
+
+    pub fn update_status_idle(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "尚未检查",
+            Language::EnUs => "Not checked yet",
+        }
+    }
+
+    pub fn update_status_checking(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "正在检查更新...",
+            Language::EnUs => "Checking for updates...",
+        }
+    }
+
+    pub fn update_status_up_to_date(self, version: &str) -> String {
+        match self.lang {
+            Language::ZhCn => format!("当前已是最新版本（{}）", version),
+            Language::EnUs => format!("You're up to date ({version})"),
+        }
+    }
+
+    pub fn update_status_available(self, version: &str) -> String {
+        match self.lang {
+            Language::ZhCn => format!("发现新版本：{}", version),
+            Language::EnUs => format!("Update available: {version}"),
+        }
+    }
+
+    pub fn update_status_failed(self, message: &str) -> String {
+        match self.lang {
+            Language::ZhCn => format!("检查失败：{}", message),
+            Language::EnUs => format!("Check failed: {message}"),
+        }
+    }
+
+    pub fn download_update_button(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "下载更新",
+            Language::EnUs => "Download Update",
         }
     }
 

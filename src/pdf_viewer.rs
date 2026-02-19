@@ -18,8 +18,8 @@ mod utils;
 
 use crate::i18n::{I18n, Language};
 use crate::{
-    APP_REPOSITORY_URL, DisableLoggingMenu, EnableLoggingMenu, OpenLogsMenu, ShowAboutMenu,
-    configure_app_menus,
+    APP_REPOSITORY_URL, CheckForUpdatesMenu, DisableLoggingMenu, EnableLoggingMenu, OpenLogsMenu,
+    ShowAboutMenu, configure_app_menus, updater,
 };
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
@@ -96,6 +96,22 @@ const TITLE_BAR_CONTENT_LEFT_PADDING: f32 = 80.0;
 #[cfg(not(target_os = "macos"))]
 const TITLE_BAR_CONTENT_LEFT_PADDING: f32 = 12.0;
 
+#[derive(Debug, Clone)]
+enum UpdaterUiState {
+    Idle,
+    Checking,
+    UpToDate {
+        latest_version: String,
+    },
+    Available {
+        latest_version: String,
+        download_url: String,
+    },
+    Error {
+        message: String,
+    },
+}
+
 pub use self::utils::PageSummary;
 
 #[cfg(target_os = "windows")]
@@ -110,9 +126,7 @@ fn restore_window_native(window: &Window) -> bool {
 
     // raw-window-handle guarantees non-zero HWND for Win32 handles.
     let hwnd = HWND(win32.hwnd.get() as _);
-    unsafe {
-        ShowWindowAsync(hwnd, SW_RESTORE).as_bool()
-    }
+    unsafe { ShowWindowAsync(hwnd, SW_RESTORE).as_bool() }
 }
 
 fn zoom_or_restore_window(window: &Window) {
@@ -143,6 +157,7 @@ pub struct PdfViewer {
     recent_popup_hover_epoch: u64,
     recent_popup_anchor: Option<RecentPopupAnchor>,
     about_dialog_open: bool,
+    updater_state: UpdaterUiState,
     command_panel_open: bool,
     command_panel_query: String,
     command_panel_selected_index: usize,
@@ -240,6 +255,7 @@ impl PdfViewer {
             recent_popup_hover_epoch: 0,
             recent_popup_anchor: None,
             about_dialog_open: false,
+            updater_state: UpdaterUiState::Idle,
             command_panel_open: false,
             command_panel_query: String::new(),
             command_panel_selected_index: 0,
@@ -821,6 +837,77 @@ impl PdfViewer {
         }
     }
 
+    fn summarize_updater_error(raw: &str) -> String {
+        const MAX_LEN: usize = 88;
+        let mut message = raw
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or(raw)
+            .trim()
+            .to_string();
+        if message.is_empty() {
+            message = "unknown error".to_string();
+        }
+        if message.len() > MAX_LEN {
+            message.truncate(MAX_LEN - 3);
+            message.push_str("...");
+        }
+        message
+    }
+
+    fn updater_status_text(&self) -> String {
+        let i18n = self.i18n();
+        match &self.updater_state {
+            UpdaterUiState::Idle => i18n.update_status_idle().to_string(),
+            UpdaterUiState::Checking => i18n.update_status_checking().to_string(),
+            UpdaterUiState::UpToDate { latest_version } => {
+                i18n.update_status_up_to_date(latest_version)
+            }
+            UpdaterUiState::Available { latest_version, .. } => {
+                i18n.update_status_available(latest_version)
+            }
+            UpdaterUiState::Error { message } => i18n.update_status_failed(message),
+        }
+    }
+
+    fn check_for_updates(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.updater_state, UpdaterUiState::Checking) {
+            return;
+        }
+
+        self.updater_state = UpdaterUiState::Checking;
+        cx.notify();
+
+        cx.spawn(async move |view, cx| {
+            let update_result = cx
+                .background_executor()
+                .spawn(async move { updater::check_for_updates(env!("CARGO_PKG_VERSION")) })
+                .await;
+
+            let _ = view.update(cx, |this, cx| {
+                match update_result {
+                    Ok(updater::UpdateCheck::UpToDate { latest_version }) => {
+                        this.updater_state = UpdaterUiState::UpToDate { latest_version };
+                    }
+                    Ok(updater::UpdateCheck::UpdateAvailable(info)) => {
+                        this.updater_state = UpdaterUiState::Available {
+                            latest_version: info.latest_version,
+                            download_url: info.download_url,
+                        };
+                    }
+                    Err(err) => {
+                        crate::debug_log!("[updater] check failed: {}", err);
+                        this.updater_state = UpdaterUiState::Error {
+                            message: Self::summarize_updater_error(&err.to_string()),
+                        };
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn open_about_dialog(&mut self, cx: &mut Context<Self>) {
         if self.command_panel_open {
             self.close_command_panel(cx);
@@ -849,6 +936,12 @@ impl PdfViewer {
 
         let i18n = self.i18n();
         let version = env!("CARGO_PKG_VERSION");
+        let updater_status = self.updater_status_text();
+        let updater_download_url = match &self.updater_state {
+            UpdaterUiState::Available { download_url, .. } => Some(download_url.clone()),
+            _ => None,
+        };
+        let updater_is_checking = matches!(self.updater_state, UpdaterUiState::Checking);
 
         Some(
             div()
@@ -955,6 +1048,25 @@ impl PdfViewer {
                                                         .text_color(cx.theme().foreground)
                                                         .child(APP_REPOSITORY_URL),
                                                 ),
+                                        )
+                                        .child(
+                                            div()
+                                                .v_flex()
+                                                .items_start()
+                                                .gap_1()
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .text_color(cx.theme().muted_foreground)
+                                                        .child(i18n.updates_label()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .text_color(cx.theme().foreground)
+                                                        .whitespace_normal()
+                                                        .child(updater_status),
+                                                ),
                                         ),
                                 )
                                 .child(
@@ -965,6 +1077,34 @@ impl PdfViewer {
                                         .justify_end()
                                         .gap_2()
                                         .child(
+                                            Button::new("about-open-website")
+                                                .small()
+                                                .label(i18n.open_website_button())
+                                                .on_click(|_, _, cx| {
+                                                    cx.open_url(APP_REPOSITORY_URL);
+                                                }),
+                                        )
+                                        .child(
+                                            Button::new("about-check-updates")
+                                                .small()
+                                                .ghost()
+                                                .label(i18n.check_updates_button())
+                                                .disabled(updater_is_checking)
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.check_for_updates(cx);
+                                                })),
+                                        )
+                                        .when_some(updater_download_url, |this, download_url| {
+                                            this.child(
+                                                Button::new("about-download-update")
+                                                    .small()
+                                                    .label(i18n.download_update_button())
+                                                    .on_click(move |_, _, cx| {
+                                                        cx.open_url(download_url.as_str());
+                                                    }),
+                                            )
+                                        })
+                                        .child(
                                             Button::new("about-close")
                                                 .small()
                                                 .ghost()
@@ -972,14 +1112,6 @@ impl PdfViewer {
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     this.close_about_dialog(cx);
                                                 })),
-                                        )
-                                        .child(
-                                            Button::new("about-open-website")
-                                                .small()
-                                                .label(i18n.open_website_button())
-                                                .on_click(|_, _, cx| {
-                                                    cx.open_url(APP_REPOSITORY_URL);
-                                                }),
                                         ),
                                 ),
                         ),
@@ -2979,6 +3111,10 @@ impl Render for PdfViewer {
             .size_full()
             .on_action(cx.listener(|this, _: &ShowAboutMenu, _, cx| {
                 this.open_about_dialog(cx);
+            }))
+            .on_action(cx.listener(|this, _: &CheckForUpdatesMenu, _, cx| {
+                this.open_about_dialog(cx);
+                this.check_for_updates(cx);
             }))
             .on_action(cx.listener(|this, _: &EnableLoggingMenu, _, cx| {
                 if crate::logger::enable_file_logging() {

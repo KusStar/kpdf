@@ -7,6 +7,7 @@ pub mod i18n;
 pub mod icons;
 pub mod logger;
 mod pdf_viewer;
+mod updater;
 
 use gpui::*;
 use gpui_component::*;
@@ -21,6 +22,7 @@ gpui::actions!(
     kpdf,
     [
         ShowAboutMenu,
+        CheckForUpdatesMenu,
         EnableLoggingMenu,
         DisableLoggingMenu,
         OpenLogsMenu
@@ -30,6 +32,7 @@ gpui::actions!(
 pub(crate) fn configure_app_menus(cx: &mut App, i18n: i18n::I18n) {
     let mut items = vec![
         MenuItem::action(i18n.about_button(), ShowAboutMenu),
+        MenuItem::action(i18n.check_updates_button(), CheckForUpdatesMenu),
         MenuItem::separator(),
     ];
 

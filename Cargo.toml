@@ -10,6 +10,9 @@ gpui-component = "0.5.1"
 gpui-component-assets = "0.5.1"
 pdfium-render = { version = "0.8.37", features = ["sync"] }
 image = "0.25.9"
+reqwest = { version = "0.12.28", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+semver = "1.0.26"
+serde = { version = "1.0.228", features = ["derive"] }
 sled = "0.34.7"
 rust-embed = "8.11.0"
 tklog = "0.3.0"
