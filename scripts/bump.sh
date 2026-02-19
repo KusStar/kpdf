@@ -1,0 +1,1 @@
+bump-version Cargo.toml --bump-type $1 --commit --tag
