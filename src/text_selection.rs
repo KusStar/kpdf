@@ -426,23 +426,22 @@ pub fn copy_to_clipboard(text: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(target_os = "linux")]
 pub fn copy_to_clipboard(text: &str) -> Result<(), Box<dyn std::error::Error>> {
-    use std::process::Command;
-
-    let mut echo = Command::new("echo")
-        .arg("-n")
-        .arg(text)
-        .stdout(std::process::Stdio::piped())
-        .spawn()?;
-
-    let echo_stdout = echo.stdout.take().ok_or("Failed to get echo stdout")?;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
 
     let mut clipboard_cmd = Command::new("xclip")
         .args(["-selection", "clipboard"])
-        .stdin(echo_stdout)
+        .stdin(Stdio::piped())
         .spawn()
-        .or_else(|_| Command::new("wl-copy").stdin(echo_stdout).spawn())?;
+        .or_else(|_| Command::new("wl-copy").stdin(Stdio::piped()).spawn())?;
 
-    echo.wait()?;
+    let mut stdin = clipboard_cmd
+        .stdin
+        .take()
+        .ok_or("Failed to get clipboard command stdin")?;
+    stdin.write_all(text.as_bytes())?;
+    drop(stdin);
+
     clipboard_cmd.wait()?;
 
     crate::debug_log!("[clipboard] Copied {} characters on Linux", text.len());
