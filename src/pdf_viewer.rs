@@ -3167,126 +3167,152 @@ impl Render for PdfViewer {
                                     .id("title-bar-top")
                                     .h(px(TITLE_BAR_HEIGHT))
                                     .w_full()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
+                                    .relative()
                                     .border_b_1()
                                     .border_color(cx.theme().title_bar_border)
-                                    .child(
-                                        div()
-                                            .id("title-nav-host")
-                                            .h_full()
-                                            .flex_1()
-                                            .pl(px(TITLE_BAR_CONTENT_LEFT_PADDING))
-                                            .pr_1()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .child(self.render_menu_bar(
-                                                page_count,
-                                                current_page_num,
-                                                zoom_label,
-                                                cx,
-                                            )),
-                                    )
-                                    .child(
-                                        div()
-                                            .id("title-drag-area")
-                                            .h_full()
-                                            .w(px(24.))
-                                            .flex_shrink_0()
-                                            .when(cfg!(target_os = "macos"), |this| {
-                                                this.on_double_click(|_, window, _| {
-                                                    window.titlebar_double_click()
-                                                })
-                                            })
-                                            .when(!cfg!(target_os = "macos"), |this| {
-                                                let should_move = Rc::new(Cell::new(false));
-                                                this.on_double_click(|_, window, _| {
-                                                    window.zoom_window()
-                                                })
-                                                .on_mouse_down(MouseButton::Left, {
-                                                    let should_move = should_move.clone();
-                                                    move |_, _, _| {
-                                                        should_move.set(true);
-                                                    }
-                                                })
-                                                .on_mouse_down_out({
-                                                    let should_move = should_move.clone();
-                                                    move |_, _, _| {
-                                                        should_move.set(false);
-                                                    }
-                                                })
-                                                .on_mouse_up(MouseButton::Left, {
-                                                    let should_move = should_move.clone();
-                                                    move |_, _, _| {
-                                                        should_move.set(false);
-                                                    }
-                                                })
-                                                .on_mouse_move({
-                                                    let should_move = should_move.clone();
-                                                    move |_, window, _| {
-                                                        if should_move.get() {
-                                                            should_move.set(false);
-                                                            window.start_window_move();
-                                                        }
-                                                    }
-                                                })
-                                            })
-                                            .window_control_area(WindowControlArea::Drag),
-                                    )
-                                    .when(!cfg!(target_os = "macos"), |this| {
+                                    .when(cfg!(target_os = "macos"), |this| {
                                         this.child(
                                             div()
-                                                .h_full()
-                                                .pr_1()
-                                                .flex()
-                                                .items_center()
-                                                .gap_1()
-                                                .child(
-                                                    Button::new("window-minimize")
-                                                        .ghost()
-                                                        .small()
-                                                        .icon(
-                                                            Icon::new(
-                                                                crate::icons::IconName::WindowMinimize,
-                                                            )
-                                                            .text_color(cx.theme().foreground),
-                                                        )
-                                                        .on_click(|_, window, _| {
-                                                            window.minimize_window()
-                                                        }),
-                                                )
-                                                .child(
-                                                    Button::new("window-maximize")
-                                                        .ghost()
-                                                        .small()
-                                                        .icon(
-                                                            Icon::new(if window.is_maximized() {
-                                                                crate::icons::IconName::WindowRestore
-                                                            } else {
-                                                                crate::icons::IconName::WindowMaximize
-                                                            })
-                                                            .text_color(cx.theme().foreground),
-                                                        )
-                                                        .on_click(|_, window, _| {
-                                                            zoom_or_restore_window(window)
-                                                        }),
-                                                )
-                                                .child(
-                                                    Button::new("window-close")
-                                                        .ghost()
-                                                        .small()
-                                                        .icon(
-                                                            Icon::new(crate::icons::IconName::WindowClose)
-                                                                .text_color(cx.theme().foreground),
-                                                        )
-                                                        .on_click(|_, window, _| {
-                                                            window.remove_window()
-                                                        }),
-                                                ),
+                                                .id("title-drag-area")
+                                                .absolute()
+                                                .top_0()
+                                                .left_0()
+                                                .right_0()
+                                                .bottom_0()
+                                                .on_double_click(|_, window, _| {
+                                                    window.titlebar_double_click()
+                                                })
+                                                .window_control_area(WindowControlArea::Drag),
                                         )
-                                    }),
+                                    })
+                                    .child(
+                                        div()
+                                            .id("title-bar-foreground")
+                                            .h_full()
+                                            .w_full()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .child(
+                                                div()
+                                                    .id("title-nav-host")
+                                                    .h_full()
+                                                    .flex_1()
+                                                    .pl(px(TITLE_BAR_CONTENT_LEFT_PADDING))
+                                                    .pr_1()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(self.render_menu_bar(
+                                                        page_count,
+                                                        current_page_num,
+                                                        zoom_label,
+                                                        cx,
+                                                    )),
+                                            )
+                                            .when(!cfg!(target_os = "macos"), |this| {
+                                                this.child(
+                                                    div()
+                                                        .id("title-drag-area")
+                                                        .h_full()
+                                                        .w(px(24.))
+                                                        .flex_shrink_0()
+                                                        .map(|this| {
+                                                            let should_move =
+                                                                Rc::new(Cell::new(false));
+                                                            this.on_double_click(
+                                                                |_, window, _| window.zoom_window(),
+                                                            )
+                                                            .on_mouse_down(MouseButton::Left, {
+                                                                let should_move =
+                                                                    should_move.clone();
+                                                                move |_, _, _| {
+                                                                    should_move.set(true);
+                                                                }
+                                                            })
+                                                            .on_mouse_down_out({
+                                                                let should_move =
+                                                                    should_move.clone();
+                                                                move |_, _, _| {
+                                                                    should_move.set(false);
+                                                                }
+                                                            })
+                                                            .on_mouse_up(MouseButton::Left, {
+                                                                let should_move =
+                                                                    should_move.clone();
+                                                                move |_, _, _| {
+                                                                    should_move.set(false);
+                                                                }
+                                                            })
+                                                            .on_mouse_move({
+                                                                let should_move =
+                                                                    should_move.clone();
+                                                                move |_, window, _| {
+                                                                    if should_move.get() {
+                                                                        should_move.set(false);
+                                                                        window.start_window_move();
+                                                                    }
+                                                                }
+                                                            })
+                                                            .window_control_area(
+                                                                WindowControlArea::Drag,
+                                                            )
+                                                        }),
+                                                )
+                                            })
+                                            .when(!cfg!(target_os = "macos"), |this| {
+                                                this.child(
+                                                    div()
+                                                        .h_full()
+                                                        .pr_1()
+                                                        .flex()
+                                                        .items_center()
+                                                        .gap_1()
+                                                        .child(
+                                                            Button::new("window-minimize")
+                                                                .ghost()
+                                                                .small()
+                                                                .icon(
+                                                                    Icon::new(
+                                                                        crate::icons::IconName::WindowMinimize,
+                                                                    )
+                                                                    .text_color(cx.theme().foreground),
+                                                                )
+                                                                .on_click(|_, window, _| {
+                                                                    window.minimize_window()
+                                                                }),
+                                                        )
+                                                        .child(
+                                                            Button::new("window-maximize")
+                                                                .ghost()
+                                                                .small()
+                                                                .icon(
+                                                                    Icon::new(if window.is_maximized() {
+                                                                        crate::icons::IconName::WindowRestore
+                                                                    } else {
+                                                                        crate::icons::IconName::WindowMaximize
+                                                                    })
+                                                                    .text_color(cx.theme().foreground),
+                                                                )
+                                                                .on_click(|_, window, _| {
+                                                                    zoom_or_restore_window(window)
+                                                                }),
+                                                        )
+                                                        .child(
+                                                            Button::new("window-close")
+                                                                .ghost()
+                                                                .small()
+                                                                .icon(
+                                                                    Icon::new(crate::icons::IconName::WindowClose)
+                                                                        .text_color(cx.theme().foreground),
+                                                                )
+                                                                .on_click(|_, window, _| {
+                                                                    window.remove_window()
+                                                                }),
+                                                        ),
+                                                )
+                                            }),
+                                    )
                             )
                             .child(self.render_tab_bar(cx))
                     )
