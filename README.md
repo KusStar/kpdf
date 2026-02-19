@@ -2,7 +2,15 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-<img src="assets/app.png" alt="kPDF Icon" width="256" />
+<p align="center">
+  <img src="assets/app.png" alt="kPDF Icon" width="192" />
+</p>
+
+<p align="center">
+  <a href="https://github.com/KusStar/kpdf/releases">
+    <img src="https://img.shields.io/badge/Download-Releases-2ea44f?style=for-the-badge" alt="Download" />
+  </a>
+</p>
 
 kPDF is a lightweight desktop PDF viewer built with Rust + GPUI, focused on smooth reading, fast file switching, and session restore.
 
@@ -34,6 +42,7 @@ kPDF is a lightweight desktop PDF viewer built with Rust + GPUI, focused on smoo
 - Rust (Edition 2024)
 - [gpui](https://crates.io/crates/gpui) / [gpui-component](https://crates.io/crates/gpui-component)
 - [pdfium-render](https://crates.io/crates/pdfium-render) for PDF rendering
+- [pdfium-binaries](https://github.com/bblanchon/pdfium-binaries/releases)
 - [sled](https://crates.io/crates/sled) for local state persistence
 
 ## Requirements
@@ -50,12 +59,6 @@ kPDF searches Pdfium in this order:
 2. App resources and `lib` near the executable
 3. Current working directory and `./lib`
 4. System library path
-
-This repository already includes the macOS library at `lib/libpdfium.dylib`.
-
-### Linux clipboard dependency
-
-On Linux, copy uses `xclip` first and falls back to `wl-copy`. Install at least one of them.
 
 ## Quick Start
 

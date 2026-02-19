@@ -2,7 +2,15 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-<img src="assets/app.png" alt="kPDF Icon" width="256" />
+<p align="center">
+  <img src="assets/app.png" alt="kPDF Icon" width="192" />
+</p>
+
+<p align="center">
+  <a href="https://github.com/KusStar/kpdf/releases">
+    <img src="https://img.shields.io/badge/Download-Releases-2ea44f?style=for-the-badge" alt="Download" />
+  </a>
+</p>
 
 kPDF 是一个基于 Rust + GPUI 的轻量级桌面 PDF 阅读器，专注于流畅阅读、快速切换文件与会话恢复。
 
@@ -47,12 +55,6 @@ kPDF 是一个基于 Rust + GPUI 的轻量级桌面 PDF 阅读器，专注于流
 2. App 资源目录及可执行文件附近的 `lib` 目录
 3. 当前工作目录及 `./lib`
 4. 系统库路径
-
-> 当前仓库已包含 macOS 动态库：`lib/libpdfium.dylib`
-
-### Linux 复制依赖
-
-Linux 下复制文本到剪贴板会优先调用 `xclip`，不可用时回退到 `wl-copy`。建议至少安装其中一个。
 
 ## 快速开始
 
