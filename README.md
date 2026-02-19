@@ -89,7 +89,6 @@ cargo build --release
 
 ## Environment Variables
 
-- `KPDF_LANG`: Force UI language (e.g. `zh_CN`, `en_US`)
 - `KPDF_PDFIUM_LIB_DIR`: Pdfium library directory
 - `KPDF_LOG_FILE`: Custom log file path
 

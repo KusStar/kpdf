@@ -32,21 +32,21 @@ gpui::actions!(
 
 pub(crate) fn configure_app_menus(cx: &mut App, i18n: i18n::I18n) {
     let mut items = vec![
-        MenuItem::action(i18n.about_button(), ShowAboutMenu),
-        MenuItem::action(i18n.check_updates_button(), CheckForUpdatesMenu),
-        MenuItem::action(i18n.settings_button(), ShowSettingsMenu),
+        MenuItem::action(i18n.about_button, ShowAboutMenu),
+        MenuItem::action(i18n.check_updates_button, CheckForUpdatesMenu),
+        MenuItem::action(i18n.settings_button, ShowSettingsMenu),
         MenuItem::separator(),
     ];
 
     if logger::file_logging_enabled() {
         items.extend([
-            MenuItem::action(i18n.open_logs_button(), OpenLogsMenu),
+            MenuItem::action(i18n.open_logs_button, OpenLogsMenu),
             MenuItem::separator(),
-            MenuItem::action(i18n.disable_logging_button(), DisableLoggingMenu),
+            MenuItem::action(i18n.disable_logging_button, DisableLoggingMenu),
         ]);
     } else {
         items.push(MenuItem::action(
-            i18n.enable_logging_button(),
+            i18n.enable_logging_button,
             EnableLoggingMenu,
         ));
     }

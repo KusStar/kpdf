@@ -33,7 +33,7 @@ impl PdfViewer {
                         .justify_center()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child(i18n.no_pages()),
+                        .child(i18n.no_pages),
                 )
             })
             .when(page_count > 0, |this| {
@@ -131,7 +131,7 @@ impl PdfViewer {
                                                                             div()
                                                                                 .text_xs()
                                                                                 .child(
-                                                                                    i18n.thumbnail_render_failed(),
+                                                                                    i18n.thumbnail_render_failed,
                                                                                 ),
                                                                         )
                                                                     })

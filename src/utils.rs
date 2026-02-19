@@ -176,7 +176,7 @@ fn init_pdfium(language: Language) -> Result<Pdfium> {
         Err(e) => crate::debug_log!("[pdfium] system failed: {}", e),
     }
 
-    let bindings = bindings.context(i18n.pdfium_not_found())?;
+    let bindings = bindings.context(i18n.pdfium_not_found)?;
     crate::debug_log!("[pdfium] init success!");
     Ok(Pdfium::new(bindings))
 }
@@ -262,7 +262,7 @@ pub(super) fn load_display_images(
     let i18n = I18n::new(language);
     let mut cached_document_guard = document_cache()
         .lock()
-        .map_err(|_| anyhow!(i18n.pdfium_cache_lock_poisoned()))?;
+        .map_err(|_| anyhow!(i18n.pdfium_cache_lock_poisoned))?;
 
     let cache_hit = cached_document_guard
         .as_ref()

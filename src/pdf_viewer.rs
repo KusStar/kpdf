@@ -287,7 +287,7 @@ impl PdfViewer {
             .map(Self::load_bookmarks_from_store)
             .unwrap_or_default();
         let command_panel_input_state = cx.new(|cx| {
-            InputState::new(window, cx).placeholder(I18n::new(language).command_panel_search_hint())
+            InputState::new(window, cx).placeholder(I18n::new(language).command_panel_search_hint)
         });
         let command_panel_input_state_for_sub = command_panel_input_state.clone();
         let command_panel_input_subscription = cx.subscribe(
@@ -1030,7 +1030,7 @@ impl PdfViewer {
             files: true,
             directories: false,
             multiple: true,
-            prompt: Some(self.i18n().open_pdf_prompt().into()),
+            prompt: Some(self.i18n().open_pdf_prompt.into()),
         });
 
         cx.spawn(async move |view, cx| {
@@ -1233,8 +1233,8 @@ impl PdfViewer {
     fn updater_status_text(&self) -> String {
         let i18n = self.i18n();
         match &self.updater_state {
-            UpdaterUiState::Idle => i18n.update_status_idle().to_string(),
-            UpdaterUiState::Checking => i18n.update_status_checking().to_string(),
+            UpdaterUiState::Idle => i18n.update_status_idle.to_string(),
+            UpdaterUiState::Checking => i18n.update_status_checking.to_string(),
             UpdaterUiState::UpToDate { latest_version } => {
                 i18n.update_status_up_to_date(latest_version)
             }
@@ -1498,7 +1498,7 @@ impl PdfViewer {
                                     div()
                                         .text_lg()
                                         .text_color(cx.theme().foreground)
-                                        .child(i18n.settings_dialog_title()),
+                                        .child(i18n.settings_dialog_title),
                                 )
                                 .child(div().h(px(1.)).bg(cx.theme().border))
                                 .child(
@@ -1509,7 +1509,7 @@ impl PdfViewer {
                                             div()
                                                 .text_sm()
                                                 .text_color(cx.theme().muted_foreground)
-                                                .child(i18n.settings_theme_section()),
+                                                .child(i18n.settings_theme_section),
                                         )
                                         .child(
                                             div()
@@ -1538,7 +1538,7 @@ impl PdfViewer {
                                                                         .text_sm()
                                                                         .text_color(cx.theme().foreground)
                                                                         .child(
-                                                                            i18n.settings_theme_label(),
+                                                                            i18n.settings_theme_label,
                                                                         ),
                                                                 )
                                                                 .child(
@@ -1549,7 +1549,7 @@ impl PdfViewer {
                                                                                 .muted_foreground,
                                                                         )
                                                                         .whitespace_normal()
-                                                                        .child(i18n.settings_theme_hint()),
+                                                                        .child(i18n.settings_theme_hint),
                                                                 ),
                                                         )
                                                         .child(
@@ -1558,7 +1558,7 @@ impl PdfViewer {
                                                                 .outline()
                                                                 .child(
                                                                     Button::new("settings-theme-light")
-                                                                        .label(i18n.settings_theme_light())
+                                                                        .label(i18n.settings_theme_light)
                                                                         .selected(
                                                                             self.theme_mode
                                                                                 == ThemeMode::Light,
@@ -1566,7 +1566,7 @@ impl PdfViewer {
                                                                 )
                                                                 .child(
                                                                     Button::new("settings-theme-dark")
-                                                                        .label(i18n.settings_theme_dark())
+                                                                        .label(i18n.settings_theme_dark)
                                                                         .selected(
                                                                             self.theme_mode
                                                                                 == ThemeMode::Dark,
@@ -1605,7 +1605,7 @@ impl PdfViewer {
                                                                         .text_sm()
                                                                         .text_color(cx.theme().foreground)
                                                                         .child(
-                                                                            i18n.settings_theme_color_label(),
+                                                                            i18n.settings_theme_color_label,
                                                                         ),
                                                                 )
                                                                 .child(
@@ -1616,7 +1616,7 @@ impl PdfViewer {
                                                                         )
                                                                         .whitespace_normal()
                                                                         .child(
-                                                                            i18n.settings_theme_color_hint(),
+                                                                            i18n.settings_theme_color_hint,
                                                                         ),
                                                                 ),
                                                         )
@@ -1630,7 +1630,7 @@ impl PdfViewer {
                                                                     .small()
                                                                     .disabled(!has_theme_color_options)
                                                                     .placeholder(
-                                                                        i18n.settings_theme_color_placeholder(),
+                                                                        i18n.settings_theme_color_placeholder,
                                                                     ),
                                                                 ),
                                                         ),
@@ -1640,7 +1640,7 @@ impl PdfViewer {
                                             div()
                                                 .text_sm()
                                                 .text_color(cx.theme().muted_foreground)
-                                                .child(i18n.settings_titlebar_section()),
+                                                .child(i18n.settings_titlebar_section),
                                         )
                                         .child(
                                             div()
@@ -1669,7 +1669,7 @@ impl PdfViewer {
                                                                         .text_sm()
                                                                         .text_color(cx.theme().foreground)
                                                                         .child(
-                                                                            i18n.settings_titlebar_navigation_label(),
+                                                                            i18n.settings_titlebar_navigation_label,
                                                                         ),
                                                                 )
                                                                 .child(
@@ -1681,7 +1681,7 @@ impl PdfViewer {
                                                                         )
                                                                         .whitespace_normal()
                                                                         .child(
-                                                                            i18n.settings_titlebar_navigation_hint(),
+                                                                            i18n.settings_titlebar_navigation_hint,
                                                                         ),
                                                                 ),
                                                         )
@@ -1720,7 +1720,7 @@ impl PdfViewer {
                                                                         .text_sm()
                                                                         .text_color(cx.theme().foreground)
                                                                         .child(
-                                                                            i18n.settings_titlebar_zoom_label(),
+                                                                            i18n.settings_titlebar_zoom_label,
                                                                         ),
                                                                 )
                                                                 .child(
@@ -1732,7 +1732,7 @@ impl PdfViewer {
                                                                         )
                                                                         .whitespace_normal()
                                                                         .child(
-                                                                            i18n.settings_titlebar_zoom_hint(),
+                                                                            i18n.settings_titlebar_zoom_hint,
                                                                         ),
                                                                 ),
                                                         )
@@ -1761,7 +1761,7 @@ impl PdfViewer {
                                             Button::new("settings-close")
                                                 .small()
                                                 .ghost()
-                                                .label(i18n.close_button())
+                                                .label(i18n.close_button)
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     this.close_settings_dialog(cx);
                                                 })),
@@ -1867,16 +1867,13 @@ impl PdfViewer {
                                             div()
                                                 .text_lg()
                                                 .text_color(cx.theme().foreground)
-                                                .child(format!(
-                                                    "{} kPDF",
-                                                    i18n.about_dialog_title()
-                                                )),
+                                                .child(format!("{} kPDF", i18n.about_dialog_title)),
                                         )
                                         .child(
                                             div()
                                                 .text_sm()
                                                 .text_color(cx.theme().muted_foreground)
-                                                .child(i18n.about_app_info()),
+                                                .child(i18n.about_app_info),
                                         ),
                                 )
                                 .child(div().h(px(1.)).bg(cx.theme().border))
@@ -1893,7 +1890,7 @@ impl PdfViewer {
                                                     div()
                                                         .text_sm()
                                                         .text_color(cx.theme().muted_foreground)
-                                                        .child(i18n.version_label()),
+                                                        .child(i18n.version_label),
                                                 )
                                                 .child(
                                                     div()
@@ -1911,7 +1908,7 @@ impl PdfViewer {
                                                     div()
                                                         .text_sm()
                                                         .text_color(cx.theme().muted_foreground)
-                                                        .child(i18n.website_label()),
+                                                        .child(i18n.website_label),
                                                 )
                                                 .child(
                                                     div()
@@ -1929,7 +1926,7 @@ impl PdfViewer {
                                                     div()
                                                         .text_sm()
                                                         .text_color(cx.theme().muted_foreground)
-                                                        .child(i18n.updates_label()),
+                                                        .child(i18n.updates_label),
                                                 )
                                                 .child(
                                                     div()
@@ -1950,7 +1947,7 @@ impl PdfViewer {
                                         .child(
                                             Button::new("about-open-website")
                                                 .small()
-                                                .label(i18n.open_website_button())
+                                                .label(i18n.open_website_button)
                                                 .on_click(|_, _, cx| {
                                                     cx.open_url(APP_REPOSITORY_URL);
                                                 }),
@@ -1959,7 +1956,7 @@ impl PdfViewer {
                                             Button::new("about-check-updates")
                                                 .small()
                                                 .ghost()
-                                                .label(i18n.check_updates_button())
+                                                .label(i18n.check_updates_button)
                                                 .disabled(updater_is_checking)
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     this.check_for_updates(cx);
@@ -1969,7 +1966,7 @@ impl PdfViewer {
                                             this.child(
                                                 Button::new("about-download-update")
                                                     .small()
-                                                    .label(i18n.download_update_button())
+                                                    .label(i18n.download_update_button)
                                                     .on_click(move |_, _, cx| {
                                                         cx.open_url(download_url.as_str());
                                                     }),
@@ -1979,7 +1976,7 @@ impl PdfViewer {
                                             Button::new("about-close")
                                                 .small()
                                                 .ghost()
-                                                .label(i18n.close_button())
+                                                .label(i18n.close_button)
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     this.close_about_dialog(cx);
                                                 })),
@@ -2769,7 +2766,7 @@ impl PdfViewer {
                             Button::new("bookmark-scope-current")
                                 .small()
                                 .w_full()
-                                .label(i18n.bookmark_scope_current_pdf())
+                                .label(i18n.bookmark_scope_current_pdf)
                                 .when(scope != BookmarkScope::CurrentPdf, |this| this.ghost())
                                 .on_click({
                                     let viewer = viewer.clone();
@@ -2786,7 +2783,7 @@ impl PdfViewer {
                             Button::new("bookmark-scope-all")
                                 .small()
                                 .w_full()
-                                .label(i18n.bookmark_scope_all())
+                                .label(i18n.bookmark_scope_all)
                                 .when(scope != BookmarkScope::All, |this| this.ghost())
                                 .on_click({
                                     let viewer = viewer.clone();
@@ -2807,7 +2804,7 @@ impl PdfViewer {
                         .py_1()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child(i18n.no_bookmarks()),
+                        .child(i18n.no_bookmarks),
                 )
             })
             .when(!bookmarks.is_empty(), |this| {
@@ -2841,7 +2838,7 @@ impl PdfViewer {
                                             let path_text = bookmark.path.display().to_string();
                                             let added_time_label =
                                                 if bookmark.created_at_unix_secs == 0 {
-                                                    i18n.bookmark_added_unknown().to_string()
+                                                    i18n.bookmark_added_unknown.to_string()
                                                 } else {
                                                     i18n.bookmark_added_relative(
                                                         now_unix_secs.saturating_sub(
@@ -3007,7 +3004,7 @@ impl PdfViewer {
                             Icon::new(crate::icons::IconName::FolderOpen)
                                 .text_color(cx.theme().foreground),
                         )
-                        .label(i18n.choose_file_button())
+                        .label(i18n.choose_file_button)
                         .on_click({
                             let viewer = viewer.clone();
                             move |_, window, cx| {
@@ -3027,7 +3024,7 @@ impl PdfViewer {
                         .py_1()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
-                        .child(i18n.no_recent_files()),
+                        .child(i18n.no_recent_files),
                 )
             })
             .when(!recent_files_with_positions.is_empty(), |this| {
@@ -3793,9 +3790,9 @@ impl PdfViewer {
                 .any(|tab| tab.id == tab_id && tab.path.is_some());
             self.close_context_menu(cx);
             if let Some(action) = self::macos_context_menu::show_tab_context_menu(
-                i18n.close_all_tabs_button(),
-                i18n.close_other_tabs_button(),
-                i18n.reveal_in_file_manager_button(),
+                i18n.close_all_tabs_button,
+                i18n.close_other_tabs_button,
+                i18n.reveal_in_file_manager_button,
                 can_close_others,
                 can_reveal,
             ) {
@@ -4397,7 +4394,7 @@ impl Render for PdfViewer {
             let file_name = active_tab
                 .and_then(|t| t.path.as_ref())
                 .map(|p| display_file_name(p))
-                .unwrap_or_else(|| self.i18n().file_not_opened().to_string());
+                .unwrap_or_else(|| self.i18n().file_not_opened.to_string());
 
             let display_base_width = active_tab
                 .map(|t| self.display_base_width(window, t.zoom))

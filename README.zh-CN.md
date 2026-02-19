@@ -86,7 +86,6 @@ cargo build --release
 
 ## 环境变量
 
-- `KPDF_LANG`：强制界面语言（例如 `zh_CN`、`en_US`）
 - `KPDF_PDFIUM_LIB_DIR`：指定 Pdfium 动态库目录
 - `KPDF_LOG_FILE`：自定义日志文件路径
 

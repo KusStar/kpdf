@@ -113,8 +113,8 @@ impl PdfViewer {
 
         let mut items = Vec::new();
         if !query.is_empty()
-            && (query_matches_text(i18n.choose_file_button())
-                || query_matches_text(i18n.open_pdf_prompt()))
+            && (query_matches_text(i18n.choose_file_button)
+                || query_matches_text(i18n.open_pdf_prompt))
         {
             items.push(CommandPanelItem::OpenFile);
         }
@@ -163,35 +163,35 @@ impl PdfViewer {
 
         push_menu_item(
             CommandPanelMenuAction::ShowAbout,
-            i18n.about_button().to_string(),
-            i18n.command_panel_open_about_hint().to_string(),
+            i18n.about_button.to_string(),
+            i18n.command_panel_open_about_hint.to_string(),
         );
         push_menu_item(
             CommandPanelMenuAction::CheckForUpdates,
-            i18n.check_updates_button().to_string(),
-            i18n.command_panel_check_updates_hint().to_string(),
+            i18n.check_updates_button.to_string(),
+            i18n.command_panel_check_updates_hint.to_string(),
         );
         push_menu_item(
             CommandPanelMenuAction::ShowSettings,
-            i18n.settings_button().to_string(),
-            i18n.command_panel_open_settings_hint().to_string(),
+            i18n.settings_button.to_string(),
+            i18n.command_panel_open_settings_hint.to_string(),
         );
         if crate::logger::file_logging_enabled() {
             push_menu_item(
                 CommandPanelMenuAction::OpenLogs,
-                i18n.open_logs_button().to_string(),
-                i18n.command_panel_open_logs_hint().to_string(),
+                i18n.open_logs_button.to_string(),
+                i18n.command_panel_open_logs_hint.to_string(),
             );
             push_menu_item(
                 CommandPanelMenuAction::DisableLogging,
-                i18n.disable_logging_button().to_string(),
-                i18n.command_panel_disable_logging_hint().to_string(),
+                i18n.disable_logging_button.to_string(),
+                i18n.command_panel_disable_logging_hint.to_string(),
             );
         } else {
             push_menu_item(
                 CommandPanelMenuAction::EnableLogging,
-                i18n.enable_logging_button().to_string(),
-                i18n.command_panel_enable_logging_hint().to_string(),
+                i18n.enable_logging_button.to_string(),
+                i18n.command_panel_enable_logging_hint.to_string(),
             );
         }
 
@@ -300,7 +300,7 @@ impl PdfViewer {
                 .py_1()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
-                .child(i18n.no_recent_files())
+                .child(i18n.no_recent_files)
                 .into_any_element()
         } else {
             div()
@@ -321,8 +321,8 @@ impl PdfViewer {
                             let item_for_click = item.clone();
                             let (title, subtitle, tail, extra) = match item {
                                 CommandPanelItem::OpenFile => (
-                                    i18n.choose_file_button().to_string(),
-                                    i18n.open_pdf_prompt().to_string(),
+                                    i18n.choose_file_button.to_string(),
+                                    i18n.open_pdf_prompt.to_string(),
                                     None,
                                     None,
                                 ),
@@ -331,7 +331,7 @@ impl PdfViewer {
                                 } => (
                                     title.clone(),
                                     subtitle.clone(),
-                                    Some(i18n.command_panel_menu_badge().to_string()),
+                                    Some(i18n.command_panel_menu_badge.to_string()),
                                     None,
                                 ),
                                 CommandPanelItem::OpenTab {
@@ -340,7 +340,7 @@ impl PdfViewer {
                                     display_file_name(path),
                                     path.display().to_string(),
                                     if *is_active {
-                                        Some(i18n.command_panel_current_badge().to_string())
+                                        Some(i18n.command_panel_current_badge.to_string())
                                     } else {
                                         None
                                     },

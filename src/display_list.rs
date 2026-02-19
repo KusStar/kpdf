@@ -54,7 +54,7 @@ impl PdfViewer {
                                                 .text_sm()
                                                 .font_medium()
                                                 .text_color(cx.theme().foreground)
-                                                .child(i18n.file_not_opened()),
+                                                .child(i18n.file_not_opened),
                                         )
                                         .child(Self::render_recent_files_list_content(
                                             2,
@@ -86,7 +86,7 @@ impl PdfViewer {
                                     div()
                                         .text_sm()
                                         .text_color(cx.theme().muted_foreground)
-                                        .child(i18n.no_pages()),
+                                        .child(i18n.no_pages),
                                 ),
                         )
                     })
@@ -216,7 +216,7 @@ impl PdfViewer {
                                             .size_8()
                                             .text_color(cx.theme().muted_foreground),
                                     )
-                                    .child(div().text_xs().child(i18n.page_render_failed()))
+                                    .child(div().text_xs().child(i18n.page_render_failed))
                                 })
                                 .when(!page.display_failed, |this| {
                                     this.child(
@@ -669,7 +669,7 @@ impl PdfViewer {
                         Button::new(("tab-close-all", tab_id))
                             .small()
                             .w_full()
-                            .label(i18n.close_all_tabs_button())
+                            .label(i18n.close_all_tabs_button)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.close_context_menu(cx);
                                 this.close_all_tabs(cx);
@@ -680,7 +680,7 @@ impl PdfViewer {
                             .small()
                             .w_full()
                             .disabled(!can_close_others)
-                            .label(i18n.close_other_tabs_button())
+                            .label(i18n.close_other_tabs_button)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.close_context_menu(cx);
                                 this.close_other_tabs(tab_id, cx);
@@ -691,7 +691,7 @@ impl PdfViewer {
                             .small()
                             .w_full()
                             .disabled(!can_reveal)
-                            .label(i18n.reveal_in_file_manager_button())
+                            .label(i18n.reveal_in_file_manager_button)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.reveal_tab_in_file_manager(tab_id);
                                 this.close_context_menu(cx);
@@ -725,7 +725,7 @@ impl PdfViewer {
                     Button::new("copy-text")
                         .small()
                         .w_full()
-                        .label(i18n.copy_button())
+                        .label(i18n.copy_button)
                         .on_click(cx.listener(|this, _, _, cx| {
                             crate::debug_log!("[context_menu] copy button clicked");
                             this.copy_selected_text();

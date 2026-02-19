@@ -3112,6 +3112,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sled",
+ "sys-locale",
  "tklog",
  "windows 0.61.3",
  "winresource",
