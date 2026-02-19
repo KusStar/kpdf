@@ -66,6 +66,7 @@ impl PdfViewer {
                                             };
                                             let (_, thumb_height) = viewer.thumbnail_card_size(page);
                                             let is_selected = ix == active_page;
+                                            let is_bookmarked = viewer.active_tab_page_bookmarked(ix);
                                             div()
                                                 .id(("thumb-row", ix))
                                                 .px_2()
@@ -161,12 +162,26 @@ impl PdfViewer {
                                                                         .background
                                                                         .opacity(0.9),
                                                                 )
+                                                                .flex()
+                                                                .items_center()
+                                                                .gap_1()
                                                                 .text_xs()
                                                                 .font_medium()
                                                                 .text_color(
                                                                     cx.theme().muted_foreground,
                                                                 )
-                                                                .child(format!("{}", page.index + 1)),
+                                                                .child(format!("{}", page.index + 1))
+                                                                .when(is_bookmarked, |this| {
+                                                                    this.child(
+                                                                        Icon::new(
+                                                                            crate::icons::IconName::BookmarkCheck,
+                                                                        )
+                                                                        .size_3()
+                                                                        .text_color(
+                                                                            cx.theme().muted_foreground,
+                                                                        ),
+                                                                    )
+                                                                }),
                                                         ),
                                                 )
                                                 .cursor_pointer()

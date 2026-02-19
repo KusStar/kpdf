@@ -44,6 +44,9 @@ pub enum IconName {
     WindowClose,
     WindowMinimize,
     WindowRestore,
+    Bookmark,
+    BookmarkMinus,
+    BookmarkCheck,
 }
 
 impl IconNamed for IconName {
@@ -63,6 +66,9 @@ impl IconNamed for IconName {
             Self::WindowClose => "icons/window-close.svg",
             Self::WindowMinimize => "icons/window-minimize.svg",
             Self::WindowRestore => "icons/window-restore.svg",
+            Self::Bookmark => "icons/bookmark.svg",
+            Self::BookmarkMinus => "icons/bookmark-minus.svg",
+            Self::BookmarkCheck => "icons/bookmark-check.svg",
         }
         .into()
     }

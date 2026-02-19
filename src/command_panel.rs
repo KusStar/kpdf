@@ -56,6 +56,10 @@ impl PdfViewer {
             self.close_recent_popup(cx);
             changed = true;
         }
+        if self.bookmark_popup_open {
+            self.close_bookmark_popup(cx);
+            changed = true;
+        }
         self.command_panel_input_state.update(cx, |input, cx| {
             input.set_value("", window, cx);
         });

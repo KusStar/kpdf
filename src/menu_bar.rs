@@ -3,6 +3,7 @@ use crate::icons;
 use super::PdfViewer;
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
+use gpui_component::popover::Popover;
 use gpui_component::{button::*, *};
 
 impl PdfViewer {
@@ -17,6 +18,10 @@ impl PdfViewer {
     ) -> impl IntoElement {
         let i18n = self.i18n();
         let active_page = self.active_tab_active_page();
+        let bookmark_popup_open = self.bookmark_popup_open;
+        let bookmark_scope = self.bookmark_scope;
+        let bookmarks = self.bookmarks_for_scope(bookmark_scope);
+        let bookmark_popup_list_scroll = self.bookmark_popup_list_scroll.clone();
 
         div()
             .id("title-nav-bar")
@@ -27,7 +32,7 @@ impl PdfViewer {
             .flex()
             .items_center()
             .justify_between()
-            .when(!show_navigation && show_zoom, |this| this.justify_end())
+            .when(!show_navigation, |this| this.justify_end())
             .when(show_navigation, |this| {
                 this.child(
                     div()
@@ -96,53 +101,105 @@ impl PdfViewer {
                         }),
                 )
             })
-            .when(show_zoom, |this| {
-                this.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .child(
-                            Button::new("zoom-out")
-                                .ghost()
-                                .small()
-                                .icon(
-                                    Icon::new(icons::IconName::Minus)
-                                        .text_color(cx.theme().foreground),
-                                )
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.zoom_out(cx);
-                                })),
-                        )
-                        .child(
-                            Button::new("zoom-reset")
-                                .ghost()
-                                .small()
-                                .label(i18n.zoom_reset_button())
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.zoom_reset(cx);
-                                })),
-                        )
-                        .child(
-                            Button::new("zoom-in")
-                                .ghost()
-                                .small()
-                                .icon(
-                                    Icon::new(icons::IconName::Plus)
-                                        .text_color(cx.theme().foreground),
-                                )
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.zoom_in(cx);
-                                })),
-                        )
-                        .child(
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        Popover::new("bookmark-popover")
+                            .anchor(Corner::TopLeft)
+                            .appearance(false)
+                            .overlay_closable(false)
+                            .open(bookmark_popup_open)
+                            .trigger(
+                                Button::new("bookmark-add")
+                                    .ghost()
+                                    .small()
+                                    .icon(
+                                        Icon::new(icons::IconName::Bookmark)
+                                            .size_4()
+                                            .text_color(cx.theme().foreground),
+                                    )
+                                    .on_hover({
+                                        let viewer = cx.entity();
+                                        move |hovered, _, cx| {
+                                            let _ = viewer.update(cx, |this, cx| {
+                                                this.set_bookmark_popup_trigger_hovered(
+                                                    *hovered, cx,
+                                                );
+                                            });
+                                        }
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.add_current_page_bookmark_and_open(cx);
+                                    })),
+                            )
+                            .content({
+                                let viewer = cx.entity();
+                                let i18n = i18n;
+                                let bookmarks = bookmarks.clone();
+                                move |_, _window, cx| {
+                                    Self::render_bookmark_popup_panel(
+                                        "bookmark-popup",
+                                        i18n,
+                                        viewer.clone(),
+                                        bookmark_scope,
+                                        bookmarks.clone(),
+                                        &bookmark_popup_list_scroll,
+                                        cx,
+                                    )
+                                }
+                            }),
+                    )
+                    .when(show_zoom, |this| {
+                        this.child(
                             div()
-                                .min_w(px(50.))
-                                .text_sm()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(zoom_label),
-                        ),
-                )
-            })
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .child(
+                                    Button::new("zoom-out")
+                                        .ghost()
+                                        .small()
+                                        .icon(
+                                            Icon::new(icons::IconName::Minus)
+                                                .text_color(cx.theme().foreground),
+                                        )
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.zoom_out(cx);
+                                        })),
+                                )
+                                .child(
+                                    Button::new("zoom-reset")
+                                        .ghost()
+                                        .small()
+                                        .label(i18n.zoom_reset_button())
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.zoom_reset(cx);
+                                        })),
+                                )
+                                .child(
+                                    Button::new("zoom-in")
+                                        .ghost()
+                                        .small()
+                                        .icon(
+                                            Icon::new(icons::IconName::Plus)
+                                                .text_color(cx.theme().foreground),
+                                        )
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.zoom_in(cx);
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .min_w(px(50.))
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(zoom_label),
+                                ),
+                        )
+                    }),
+            )
     }
 }

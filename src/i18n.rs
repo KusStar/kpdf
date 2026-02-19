@@ -91,6 +91,75 @@ impl I18n {
         }
     }
 
+    pub fn add_bookmark_button(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "添加书签",
+            Language::EnUs => "Add Bookmark",
+        }
+    }
+
+    pub fn bookmark_scope_current_pdf(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "当前文件",
+            Language::EnUs => "Current File",
+        }
+    }
+
+    pub fn bookmark_scope_all(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "全部书签",
+            Language::EnUs => "All Bookmarks",
+        }
+    }
+
+    pub fn no_bookmarks(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "暂无书签",
+            Language::EnUs => "No bookmarks",
+        }
+    }
+
+    pub fn bookmark_page_label(self, page_num: usize) -> String {
+        match self.lang {
+            Language::ZhCn => format!("第 {} 页", page_num),
+            Language::EnUs => format!("Page {}", page_num),
+        }
+    }
+
+    pub fn bookmark_added_unknown(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "添加时间未知",
+            Language::EnUs => "Added time unknown",
+        }
+    }
+
+    pub fn bookmark_added_relative(self, seconds_ago: u64) -> String {
+        match self.lang {
+            Language::ZhCn => {
+                if seconds_ago < 60 {
+                    "添加于：刚刚".to_string()
+                } else if seconds_ago < 3600 {
+                    format!("添加于：{} 分钟前", seconds_ago / 60)
+                } else if seconds_ago < 86_400 {
+                    format!("添加于：{} 小时前", seconds_ago / 3_600)
+                } else {
+                    format!("添加于：{} 天前", seconds_ago / 86_400)
+                }
+            }
+            Language::EnUs => {
+                if seconds_ago < 60 {
+                    "Added: just now".to_string()
+                } else if seconds_ago < 3600 {
+                    format!("Added: {}m ago", seconds_ago / 60)
+                } else if seconds_ago < 86_400 {
+                    format!("Added: {}h ago", seconds_ago / 3_600)
+                } else {
+                    format!("Added: {}d ago", seconds_ago / 86_400)
+                }
+            }
+        }
+    }
+
     pub fn open_logs_button(self) -> &'static str {
         match self.lang {
             Language::ZhCn => "打开日志目录",

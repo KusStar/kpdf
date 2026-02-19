@@ -60,6 +60,19 @@ pub enum RecentPopupAnchor {
     TabAddButton,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(super) struct BookmarkEntry {
+    path: PathBuf,
+    page_index: usize,
+    created_at_unix_secs: u64,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(super) enum BookmarkScope {
+    CurrentPdf,
+    All,
+}
+
 use self::tab::{PdfTab, TabBar};
 use self::text_selection::copy_to_clipboard;
 use self::utils::{
@@ -82,11 +95,13 @@ const DISPLAY_SCROLL_SYNC_DELAY_MS: u64 = 140;
 const MAX_RECENT_FILES: usize = 12;
 const RECENT_FILES_LIST_MAX_HEIGHT: f32 = 280.0;
 const RECENT_POPUP_CLOSE_DELAY_MS: u64 = 120;
+const BOOKMARK_POPUP_CLOSE_DELAY_MS: u64 = 120;
 const RECENT_FILES_TREE: &str = "recent_files";
 const FILE_POSITIONS_TREE: &str = "file_positions";
 const WINDOW_SIZE_TREE: &str = "window_size";
 const OPEN_TABS_TREE: &str = "open_tabs";
 const TITLEBAR_PREFERENCES_TREE: &str = "titlebar_preferences";
+const BOOKMARKS_TREE: &str = "bookmarks";
 const WINDOW_SIZE_KEY_WIDTH: &str = "width";
 const WINDOW_SIZE_KEY_HEIGHT: &str = "height";
 const OPEN_TABS_KEY_ACTIVE_INDEX: &str = "active_index";
@@ -169,6 +184,7 @@ pub struct PdfViewer {
     window_size_store: Option<sled::Tree>,
     open_tabs_store: Option<sled::Tree>,
     titlebar_preferences_store: Option<sled::Tree>,
+    bookmarks_store: Option<sled::Tree>,
     last_window_size: Option<(f32, f32)>,
     titlebar_preferences: TitleBarVisibilityPreferences,
     recent_files: Vec<PathBuf>,
@@ -178,6 +194,12 @@ pub struct PdfViewer {
     recent_popup_panel_hovered: bool,
     recent_popup_hover_epoch: u64,
     recent_popup_anchor: Option<RecentPopupAnchor>,
+    bookmarks: Vec<BookmarkEntry>,
+    bookmark_popup_open: bool,
+    bookmark_scope: BookmarkScope,
+    bookmark_popup_trigger_hovered: bool,
+    bookmark_popup_panel_hovered: bool,
+    bookmark_popup_hover_epoch: u64,
     about_dialog_open: bool,
     settings_dialog_open: bool,
     updater_state: UpdaterUiState,
@@ -186,6 +208,7 @@ pub struct PdfViewer {
     command_panel_selected_index: usize,
     tab_bar_scroll: ScrollHandle,
     recent_popup_list_scroll: ScrollHandle,
+    bookmark_popup_list_scroll: ScrollHandle,
     command_panel_list_scroll: ScrollHandle,
     recent_home_list_scroll: ScrollHandle,
     command_panel_input_state: Entity<InputState>,
@@ -205,6 +228,13 @@ pub struct PdfViewer {
 }
 
 impl PdfViewer {
+    fn now_unix_secs() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0)
+    }
+
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let language = Language::detect();
         let (
@@ -213,6 +243,7 @@ impl PdfViewer {
             window_size_store,
             open_tabs_store,
             titlebar_preferences_store,
+            bookmarks_store,
         ) = Self::open_persistent_stores();
         let recent_files = recent_store
             .as_ref()
@@ -225,6 +256,10 @@ impl PdfViewer {
         let titlebar_preferences = titlebar_preferences_store
             .as_ref()
             .map(Self::load_titlebar_preferences_from_store)
+            .unwrap_or_default();
+        let bookmarks = bookmarks_store
+            .as_ref()
+            .map(Self::load_bookmarks_from_store)
             .unwrap_or_default();
         let command_panel_input_state = cx.new(|cx| {
             InputState::new(window, cx).placeholder(I18n::new(language).command_panel_search_hint())
@@ -279,6 +314,7 @@ impl PdfViewer {
             window_size_store,
             open_tabs_store,
             titlebar_preferences_store,
+            bookmarks_store,
             last_window_size: None,
             titlebar_preferences,
             recent_files,
@@ -288,6 +324,12 @@ impl PdfViewer {
             recent_popup_panel_hovered: false,
             recent_popup_hover_epoch: 0,
             recent_popup_anchor: None,
+            bookmarks,
+            bookmark_popup_open: false,
+            bookmark_scope: BookmarkScope::CurrentPdf,
+            bookmark_popup_trigger_hovered: false,
+            bookmark_popup_panel_hovered: false,
+            bookmark_popup_hover_epoch: 0,
             about_dialog_open: false,
             settings_dialog_open: false,
             updater_state: UpdaterUiState::Idle,
@@ -296,6 +338,7 @@ impl PdfViewer {
             command_panel_selected_index: 0,
             tab_bar_scroll: ScrollHandle::new(),
             recent_popup_list_scroll: ScrollHandle::new(),
+            bookmark_popup_list_scroll: ScrollHandle::new(),
             command_panel_list_scroll: ScrollHandle::new(),
             recent_home_list_scroll: ScrollHandle::new(),
             command_panel_input_state,
@@ -357,12 +400,13 @@ impl PdfViewer {
         Option<sled::Tree>,
         Option<sled::Tree>,
         Option<sled::Tree>,
+        Option<sled::Tree>,
     ) {
         let db_path = Self::recent_files_db_path();
         if let Some(parent) = db_path.parent() {
             if std::fs::create_dir_all(parent).is_err() {
                 crate::debug_log!("[store] create dir failed: {}", parent.to_string_lossy());
-                return (None, None, None, None, None);
+                return (None, None, None, None, None, None);
             }
         }
 
@@ -374,7 +418,7 @@ impl PdfViewer {
                     db_path.to_string_lossy(),
                     err
                 );
-                return (None, None, None, None, None);
+                return (None, None, None, None, None, None);
             }
         };
 
@@ -421,14 +465,22 @@ impl PdfViewer {
                 None
             }
         };
+        let bookmarks_store = match db.open_tree(BOOKMARKS_TREE) {
+            Ok(tree) => Some(tree),
+            Err(err) => {
+                crate::debug_log!("[store] open tree failed: {} | {}", BOOKMARKS_TREE, err);
+                None
+            }
+        };
 
         crate::debug_log!(
-            "[store] init recent={} positions={} window_size={} open_tabs={} titlebar_preferences={} path={}",
+            "[store] init recent={} positions={} window_size={} open_tabs={} titlebar_preferences={} bookmarks={} path={}",
             recent_store.is_some(),
             position_store.is_some(),
             window_size_store.is_some(),
             open_tabs_store.is_some(),
             titlebar_preferences_store.is_some(),
+            bookmarks_store.is_some(),
             db_path.to_string_lossy()
         );
 
@@ -438,6 +490,7 @@ impl PdfViewer {
             window_size_store,
             open_tabs_store,
             titlebar_preferences_store,
+            bookmarks_store,
         )
     }
 
@@ -465,6 +518,58 @@ impl PdfViewer {
                 Some(PathBuf::from(path_str))
             })
             .take(MAX_RECENT_FILES)
+            .collect()
+    }
+
+    fn decode_bookmark_entry_from_store(value: &[u8]) -> Option<BookmarkEntry> {
+        if value.len() < 9 {
+            return None;
+        }
+
+        let mut page_bytes = [0u8; 8];
+        page_bytes.copy_from_slice(&value[0..8]);
+        let page_index = usize::try_from(u64::from_be_bytes(page_bytes)).ok()?;
+        let (created_at_unix_secs, path_bytes) = if value.len() >= 17 {
+            let mut created_at_bytes = [0u8; 8];
+            created_at_bytes.copy_from_slice(&value[8..16]);
+            (u64::from_be_bytes(created_at_bytes), &value[16..])
+        } else {
+            // Backward compatibility with older layout: [8-byte page][path bytes]
+            (0, &value[8..])
+        };
+
+        let path_str = String::from_utf8(path_bytes.to_vec()).ok()?;
+        if path_str.is_empty() {
+            return None;
+        }
+
+        Some(BookmarkEntry {
+            path: PathBuf::from(path_str),
+            page_index,
+            created_at_unix_secs,
+        })
+    }
+
+    fn load_bookmarks_from_store(store: &sled::Tree) -> Vec<BookmarkEntry> {
+        let mut indexed_bookmarks = Vec::new();
+        for entry in store.iter() {
+            let (key, value) = match entry {
+                Ok(entry) => entry,
+                Err(_) => continue,
+            };
+            if key.len() != 4 {
+                continue;
+            }
+            let bookmark_index = u32::from_be_bytes([key[0], key[1], key[2], key[3]]) as usize;
+            let Some(bookmark) = Self::decode_bookmark_entry_from_store(value.as_ref()) else {
+                continue;
+            };
+            indexed_bookmarks.push((bookmark_index, bookmark));
+        }
+        indexed_bookmarks.sort_by_key(|(index, _)| *index);
+        indexed_bookmarks
+            .into_iter()
+            .map(|(_, bookmark)| bookmark)
             .collect()
     }
 
@@ -598,6 +703,34 @@ impl PdfViewer {
                 .insert(OPEN_TABS_KEY_ACTIVE_INDEX, active_bytes.as_slice())
                 .is_err()
             {
+                return;
+            }
+        }
+
+        let _ = store.flush();
+    }
+
+    fn persist_bookmarks(&self) {
+        let Some(store) = self.bookmarks_store.as_ref() else {
+            return;
+        };
+
+        if store.clear().is_err() {
+            return;
+        }
+
+        for (index, bookmark) in self.bookmarks.iter().enumerate() {
+            let key = (index as u32).to_be_bytes();
+            let page_index = (bookmark.page_index as u64).to_be_bytes();
+            let created_at = bookmark.created_at_unix_secs.to_be_bytes();
+            let path = bookmark.path.to_string_lossy();
+
+            let mut value = Vec::with_capacity(16 + path.len());
+            value.extend_from_slice(&page_index);
+            value.extend_from_slice(&created_at);
+            value.extend_from_slice(path.as_bytes());
+
+            if store.insert(key, value).is_err() {
                 return;
             }
         }
@@ -750,6 +883,7 @@ impl PdfViewer {
     fn open_pdf_dialog(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.close_command_panel(cx);
         self.close_recent_popup(cx);
+        self.close_bookmark_popup(cx);
 
         let picker = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -1018,6 +1152,10 @@ impl PdfViewer {
             self.close_recent_popup(cx);
             changed = true;
         }
+        if self.bookmark_popup_open {
+            self.close_bookmark_popup(cx);
+            changed = true;
+        }
         if self.about_dialog_open {
             self.about_dialog_open = false;
             changed = true;
@@ -1263,6 +1401,9 @@ impl PdfViewer {
         }
         if self.recent_popup_open {
             self.close_recent_popup(cx);
+        }
+        if self.bookmark_popup_open {
+            self.close_bookmark_popup(cx);
         }
         if self.settings_dialog_open {
             self.settings_dialog_open = false;
@@ -2002,6 +2143,468 @@ impl PdfViewer {
                 (path, last_seen)
             })
             .collect()
+    }
+
+    fn current_bookmark_entry(&self) -> Option<BookmarkEntry> {
+        let tab = self.active_tab()?;
+        let path = tab.path.clone()?;
+        if tab.pages.is_empty() {
+            return None;
+        }
+        Some(BookmarkEntry {
+            path,
+            page_index: tab.active_page.min(tab.pages.len().saturating_sub(1)),
+            created_at_unix_secs: Self::now_unix_secs(),
+        })
+    }
+
+    fn insert_bookmark(&mut self, entry: BookmarkEntry) {
+        self.bookmarks
+            .retain(|item| !(item.path == entry.path && item.page_index == entry.page_index));
+        self.bookmarks.insert(0, entry);
+        self.persist_bookmarks();
+    }
+
+    pub(super) fn add_current_page_bookmark_and_open(&mut self, cx: &mut Context<Self>) {
+        if let Some(entry) = self.current_bookmark_entry() {
+            self.insert_bookmark(entry);
+        }
+
+        if self.recent_popup_open {
+            self.close_recent_popup(cx);
+        }
+
+        self.bookmark_scope = if self.active_tab_path().is_some() {
+            BookmarkScope::CurrentPdf
+        } else {
+            BookmarkScope::All
+        };
+        self.bookmark_popup_list_scroll.scroll_to_item(0);
+        self.bookmark_popup_hover_epoch = self.bookmark_popup_hover_epoch.wrapping_add(1);
+        self.bookmark_popup_open = true;
+        cx.notify();
+    }
+
+    pub(super) fn close_bookmark_popup(&mut self, cx: &mut Context<Self>) {
+        self.bookmark_popup_hover_epoch = self.bookmark_popup_hover_epoch.wrapping_add(1);
+
+        let mut has_changed = false;
+        if self.bookmark_popup_trigger_hovered {
+            self.bookmark_popup_trigger_hovered = false;
+            has_changed = true;
+        }
+        if self.bookmark_popup_panel_hovered {
+            self.bookmark_popup_panel_hovered = false;
+            has_changed = true;
+        }
+        if self.bookmark_popup_open {
+            self.bookmark_popup_open = false;
+            has_changed = true;
+        }
+        if has_changed {
+            cx.notify();
+        }
+    }
+
+    pub(super) fn set_bookmark_popup_trigger_hovered(
+        &mut self,
+        hovered: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.bookmark_popup_trigger_hovered == hovered {
+            return;
+        }
+        self.bookmark_popup_trigger_hovered = hovered;
+        self.update_bookmark_popup_visibility(cx);
+    }
+
+    pub(super) fn set_bookmark_popup_panel_hovered(
+        &mut self,
+        hovered: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.bookmark_popup_panel_hovered == hovered {
+            return;
+        }
+        self.bookmark_popup_panel_hovered = hovered;
+        self.update_bookmark_popup_visibility(cx);
+    }
+
+    fn update_bookmark_popup_visibility(&mut self, cx: &mut Context<Self>) {
+        if self.bookmark_popup_trigger_hovered || self.bookmark_popup_panel_hovered {
+            self.bookmark_popup_hover_epoch = self.bookmark_popup_hover_epoch.wrapping_add(1);
+            if !self.bookmark_popup_open {
+                self.bookmark_scope = if self.active_tab_path().is_some() {
+                    BookmarkScope::CurrentPdf
+                } else {
+                    BookmarkScope::All
+                };
+                self.bookmark_popup_list_scroll.scroll_to_item(0);
+                self.bookmark_popup_open = true;
+                cx.notify();
+            }
+            return;
+        }
+
+        self.bookmark_popup_hover_epoch = self.bookmark_popup_hover_epoch.wrapping_add(1);
+        let close_epoch = self.bookmark_popup_hover_epoch;
+
+        cx.spawn(async move |view, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(BOOKMARK_POPUP_CLOSE_DELAY_MS))
+                .await;
+
+            let _ = view.update(cx, |this, cx| {
+                if this.bookmark_popup_hover_epoch != close_epoch {
+                    return;
+                }
+                if this.bookmark_popup_trigger_hovered || this.bookmark_popup_panel_hovered {
+                    return;
+                }
+                if this.bookmark_popup_open {
+                    this.bookmark_popup_open = false;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    pub(super) fn set_bookmark_scope(&mut self, scope: BookmarkScope, cx: &mut Context<Self>) {
+        if self.bookmark_scope == scope {
+            return;
+        }
+        self.bookmark_scope = scope;
+        self.bookmark_popup_list_scroll.scroll_to_item(0);
+        cx.notify();
+    }
+
+    pub(super) fn bookmarks_for_scope(&self, scope: BookmarkScope) -> Vec<BookmarkEntry> {
+        let current_path = self.active_tab_path();
+        self.bookmarks
+            .iter()
+            .filter(|item| match scope {
+                BookmarkScope::All => true,
+                BookmarkScope::CurrentPdf => current_path == Some(&item.path),
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub(super) fn active_tab_page_bookmarked(&self, page_index: usize) -> bool {
+        let Some(path) = self.active_tab_path() else {
+            return false;
+        };
+        self.bookmarks
+            .iter()
+            .any(|item| item.path == *path && item.page_index == page_index)
+    }
+
+    fn open_bookmark(&mut self, bookmark: BookmarkEntry, cx: &mut Context<Self>) {
+        if !bookmark.path.exists() {
+            let original_len = self.bookmarks.len();
+            self.bookmarks.retain(|item| item.path != bookmark.path);
+            if self.bookmarks.len() != original_len {
+                self.persist_bookmarks();
+                cx.notify();
+            }
+            return;
+        }
+
+        self.save_file_position(&bookmark.path, bookmark.page_index);
+
+        let existing_tab_id = self
+            .tab_bar
+            .tabs()
+            .iter()
+            .find(|tab| tab.path.as_ref() == Some(&bookmark.path))
+            .map(|tab| tab.id);
+
+        if let Some(tab_id) = existing_tab_id {
+            self.switch_to_tab(tab_id, cx);
+            if let Some(tab) = self.active_tab()
+                && tab.path.as_ref() == Some(&bookmark.path)
+                && !tab.pages.is_empty()
+            {
+                let target = bookmark.page_index.min(tab.pages.len().saturating_sub(1));
+                self.select_page(target, cx);
+            }
+            self.close_bookmark_popup(cx);
+            return;
+        }
+
+        self.open_recent_pdf(bookmark.path, cx);
+        self.close_bookmark_popup(cx);
+    }
+
+    fn delete_bookmark(&mut self, bookmark: &BookmarkEntry, cx: &mut Context<Self>) {
+        let original_len = self.bookmarks.len();
+        self.bookmarks
+            .retain(|item| !(item.path == bookmark.path && item.page_index == bookmark.page_index));
+        if self.bookmarks.len() != original_len {
+            self.persist_bookmarks();
+            cx.notify();
+        }
+    }
+
+    pub(super) fn render_bookmark_popup_panel(
+        popup_id: &'static str,
+        i18n: I18n,
+        viewer: Entity<Self>,
+        scope: BookmarkScope,
+        bookmarks: Vec<BookmarkEntry>,
+        scroll_handle: &ScrollHandle,
+        cx: &mut Context<PopoverState>,
+    ) -> AnyElement {
+        let now_unix_secs = Self::now_unix_secs();
+        div()
+            .id(popup_id)
+            .relative()
+            .top(px(-1.))
+            .w(px(340.))
+            .v_flex()
+            .gap_2()
+            .popover_style(cx)
+            .p_2()
+            .on_hover({
+                let viewer = viewer.clone();
+                move |hovered, _, cx| {
+                    let _ = viewer.update(cx, |this, cx| {
+                        this.set_bookmark_popup_panel_hovered(*hovered, cx);
+                    });
+                }
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                }),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div().flex_1().child(
+                            Button::new("bookmark-scope-current")
+                                .small()
+                                .w_full()
+                                .label(i18n.bookmark_scope_current_pdf())
+                                .when(scope != BookmarkScope::CurrentPdf, |this| this.ghost())
+                                .on_click({
+                                    let viewer = viewer.clone();
+                                    move |_, _, cx| {
+                                        let _ = viewer.update(cx, |this, cx| {
+                                            this.set_bookmark_scope(BookmarkScope::CurrentPdf, cx);
+                                        });
+                                    }
+                                }),
+                        ),
+                    )
+                    .child(
+                        div().flex_1().child(
+                            Button::new("bookmark-scope-all")
+                                .small()
+                                .w_full()
+                                .label(i18n.bookmark_scope_all())
+                                .when(scope != BookmarkScope::All, |this| this.ghost())
+                                .on_click({
+                                    let viewer = viewer.clone();
+                                    move |_, _, cx| {
+                                        let _ = viewer.update(cx, |this, cx| {
+                                            this.set_bookmark_scope(BookmarkScope::All, cx);
+                                        });
+                                    }
+                                }),
+                        ),
+                    ),
+            )
+            .child(div().h(px(1.)).bg(cx.theme().border))
+            .when(bookmarks.is_empty(), |this| {
+                this.child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(i18n.no_bookmarks()),
+                )
+            })
+            .when(!bookmarks.is_empty(), |this| {
+                this.child(
+                    div()
+                        .id("bookmark-list-scroll-wrap")
+                        .w_full()
+                        .max_h(px(RECENT_FILES_LIST_MAX_HEIGHT))
+                        .relative()
+                        .child(
+                            div()
+                                .id("bookmark-list-scroll")
+                                .w_full()
+                                .max_h(px(RECENT_FILES_LIST_MAX_HEIGHT))
+                                .overflow_y_scroll()
+                                .track_scroll(scroll_handle)
+                                .pr(px(10.))
+                                .v_flex()
+                                .gap_1()
+                                .children(
+                                    bookmarks
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(ix, bookmark)| {
+                                            let bookmark = bookmark.clone();
+                                            let bookmark_for_delete = bookmark.clone();
+                                            let bookmark_for_open = bookmark.clone();
+                                            let file_name = display_file_name(&bookmark.path);
+                                            let page_label =
+                                                i18n.bookmark_page_label(bookmark.page_index + 1);
+                                            let path_text = bookmark.path.display().to_string();
+                                            let added_time_label =
+                                                if bookmark.created_at_unix_secs == 0 {
+                                                    i18n.bookmark_added_unknown().to_string()
+                                                } else {
+                                                    i18n.bookmark_added_relative(
+                                                        now_unix_secs.saturating_sub(
+                                                            bookmark.created_at_unix_secs,
+                                                        ),
+                                                    )
+                                                };
+                                            div()
+                                                .id(("bookmark-item", ix))
+                                                .w_full()
+                                                .rounded_md()
+                                                .px_2()
+                                                .py_1()
+                                                .cursor_pointer()
+                                                .hover(|this| {
+                                                    this.bg(cx.theme().secondary.opacity(0.6))
+                                                })
+                                                .active(|this| {
+                                                    this.bg(cx.theme().secondary.opacity(0.9))
+                                                })
+                                                .child(
+                                                    div()
+                                                        .w_full()
+                                                        .flex()
+                                                        .items_start()
+                                                        .gap_2()
+                                                        .child(
+                                                            div()
+                                                                .flex_1()
+                                                                .v_flex()
+                                                                .items_start()
+                                                                .gap_1()
+                                                                .child(
+                                                                    div()
+                                                                        .w_full()
+                                                                        .text_sm()
+                                                                        .text_color(
+                                                                            cx.theme()
+                                                                                .popover_foreground,
+                                                                        )
+                                                                        .child(page_label),
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .w_full()
+                                                                        .whitespace_normal()
+                                                                        .text_xs()
+                                                                        .text_color(
+                                                                            cx.theme()
+                                                                                .muted_foreground,
+                                                                        )
+                                                                        .child(file_name),
+                                                                )
+                                                                .when(
+                                                                    scope == BookmarkScope::All,
+                                                                    |this| {
+                                                                        this.child(
+                                                                            div()
+                                                                                .w_full()
+                                                                                .whitespace_normal()
+                                                                                .text_xs()
+                                                                                .text_color(
+                                                                                    cx.theme()
+                                                                                        .muted_foreground,
+                                                                                )
+                                                                                .child(path_text),
+                                                                        )
+                                                                    },
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .w_full()
+                                                                        .whitespace_normal()
+                                                                        .text_xs()
+                                                                        .text_color(
+                                                                            cx.theme()
+                                                                                .muted_foreground,
+                                                                        )
+                                                                        .child(added_time_label),
+                                                                ),
+                                                        )
+                                                        .child(
+                                                            Button::new(("bookmark-delete", ix))
+                                                                .xsmall()
+                                                                .ghost()
+                                                                .icon(
+                                                                    Icon::new(
+                                                                        crate::icons::IconName::BookmarkMinus,
+                                                                    )
+                                                                    .size_4()
+                                                                    .text_color(
+                                                                        cx.theme().muted_foreground,
+                                                                    ),
+                                                                )
+                                                                .on_click({
+                                                                    let viewer = viewer.clone();
+                                                                    move |_, _, cx| {
+                                                                        let bookmark =
+                                                                            bookmark_for_delete
+                                                                                .clone();
+                                                                        let _ = viewer.update(
+                                                                            cx,
+                                                                            |this, cx| {
+                                                                                this.delete_bookmark(
+                                                                                    &bookmark, cx,
+                                                                                );
+                                                                            },
+                                                                        );
+                                                                    }
+                                                                }),
+                                                        ),
+                                                )
+                                                .on_click({
+                                                    let viewer = viewer.clone();
+                                                    move |_, _, cx| {
+                                                        let bookmark = bookmark_for_open.clone();
+                                                        let _ = viewer.update(cx, |this, cx| {
+                                                            this.open_bookmark(bookmark, cx);
+                                                        });
+                                                    }
+                                                })
+                                                .into_any_element()
+                                        })
+                                        .collect::<Vec<_>>(),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .right_0()
+                                .bottom_0()
+                                .child(
+                                    Scrollbar::vertical(scroll_handle)
+                                        .scrollbar_show(ScrollbarShow::Always),
+                                ),
+                        ),
+                )
+            })
+            .into_any_element()
     }
 
     fn render_recent_files_list_content(
@@ -3508,6 +4111,7 @@ impl Render for PdfViewer {
                         MouseButton::Left,
                         cx.listener(|this, _, window, cx| {
                             this.close_context_menu(cx);
+                            this.close_bookmark_popup(cx);
                             window.focus(&this.focus_handle);
                         }),
                     )
