@@ -251,7 +251,7 @@ impl PdfViewer {
                         self.check_for_updates(cx);
                     }
                     CommandPanelMenuAction::ShowSettings => {
-                        self.open_settings_dialog(cx);
+                        self.open_settings_dialog(window, cx);
                     }
                     CommandPanelMenuAction::OpenLogs => {
                         self.open_logs_directory();

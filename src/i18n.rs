@@ -300,6 +300,62 @@ impl I18n {
         }
     }
 
+    pub fn settings_theme_section(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "主题",
+            Language::EnUs => "Theme",
+        }
+    }
+
+    pub fn settings_theme_label(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "应用主题",
+            Language::EnUs => "App Theme",
+        }
+    }
+
+    pub fn settings_theme_hint(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "切换浅色或深色界面风格",
+            Language::EnUs => "Switch between light and dark appearance",
+        }
+    }
+
+    pub fn settings_theme_color_label(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "主题色",
+            Language::EnUs => "Theme Color",
+        }
+    }
+
+    pub fn settings_theme_color_hint(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "切换当前主题模式下的配色方案",
+            Language::EnUs => "Switch color palette for the current theme mode",
+        }
+    }
+
+    pub fn settings_theme_color_placeholder(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "选择主题色",
+            Language::EnUs => "Select theme color",
+        }
+    }
+
+    pub fn settings_theme_light(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "浅色",
+            Language::EnUs => "Light",
+        }
+    }
+
+    pub fn settings_theme_dark(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "深色",
+            Language::EnUs => "Dark",
+        }
+    }
+
     pub fn settings_titlebar_section(self) -> &'static str {
         match self.lang {
             Language::ZhCn => "标题栏",

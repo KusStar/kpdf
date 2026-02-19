@@ -27,6 +27,7 @@ use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{InputEvent, InputState};
 use gpui_component::popover::{Popover, PopoverState};
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
+use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectState};
 use gpui_component::{button::*, *};
 #[cfg(target_os = "windows")]
 use raw_window_handle::RawWindowHandle;
@@ -101,12 +102,16 @@ const FILE_POSITIONS_TREE: &str = "file_positions";
 const WINDOW_SIZE_TREE: &str = "window_size";
 const OPEN_TABS_TREE: &str = "open_tabs";
 const TITLEBAR_PREFERENCES_TREE: &str = "titlebar_preferences";
+const THEME_PREFERENCES_TREE: &str = "theme_preferences";
 const BOOKMARKS_TREE: &str = "bookmarks";
 const WINDOW_SIZE_KEY_WIDTH: &str = "width";
 const WINDOW_SIZE_KEY_HEIGHT: &str = "height";
 const OPEN_TABS_KEY_ACTIVE_INDEX: &str = "active_index";
 const TITLEBAR_PREFERENCES_KEY_SHOW_NAVIGATION: &str = "show_navigation";
 const TITLEBAR_PREFERENCES_KEY_SHOW_ZOOM: &str = "show_zoom";
+const THEME_PREFERENCES_KEY_MODE: &str = "mode";
+const THEME_PREFERENCES_KEY_LIGHT_NAME: &str = "light_name";
+const THEME_PREFERENCES_KEY_DARK_NAME: &str = "dark_name";
 const TITLE_BAR_HEIGHT: f32 = 34.0;
 const TAB_BAR_HEIGHT: f32 = 36.0;
 const TAB_DRAG_START_DISTANCE: f32 = 4.0;
@@ -185,8 +190,12 @@ pub struct PdfViewer {
     window_size_store: Option<sled::Tree>,
     open_tabs_store: Option<sled::Tree>,
     titlebar_preferences_store: Option<sled::Tree>,
+    theme_preferences_store: Option<sled::Tree>,
     bookmarks_store: Option<sled::Tree>,
     last_window_size: Option<(f32, f32)>,
+    theme_mode: ThemeMode,
+    preferred_light_theme_name: Option<String>,
+    preferred_dark_theme_name: Option<String>,
     titlebar_preferences: TitleBarVisibilityPreferences,
     recent_files: Vec<PathBuf>,
     recent_popup_open: bool,
@@ -214,6 +223,9 @@ pub struct PdfViewer {
     recent_home_list_scroll: ScrollHandle,
     command_panel_input_state: Entity<InputState>,
     _command_panel_input_subscription: Subscription,
+    theme_color_select_state: Entity<SelectState<SearchableVec<SharedString>>>,
+    _theme_color_select_subscription: Subscription,
+    _theme_registry_subscription: Subscription,
     context_menu_open: bool,
     context_menu_position: Option<Point<Pixels>>,
     context_menu_tab_id: Option<usize>,
@@ -245,6 +257,7 @@ impl PdfViewer {
             window_size_store,
             open_tabs_store,
             titlebar_preferences_store,
+            theme_preferences_store,
             bookmarks_store,
         ) = Self::open_persistent_stores();
         let recent_files = recent_store
@@ -259,6 +272,16 @@ impl PdfViewer {
             .as_ref()
             .map(Self::load_titlebar_preferences_from_store)
             .unwrap_or_default();
+        let (theme_mode, preferred_light_theme_name, preferred_dark_theme_name) =
+            theme_preferences_store
+                .as_ref()
+                .map(|store| {
+                    Self::load_theme_preferences_from_store(
+                        store,
+                        ThemeMode::from(window.appearance()),
+                    )
+                })
+                .unwrap_or_else(|| (ThemeMode::from(window.appearance()), None, None));
         let bookmarks = bookmarks_store
             .as_ref()
             .map(Self::load_bookmarks_from_store)
@@ -284,6 +307,31 @@ impl PdfViewer {
                 }
             },
         );
+        let theme_color_select_state = cx.new(|cx| {
+            SelectState::new(
+                SearchableVec::new(Vec::<SharedString>::new()),
+                None,
+                window,
+                cx,
+            )
+        });
+        let theme_color_select_state_for_sub = theme_color_select_state.clone();
+        let theme_color_select_subscription = cx.subscribe(
+            &theme_color_select_state_for_sub,
+            |this, _, event: &SelectEvent<SearchableVec<SharedString>>, cx| {
+                let SelectEvent::Confirm(theme_name) = event;
+                let Some(theme_name) = theme_name.as_ref() else {
+                    return;
+                };
+                this.set_theme_color_by_name(this.theme_mode, theme_name.as_ref(), cx);
+            },
+        );
+        let theme_registry_subscription =
+            cx.observe_global_in::<ThemeRegistry>(window, |this, window, cx| {
+                this.apply_theme_preferences(Some(window), cx);
+                this.sync_theme_color_select(window, cx);
+                cx.notify();
+            });
 
         let mut tab_bar = TabBar::new();
         let mut tabs_to_restore = Vec::new();
@@ -316,8 +364,12 @@ impl PdfViewer {
             window_size_store,
             open_tabs_store,
             titlebar_preferences_store,
+            theme_preferences_store,
             bookmarks_store,
             last_window_size: None,
+            theme_mode,
+            preferred_light_theme_name,
+            preferred_dark_theme_name,
             titlebar_preferences,
             recent_files,
             recent_popup_open: false,
@@ -345,6 +397,9 @@ impl PdfViewer {
             recent_home_list_scroll: ScrollHandle::new(),
             command_panel_input_state,
             _command_panel_input_subscription: command_panel_input_subscription,
+            theme_color_select_state,
+            _theme_color_select_subscription: theme_color_select_subscription,
+            _theme_registry_subscription: theme_registry_subscription,
             context_menu_open: false,
             context_menu_position: None,
             context_menu_tab_id: None,
@@ -359,6 +414,8 @@ impl PdfViewer {
             resize_restore_epoch: 0,
         };
 
+        viewer.apply_theme_preferences(Some(window), cx);
+        viewer.sync_theme_color_select(window, cx);
         viewer.persist_open_tabs();
         if !tabs_to_restore.is_empty()
             && let Err(err) = ensure_pdfium_ready(language)
@@ -404,12 +461,13 @@ impl PdfViewer {
         Option<sled::Tree>,
         Option<sled::Tree>,
         Option<sled::Tree>,
+        Option<sled::Tree>,
     ) {
         let db_path = Self::recent_files_db_path();
         if let Some(parent) = db_path.parent() {
             if std::fs::create_dir_all(parent).is_err() {
                 crate::debug_log!("[store] create dir failed: {}", parent.to_string_lossy());
-                return (None, None, None, None, None, None);
+                return (None, None, None, None, None, None, None);
             }
         }
 
@@ -421,7 +479,7 @@ impl PdfViewer {
                     db_path.to_string_lossy(),
                     err
                 );
-                return (None, None, None, None, None, None);
+                return (None, None, None, None, None, None, None);
             }
         };
 
@@ -468,6 +526,17 @@ impl PdfViewer {
                 None
             }
         };
+        let theme_preferences_store = match db.open_tree(THEME_PREFERENCES_TREE) {
+            Ok(tree) => Some(tree),
+            Err(err) => {
+                crate::debug_log!(
+                    "[store] open tree failed: {} | {}",
+                    THEME_PREFERENCES_TREE,
+                    err
+                );
+                None
+            }
+        };
         let bookmarks_store = match db.open_tree(BOOKMARKS_TREE) {
             Ok(tree) => Some(tree),
             Err(err) => {
@@ -477,12 +546,13 @@ impl PdfViewer {
         };
 
         crate::debug_log!(
-            "[store] init recent={} positions={} window_size={} open_tabs={} titlebar_preferences={} bookmarks={} path={}",
+            "[store] init recent={} positions={} window_size={} open_tabs={} titlebar_preferences={} theme_preferences={} bookmarks={} path={}",
             recent_store.is_some(),
             position_store.is_some(),
             window_size_store.is_some(),
             open_tabs_store.is_some(),
             titlebar_preferences_store.is_some(),
+            theme_preferences_store.is_some(),
             bookmarks_store.is_some(),
             db_path.to_string_lossy()
         );
@@ -493,6 +563,7 @@ impl PdfViewer {
             window_size_store,
             open_tabs_store,
             titlebar_preferences_store,
+            theme_preferences_store,
             bookmarks_store,
         )
     }
@@ -624,6 +695,15 @@ impl PdfViewer {
         raw.first().copied().map(|v| v != 0).unwrap_or(default)
     }
 
+    fn decode_stored_string(value: Option<sled::IVec>) -> Option<String> {
+        let raw = value?;
+        let value = String::from_utf8(raw.to_vec()).ok()?;
+        if value.is_empty() {
+            return None;
+        }
+        Some(value)
+    }
+
     fn load_titlebar_preferences_from_store(store: &sled::Tree) -> TitleBarVisibilityPreferences {
         let default = TitleBarVisibilityPreferences::default();
         TitleBarVisibilityPreferences {
@@ -639,6 +719,25 @@ impl PdfViewer {
                 default.show_zoom,
             ),
         }
+    }
+
+    fn load_theme_preferences_from_store(
+        store: &sled::Tree,
+        default_mode: ThemeMode,
+    ) -> (ThemeMode, Option<String>, Option<String>) {
+        let mode = match store.get(THEME_PREFERENCES_KEY_MODE).ok().flatten() {
+            Some(raw) => match raw.as_ref() {
+                b"light" => ThemeMode::Light,
+                b"dark" => ThemeMode::Dark,
+                _ => default_mode,
+            },
+            None => default_mode,
+        };
+        let light_name =
+            Self::decode_stored_string(store.get(THEME_PREFERENCES_KEY_LIGHT_NAME).ok().flatten());
+        let dark_name =
+            Self::decode_stored_string(store.get(THEME_PREFERENCES_KEY_DARK_NAME).ok().flatten());
+        (mode, light_name, dark_name)
     }
 
     fn persist_titlebar_preferences(&self) {
@@ -662,6 +761,45 @@ impl PdfViewer {
             )
             .is_err()
         {
+            return;
+        }
+
+        let _ = store.flush();
+    }
+
+    fn persist_theme_preferences(&self) {
+        let Some(store) = self.theme_preferences_store.as_ref() else {
+            return;
+        };
+
+        let stored_value = match self.theme_mode {
+            ThemeMode::Light => b"light".as_slice(),
+            ThemeMode::Dark => b"dark".as_slice(),
+        };
+        if store
+            .insert(THEME_PREFERENCES_KEY_MODE, stored_value)
+            .is_err()
+        {
+            return;
+        }
+        if let Some(light_name) = self.preferred_light_theme_name.as_ref() {
+            if store
+                .insert(THEME_PREFERENCES_KEY_LIGHT_NAME, light_name.as_bytes())
+                .is_err()
+            {
+                return;
+            }
+        } else if store.remove(THEME_PREFERENCES_KEY_LIGHT_NAME).is_err() {
+            return;
+        }
+        if let Some(dark_name) = self.preferred_dark_theme_name.as_ref() {
+            if store
+                .insert(THEME_PREFERENCES_KEY_DARK_NAME, dark_name.as_bytes())
+                .is_err()
+            {
+                return;
+            }
+        } else if store.remove(THEME_PREFERENCES_KEY_DARK_NAME).is_err() {
             return;
         }
 
@@ -1145,7 +1283,7 @@ impl PdfViewer {
         .detach();
     }
 
-    fn open_settings_dialog(&mut self, cx: &mut Context<Self>) {
+    fn open_settings_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut changed = false;
         if self.command_panel_open {
             self.close_command_panel(cx);
@@ -1167,6 +1305,7 @@ impl PdfViewer {
             self.settings_dialog_open = true;
             changed = true;
         }
+        self.sync_theme_color_select(window, cx);
         if changed {
             cx.notify();
         }
@@ -1189,6 +1328,109 @@ impl PdfViewer {
         cx.notify();
     }
 
+    fn active_theme_name_for_mode(&self, mode: ThemeMode, cx: &Context<Self>) -> SharedString {
+        let theme = cx.theme();
+        if mode == ThemeMode::Dark {
+            theme.dark_theme.name.clone()
+        } else {
+            theme.light_theme.name.clone()
+        }
+    }
+
+    fn available_theme_names_for_mode(mode: ThemeMode, cx: &Context<Self>) -> Vec<SharedString> {
+        ThemeRegistry::global(cx)
+            .sorted_themes()
+            .into_iter()
+            .filter(|theme| theme.mode == mode)
+            .map(|theme| theme.name.clone())
+            .collect()
+    }
+
+    fn apply_theme_preferences(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) {
+        let (selected_light_theme, selected_dark_theme) = {
+            let registry = ThemeRegistry::global(cx);
+            let themes = registry.themes();
+
+            let selected_light_theme = self
+                .preferred_light_theme_name
+                .as_ref()
+                .and_then(|name| themes.get(name.as_str()).cloned())
+                .filter(|theme| theme.mode == ThemeMode::Light)
+                .unwrap_or_else(|| registry.default_light_theme().clone());
+            let selected_dark_theme = self
+                .preferred_dark_theme_name
+                .as_ref()
+                .and_then(|name| themes.get(name.as_str()).cloned())
+                .filter(|theme| theme.mode == ThemeMode::Dark)
+                .unwrap_or_else(|| registry.default_dark_theme().clone());
+            (selected_light_theme, selected_dark_theme)
+        };
+
+        {
+            let theme = Theme::global_mut(cx);
+            theme.light_theme = selected_light_theme;
+            theme.dark_theme = selected_dark_theme;
+        }
+
+        if let Some(window) = window {
+            Theme::change(self.theme_mode, Some(window), cx);
+        } else {
+            Theme::change(self.theme_mode, None, cx);
+            cx.refresh_windows();
+        }
+    }
+
+    fn sync_theme_color_select(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let theme_names = Self::available_theme_names_for_mode(self.theme_mode, cx);
+        let active_theme_name = self.active_theme_name_for_mode(self.theme_mode, cx);
+        let has_active_theme = theme_names
+            .iter()
+            .any(|name| name.as_ref() == active_theme_name.as_ref());
+
+        self.theme_color_select_state.update(cx, |state, cx| {
+            state.set_items(SearchableVec::new(theme_names.clone()), window, cx);
+            if has_active_theme {
+                state.set_selected_value(&active_theme_name, window, cx);
+            } else {
+                state.set_selected_index(None, window, cx);
+            }
+        });
+    }
+
+    fn set_theme_color_by_name(
+        &mut self,
+        mode: ThemeMode,
+        theme_name: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if mode == ThemeMode::Dark {
+            if self.preferred_dark_theme_name.as_deref() == Some(theme_name) {
+                return;
+            }
+            self.preferred_dark_theme_name = Some(theme_name.to_string());
+        } else {
+            if self.preferred_light_theme_name.as_deref() == Some(theme_name) {
+                return;
+            }
+            self.preferred_light_theme_name = Some(theme_name.to_string());
+        }
+
+        self.persist_theme_preferences();
+        self.apply_theme_preferences(None, cx);
+        cx.notify();
+    }
+
+    fn set_theme_mode(&mut self, mode: ThemeMode, window: &mut Window, cx: &mut Context<Self>) {
+        if self.theme_mode == mode {
+            return;
+        }
+        self.theme_mode = mode;
+        self.persist_theme_preferences();
+        self.apply_theme_preferences(Some(window), cx);
+        self.sync_theme_color_select(window, cx);
+        cx.notify();
+    }
+
     fn set_titlebar_zoom_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         if self.titlebar_preferences.show_zoom == visible {
             return;
@@ -1204,6 +1446,8 @@ impl PdfViewer {
         }
 
         let i18n = self.i18n();
+        let has_theme_color_options =
+            !Self::available_theme_names_for_mode(self.theme_mode, cx).is_empty();
 
         Some(
             div()
@@ -1261,6 +1505,137 @@ impl PdfViewer {
                                     div()
                                         .v_flex()
                                         .gap_2()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child(i18n.settings_theme_section()),
+                                        )
+                                        .child(
+                                            div()
+                                                .w_full()
+                                                .rounded_md()
+                                                .border_1()
+                                                .border_color(cx.theme().border)
+                                                .p_3()
+                                                .v_flex()
+                                                .gap_3()
+                                                .child(
+                                                    div()
+                                                        .w_full()
+                                                        .flex()
+                                                        .items_start()
+                                                        .justify_between()
+                                                        .gap_3()
+                                                        .child(
+                                                            div()
+                                                                .flex_1()
+                                                                .v_flex()
+                                                                .items_start()
+                                                                .gap_1()
+                                                                .child(
+                                                                    div()
+                                                                        .text_sm()
+                                                                        .text_color(cx.theme().foreground)
+                                                                        .child(
+                                                                            i18n.settings_theme_label(),
+                                                                        ),
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .text_xs()
+                                                                        .text_color(
+                                                                            cx.theme()
+                                                                                .muted_foreground,
+                                                                        )
+                                                                        .whitespace_normal()
+                                                                        .child(i18n.settings_theme_hint()),
+                                                                ),
+                                                        )
+                                                        .child(
+                                                            ButtonGroup::new("settings-theme-mode")
+                                                                .small()
+                                                                .outline()
+                                                                .child(
+                                                                    Button::new("settings-theme-light")
+                                                                        .label(i18n.settings_theme_light())
+                                                                        .selected(
+                                                                            self.theme_mode
+                                                                                == ThemeMode::Light,
+                                                                        ),
+                                                                )
+                                                                .child(
+                                                                    Button::new("settings-theme-dark")
+                                                                        .label(i18n.settings_theme_dark())
+                                                                        .selected(
+                                                                            self.theme_mode
+                                                                                == ThemeMode::Dark,
+                                                                        ),
+                                                                )
+                                                                .on_click(cx.listener(
+                                                                    |this, selected: &Vec<usize>, window, cx| {
+                                                                        let mode = if selected.first().copied()
+                                                                            == Some(1)
+                                                                        {
+                                                                            ThemeMode::Dark
+                                                                        } else {
+                                                                            ThemeMode::Light
+                                                                        };
+                                                                        this.set_theme_mode(mode, window, cx);
+                                                                    },
+                                                                )),
+                                                        ),
+                                                )
+                                                .child(div().h(px(1.)).bg(cx.theme().border))
+                                                .child(
+                                                    div()
+                                                        .w_full()
+                                                        .flex()
+                                                        .items_start()
+                                                        .justify_between()
+                                                        .gap_3()
+                                                        .child(
+                                                            div()
+                                                                .flex_1()
+                                                                .v_flex()
+                                                                .items_start()
+                                                                .gap_1()
+                                                                .child(
+                                                                    div()
+                                                                        .text_sm()
+                                                                        .text_color(cx.theme().foreground)
+                                                                        .child(
+                                                                            i18n.settings_theme_color_label(),
+                                                                        ),
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .text_xs()
+                                                                        .text_color(
+                                                                            cx.theme().muted_foreground,
+                                                                        )
+                                                                        .whitespace_normal()
+                                                                        .child(
+                                                                            i18n.settings_theme_color_hint(),
+                                                                        ),
+                                                                ),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .w(px(200.))
+                                                                .child(
+                                                                    Select::new(
+                                                                        &self.theme_color_select_state,
+                                                                    )
+                                                                    .small()
+                                                                    .disabled(!has_theme_color_options)
+                                                                    .placeholder(
+                                                                        i18n.settings_theme_color_placeholder(),
+                                                                    ),
+                                                                ),
+                                                        ),
+                                                ),
+                                        )
                                         .child(
                                             div()
                                                 .text_sm()
@@ -4110,8 +4485,8 @@ impl Render for PdfViewer {
                 this.open_about_dialog(cx);
                 this.check_for_updates(cx);
             }))
-            .on_action(cx.listener(|this, _: &ShowSettingsMenu, _, cx| {
-                this.open_settings_dialog(cx);
+            .on_action(cx.listener(|this, _: &ShowSettingsMenu, window, cx| {
+                this.open_settings_dialog(window, cx);
             }))
             .on_action(cx.listener(|this, _: &EnableLoggingMenu, _, cx| {
                 if crate::logger::enable_file_logging() {

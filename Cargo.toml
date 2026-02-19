@@ -33,7 +33,7 @@ windows = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsA
 product-name = "kPDF"
 identifier = "com.kuss.kpdf"
 before-packaging-command = "cargo build --release"
-resources = ["lib"]
+resources = ["lib", "assets/themes"]
 icons = ["assets/app.icns", "assets/app.ico"]
 
 [package.metadata.packager.nsis]
