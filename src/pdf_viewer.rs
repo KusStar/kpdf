@@ -141,7 +141,7 @@ const ABOUT_DIALOG_WIDTH: f32 = 460.0;
 const SETTINGS_DIALOG_WIDTH: f32 = 520.0;
 const MARKDOWN_NOTE_EDITOR_WIDTH: f32 = 640.0;
 const MARKDOWN_NOTE_EDITOR_INPUT_HEIGHT: f32 = 300.0;
-pub(super) const MARKDOWN_NOTE_MARKER_RADIUS: f32 = 7.0;
+pub(super) const MARKDOWN_NOTE_MARKER_RADIUS: f32 = 9.0;
 #[cfg(target_os = "macos")]
 const TITLE_BAR_CONTENT_LEFT_PADDING: f32 = 80.0;
 #[cfg(not(target_os = "macos"))]
@@ -4328,6 +4328,14 @@ impl PdfViewer {
     }
 
     pub(super) fn text_cursor_style_for_page(&self, page_index: usize) -> gpui::CursorStyle {
+        if let Some(note_id) = self.hovered_markdown_note_id()
+            && self
+                .markdown_note_by_id(note_id)
+                .is_some_and(|note| note.page_index == page_index)
+        {
+            return gpui::CursorStyle::PointingHand;
+        }
+
         let target = self
             .tab_bar
             .active_tab_id()

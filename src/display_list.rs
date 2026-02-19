@@ -7,6 +7,19 @@ use gpui_component::text::TextView;
 use gpui_component::*;
 use std::rc::Rc;
 
+const MARKDOWN_NOTE_BUBBLE_OFFSET_X: f32 = 14.0;
+const MARKDOWN_NOTE_BUBBLE_PADDING: f32 = 8.0;
+
+#[derive(Clone)]
+struct MarkdownNoteMarker {
+    id: u64,
+    x: f32,
+    y: f32,
+    preview: String,
+    bubble_left: f32,
+    bubble_top: f32,
+}
+
 impl PdfViewer {
     pub(super) fn render_display_panel(
         &self,
@@ -184,8 +197,6 @@ impl PdfViewer {
             self.get_selection_rects_for_page(page_index, page_width, page_height, scale);
         let markdown_note_markers =
             self.markdown_note_markers_for_page(page_index, page_width, page_height);
-        let markdown_note_preview =
-            self.hovered_markdown_note_preview_for_page(page_index, page_width, page_height);
 
         // Get page info for coordinate conversion
         let _page_height_pt = page.height_pt;
@@ -235,39 +246,6 @@ impl PdfViewer {
                                 }),
                         )
                     })
-                    .children(markdown_note_markers.iter().map(|(note_id, x, y)| {
-                        let radius = super::MARKDOWN_NOTE_MARKER_RADIUS;
-                        let is_hovered = self.hovered_markdown_note_id() == Some(*note_id);
-                        div()
-                            .absolute()
-                            .left(px(*x - radius))
-                            .top(px(*y - radius))
-                            .w(px(radius * 2.0))
-                            .h(px(radius * 2.0))
-                            .rounded_full()
-                            .border_1()
-                            .border_color(if is_hovered {
-                                gpui::rgb(0x574100)
-                            } else {
-                                gpui::rgb(0x725200)
-                            })
-                            .bg(if is_hovered {
-                                gpui::rgb(0xFFD04D)
-                            } else {
-                                gpui::rgb(0xF4B400)
-                            })
-                            .child(
-                                div()
-                                    .size_full()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .text_xs()
-                                    .text_color(gpui::rgb(0x3B2D00))
-                                    .child("M"),
-                            )
-                            .into_any_element()
-                    }))
                     // Text interaction overlay (transparent, captures mouse events)
                     .child(
                         div()
@@ -293,6 +271,20 @@ impl PdfViewer {
                                             page_width,
                                             window,
                                         );
+
+                                        if let Some(note_id) = this.hit_test_markdown_note_id_on_page(
+                                            page_index,
+                                            local_x,
+                                            local_y,
+                                            page_width,
+                                            page_height,
+                                        ) {
+                                            let _ = this.set_markdown_note_hover_id(Some(note_id));
+                                            this.open_markdown_note_editor_for_edit(
+                                                note_id, window, cx,
+                                            );
+                                            return;
+                                        }
 
                                         this.handle_text_mouse_down(
                                             page_index,
@@ -389,33 +381,76 @@ impl PdfViewer {
                                     .into_any_element()
                             }),
                     )
-                    .when_some(
-                        markdown_note_preview,
-                        |this, (note_id, markdown, left, top)| {
-                            let preview_id: SharedString =
-                                format!("markdown-note-hover-preview-{}", note_id).into();
-                            this.child(
-                                div()
-                                    .absolute()
-                                    .left(px(left))
-                                    .top(px(top))
-                                    .w(px(320.0))
-                                    .h(px(220.0))
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(cx.theme().border)
-                                    .bg(cx.theme().popover)
-                                    .shadow_md()
-                                    .overflow_hidden()
-                                    .p_2()
-                                    .child(
-                                        TextView::markdown(preview_id, markdown, window, cx)
-                                            .scrollable(true)
-                                            .selectable(true),
-                                    ),
+                    .children(markdown_note_markers.iter().map(|marker| {
+                        let is_hovered = self.hovered_markdown_note_id() == Some(marker.id);
+                        let bubble_bg = if is_hovered {
+                            cx.theme().secondary.opacity(0.96)
+                        } else {
+                            cx.theme().secondary.opacity(0.88)
+                        };
+                        let bubble_text = if is_hovered {
+                            cx.theme().foreground
+                        } else {
+                            cx.theme().foreground.opacity(0.92)
+                        };
+                        let note_id = marker.id;
+                        div()
+                            .absolute()
+                            .left(px(marker.bubble_left))
+                            .top(px(marker.bubble_top))
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(gpui::rgb(0x000000))
+                            .bg(bubble_bg)
+                            .shadow_md()
+                            .overflow_hidden()
+                            .px_3()
+                            .py_2()
+                            .cursor_pointer()
+                            .on_mouse_move(cx.listener(
+                                move |this, _: &gpui::MouseMoveEvent, _, cx| {
+                                    if this.set_markdown_note_hover_id(Some(note_id)) {
+                                        cx.notify();
+                                    }
+                                },
+                            ))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |this, _: &gpui::MouseDownEvent, window, cx| {
+                                    let _ = this.set_markdown_note_hover_id(Some(note_id));
+                                    this.open_markdown_note_editor_for_edit(note_id, window, cx);
+                                    cx.stop_propagation();
+                                }),
                             )
-                        },
-                    ),
+                            .on_mouse_down(
+                                gpui::MouseButton::Right,
+                                cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                                    let _ = this.set_markdown_note_hover_id(Some(note_id));
+                                    this.open_page_context_menu(
+                                        event.position,
+                                        None,
+                                        Some(note_id),
+                                        cx,
+                                    );
+                                    cx.stop_propagation();
+                                }),
+                            )
+                            .child({
+                                let preview_id: SharedString =
+                                    format!("markdown-note-bubble-{}", marker.id).into();
+                                div().text_color(bubble_text).child(
+                                    TextView::markdown(
+                                        preview_id,
+                                        marker.preview.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                    .scrollable(false)
+                                    .selectable(false),
+                                )
+                            })
+                            .into_any_element()
+                    }))
             )
             .into_any_element()
     }
@@ -518,7 +553,7 @@ impl PdfViewer {
         page_index: usize,
         page_width_screen: f32,
         page_height_screen: f32,
-    ) -> Vec<(u64, f32, f32)> {
+    ) -> Vec<MarkdownNoteMarker> {
         self.active_tab_markdown_notes_for_page(page_index)
             .into_iter()
             .filter_map(|note| {
@@ -533,51 +568,42 @@ impl PdfViewer {
                     page_width_screen,
                     page_height_screen,
                 )
-                .map(|(x, y)| (note.id, x, y))
+                .map(|(x, y)| {
+                    let preview = Self::note_bubble_preview_text(&note.markdown);
+                    let (bubble_left, bubble_top) =
+                        Self::note_bubble_position(x, y, page_width_screen, page_height_screen);
+                    MarkdownNoteMarker {
+                        id: note.id,
+                        x,
+                        y,
+                        preview,
+                        bubble_left,
+                        bubble_top,
+                    }
+                })
             })
             .collect::<Vec<_>>()
     }
 
-    fn hovered_markdown_note_preview_for_page(
-        &self,
-        page_index: usize,
+    fn note_bubble_preview_text(markdown: &str) -> String {
+        markdown.to_string()
+    }
+
+    fn note_bubble_position(
+        marker_x: f32,
+        marker_y: f32,
         page_width_screen: f32,
         page_height_screen: f32,
-    ) -> Option<(u64, String, f32, f32)> {
-        if self.context_menu_open || self.note_editor_open {
-            return None;
-        }
+    ) -> (f32, f32) {
+        let left_min = MARKDOWN_NOTE_BUBBLE_PADDING;
+        let left_max = (page_width_screen - MARKDOWN_NOTE_BUBBLE_PADDING).max(left_min);
+        let left = (marker_x + MARKDOWN_NOTE_BUBBLE_OFFSET_X).clamp(left_min, left_max);
 
-        let note_id = self.hovered_markdown_note_id()?;
-        let note = self.markdown_note_by_id(note_id)?;
-        let active_path = self.active_tab_path()?;
-        if note.path != *active_path || note.page_index != page_index {
-            return None;
-        }
+        let top_min = MARKDOWN_NOTE_BUBBLE_PADDING;
+        let top_max = (page_height_screen - MARKDOWN_NOTE_BUBBLE_PADDING).max(top_min);
+        let top = marker_y.clamp(top_min, top_max);
 
-        let anchor = super::MarkdownNoteAnchor {
-            page_index,
-            x_ratio: note.x_ratio,
-            y_ratio: note.y_ratio,
-        };
-        let (x, y) = self.note_anchor_to_page_local_screen(
-            page_index,
-            &anchor,
-            page_width_screen,
-            page_height_screen,
-        )?;
-
-        const PREVIEW_WIDTH: f32 = 320.0;
-        const PREVIEW_HEIGHT: f32 = 220.0;
-        const PREVIEW_PADDING: f32 = 8.0;
-        let left_min = PREVIEW_PADDING;
-        let left_max = (page_width_screen - PREVIEW_WIDTH - PREVIEW_PADDING).max(left_min);
-        let top_min = PREVIEW_PADDING;
-        let top_max = (page_height_screen - PREVIEW_HEIGHT - PREVIEW_PADDING).max(top_min);
-        let left = (x + super::MARKDOWN_NOTE_MARKER_RADIUS + 10.0).clamp(left_min, left_max);
-        let top = (y - PREVIEW_HEIGHT * 0.35).clamp(top_min, top_max);
-
-        Some((note_id, note.markdown, left, top))
+        (left, top)
     }
 
     fn hit_test_markdown_note_id_on_page(
@@ -588,13 +614,13 @@ impl PdfViewer {
         page_width_screen: f32,
         page_height_screen: f32,
     ) -> Option<u64> {
-        let hit_radius = super::MARKDOWN_NOTE_MARKER_RADIUS + 2.0;
+        let hit_radius = super::MARKDOWN_NOTE_MARKER_RADIUS + 6.0;
         let markers =
             self.markdown_note_markers_for_page(page_index, page_width_screen, page_height_screen);
-        markers.into_iter().find_map(|(id, marker_x, marker_y)| {
-            let dx = marker_x - local_x;
-            let dy = marker_y - local_y;
-            ((dx * dx + dy * dy) <= hit_radius * hit_radius).then_some(id)
+        markers.into_iter().find_map(|marker| {
+            let dx = marker.x - local_x;
+            let dy = marker.y - local_y;
+            ((dx * dx + dy * dy) <= hit_radius * hit_radius).then_some(marker.id)
         })
     }
 
