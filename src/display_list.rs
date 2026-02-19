@@ -3,6 +3,7 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::button::Button;
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
+use gpui_component::text::TextView;
 use gpui_component::*;
 use std::rc::Rc;
 
@@ -101,9 +102,9 @@ impl PdfViewer {
                                         cx.entity(),
                                         "display-virtual-list",
                                         display_sizes.clone(),
-                                        move |viewer, visible_range, _window, cx| {
+                                        move |viewer, visible_range, window, cx| {
                                             let target_width =
-                                                viewer.display_target_width(_window, zoom);
+                                                viewer.display_target_width(window, zoom);
                                             viewer.request_display_load_for_visible_range(
                                                 visible_range.clone(),
                                                 target_width,
@@ -123,7 +124,7 @@ impl PdfViewer {
                                                         return div().into_any_element();
                                                     };
                                                     let display_base_width =
-                                                        viewer.display_base_width(_window, zoom);
+                                                        viewer.display_base_width(window, zoom);
                                                     let (page_width, display_height) = viewer
                                                         .display_card_size(
                                                             page,
@@ -139,6 +140,7 @@ impl PdfViewer {
                                                         page_width,
                                                         display_height,
                                                         scale,
+                                                        window,
                                                         cx,
                                                     )
                                                 })
@@ -174,11 +176,16 @@ impl PdfViewer {
         page_width: f32,
         page_height: f32,
         scale: f32,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let i18n = self.i18n();
         let selection_rects =
             self.get_selection_rects_for_page(page_index, page_width, page_height, scale);
+        let markdown_note_markers =
+            self.markdown_note_markers_for_page(page_index, page_width, page_height);
+        let markdown_note_preview =
+            self.hovered_markdown_note_preview_for_page(page_index, page_width, page_height);
 
         // Get page info for coordinate conversion
         let _page_height_pt = page.height_pt;
@@ -228,6 +235,39 @@ impl PdfViewer {
                                 }),
                         )
                     })
+                    .children(markdown_note_markers.iter().map(|(note_id, x, y)| {
+                        let radius = super::MARKDOWN_NOTE_MARKER_RADIUS;
+                        let is_hovered = self.hovered_markdown_note_id() == Some(*note_id);
+                        div()
+                            .absolute()
+                            .left(px(*x - radius))
+                            .top(px(*y - radius))
+                            .w(px(radius * 2.0))
+                            .h(px(radius * 2.0))
+                            .rounded_full()
+                            .border_1()
+                            .border_color(if is_hovered {
+                                gpui::rgb(0x574100)
+                            } else {
+                                gpui::rgb(0x725200)
+                            })
+                            .bg(if is_hovered {
+                                gpui::rgb(0xFFD04D)
+                            } else {
+                                gpui::rgb(0xF4B400)
+                            })
+                            .child(
+                                div()
+                                    .size_full()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .text_xs()
+                                    .text_color(gpui::rgb(0x3B2D00))
+                                    .child("M"),
+                            )
+                            .into_any_element()
+                    }))
                     // Text interaction overlay (transparent, captures mouse events)
                     .child(
                         div()
@@ -268,9 +308,41 @@ impl PdfViewer {
                             .on_mouse_down(
                                 gpui::MouseButton::Right,
                                 cx.listener(
-                                    move |this, event: &gpui::MouseDownEvent, _window, cx| {
-                                        if this.has_text_selection() {
-                                            this.open_context_menu(event.position, cx);
+                                    move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                        let (local_x, local_y) = this.calculate_page_coordinates(
+                                            page_index,
+                                            event.position,
+                                            page_width,
+                                            window,
+                                        );
+                                        let note_id = this.hit_test_markdown_note_id_on_page(
+                                            page_index,
+                                            local_x,
+                                            local_y,
+                                            page_width,
+                                            page_height,
+                                        );
+                                        let note_anchor = if note_id.is_some() {
+                                            None
+                                        } else {
+                                            this.page_local_screen_to_note_anchor(
+                                                page_index,
+                                                local_x,
+                                                local_y,
+                                                page_width,
+                                                page_height,
+                                            )
+                                        };
+                                        if note_id.is_some()
+                                            || note_anchor.is_some()
+                                            || this.has_text_selection()
+                                        {
+                                            this.open_page_context_menu(
+                                                event.position,
+                                                note_anchor,
+                                                note_id,
+                                                cx,
+                                            );
                                         }
                                     },
                                 ),
@@ -316,9 +388,214 @@ impl PdfViewer {
                                     .opacity(0.3)
                                     .into_any_element()
                             }),
+                    )
+                    .when_some(
+                        markdown_note_preview,
+                        |this, (note_id, markdown, left, top)| {
+                            let preview_id: SharedString =
+                                format!("markdown-note-hover-preview-{}", note_id).into();
+                            this.child(
+                                div()
+                                    .absolute()
+                                    .left(px(left))
+                                    .top(px(top))
+                                    .w(px(320.0))
+                                    .h(px(220.0))
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(cx.theme().border)
+                                    .bg(cx.theme().popover)
+                                    .shadow_md()
+                                    .overflow_hidden()
+                                    .p_2()
+                                    .child(
+                                        TextView::markdown(preview_id, markdown, window, cx)
+                                            .scrollable(true)
+                                            .selectable(true),
+                                    ),
+                            )
+                        },
                     ),
             )
             .into_any_element()
+    }
+
+    fn page_content_transform(
+        page_width_pt: f32,
+        page_height_pt: f32,
+        page_width_screen: f32,
+        page_height_screen: f32,
+        scale: f32,
+    ) -> Option<(f32, f32, f32, f32)> {
+        if page_width_pt <= 0.0
+            || page_height_pt <= 0.0
+            || page_width_screen <= 0.0
+            || page_height_screen <= 0.0
+            || scale <= 0.0
+        {
+            return None;
+        }
+
+        let container_aspect = page_width_screen / page_height_screen;
+        let content_aspect = page_width_pt / page_height_pt;
+        let (content_width, content_height) = if content_aspect > container_aspect {
+            (page_width_screen, page_height_pt * scale)
+        } else {
+            (page_width_pt * scale, page_height_screen)
+        };
+        let x_offset = (page_width_screen - content_width) / 2.0;
+        let y_offset = (page_height_screen - content_height) / 2.0;
+        Some((content_width, content_height, x_offset, y_offset))
+    }
+
+    fn page_local_screen_to_note_anchor(
+        &self,
+        page_index: usize,
+        local_x: f32,
+        local_y: f32,
+        page_width_screen: f32,
+        page_height_screen: f32,
+    ) -> Option<super::MarkdownNoteAnchor> {
+        let page = self.active_tab_pages()?.get(page_index)?;
+        if page.width_pt <= 0.0 || page.height_pt <= 0.0 {
+            return None;
+        }
+        let scale = page_width_screen / page.width_pt;
+        let (content_width, content_height, x_offset, y_offset) = Self::page_content_transform(
+            page.width_pt,
+            page.height_pt,
+            page_width_screen,
+            page_height_screen,
+            scale,
+        )?;
+        let content_x = local_x - x_offset;
+        let content_y = local_y - y_offset;
+        if content_x < 0.0
+            || content_x > content_width
+            || content_y < 0.0
+            || content_y > content_height
+        {
+            return None;
+        }
+
+        let pdf_x = content_x / scale;
+        let pdf_y = (content_height - content_y) / scale;
+        Some(super::MarkdownNoteAnchor {
+            page_index,
+            x_ratio: (pdf_x / page.width_pt).clamp(0.0, 1.0),
+            y_ratio: (pdf_y / page.height_pt).clamp(0.0, 1.0),
+        })
+    }
+
+    fn note_anchor_to_page_local_screen(
+        &self,
+        page_index: usize,
+        anchor: &super::MarkdownNoteAnchor,
+        page_width_screen: f32,
+        page_height_screen: f32,
+    ) -> Option<(f32, f32)> {
+        let page = self.active_tab_pages()?.get(page_index)?;
+        if page.width_pt <= 0.0 || page.height_pt <= 0.0 {
+            return None;
+        }
+        let scale = page_width_screen / page.width_pt;
+        let (_content_width, content_height, x_offset, y_offset) = Self::page_content_transform(
+            page.width_pt,
+            page.height_pt,
+            page_width_screen,
+            page_height_screen,
+            scale,
+        )?;
+        let pdf_x = anchor.x_ratio.clamp(0.0, 1.0) * page.width_pt;
+        let pdf_y = anchor.y_ratio.clamp(0.0, 1.0) * page.height_pt;
+        let local_x = x_offset + pdf_x * scale;
+        let local_y = y_offset + (content_height - pdf_y * scale);
+        Some((local_x, local_y))
+    }
+
+    fn markdown_note_markers_for_page(
+        &self,
+        page_index: usize,
+        page_width_screen: f32,
+        page_height_screen: f32,
+    ) -> Vec<(u64, f32, f32)> {
+        self.active_tab_markdown_notes_for_page(page_index)
+            .into_iter()
+            .filter_map(|note| {
+                let anchor = super::MarkdownNoteAnchor {
+                    page_index,
+                    x_ratio: note.x_ratio,
+                    y_ratio: note.y_ratio,
+                };
+                self.note_anchor_to_page_local_screen(
+                    page_index,
+                    &anchor,
+                    page_width_screen,
+                    page_height_screen,
+                )
+                .map(|(x, y)| (note.id, x, y))
+            })
+            .collect::<Vec<_>>()
+    }
+
+    fn hovered_markdown_note_preview_for_page(
+        &self,
+        page_index: usize,
+        page_width_screen: f32,
+        page_height_screen: f32,
+    ) -> Option<(u64, String, f32, f32)> {
+        if self.context_menu_open || self.note_editor_open {
+            return None;
+        }
+
+        let note_id = self.hovered_markdown_note_id()?;
+        let note = self.markdown_note_by_id(note_id)?;
+        let active_path = self.active_tab_path()?;
+        if note.path != *active_path || note.page_index != page_index {
+            return None;
+        }
+
+        let anchor = super::MarkdownNoteAnchor {
+            page_index,
+            x_ratio: note.x_ratio,
+            y_ratio: note.y_ratio,
+        };
+        let (x, y) = self.note_anchor_to_page_local_screen(
+            page_index,
+            &anchor,
+            page_width_screen,
+            page_height_screen,
+        )?;
+
+        const PREVIEW_WIDTH: f32 = 320.0;
+        const PREVIEW_HEIGHT: f32 = 220.0;
+        const PREVIEW_PADDING: f32 = 8.0;
+        let left_min = PREVIEW_PADDING;
+        let left_max = (page_width_screen - PREVIEW_WIDTH - PREVIEW_PADDING).max(left_min);
+        let top_min = PREVIEW_PADDING;
+        let top_max = (page_height_screen - PREVIEW_HEIGHT - PREVIEW_PADDING).max(top_min);
+        let left = (x + super::MARKDOWN_NOTE_MARKER_RADIUS + 10.0).clamp(left_min, left_max);
+        let top = (y - PREVIEW_HEIGHT * 0.35).clamp(top_min, top_max);
+
+        Some((note_id, note.markdown, left, top))
+    }
+
+    fn hit_test_markdown_note_id_on_page(
+        &self,
+        page_index: usize,
+        local_x: f32,
+        local_y: f32,
+        page_width_screen: f32,
+        page_height_screen: f32,
+    ) -> Option<u64> {
+        let hit_radius = super::MARKDOWN_NOTE_MARKER_RADIUS + 2.0;
+        let markers =
+            self.markdown_note_markers_for_page(page_index, page_width_screen, page_height_screen);
+        markers.into_iter().find_map(|(id, marker_x, marker_y)| {
+            let dx = marker_x - local_x;
+            let dy = marker_y - local_y;
+            ((dx * dx + dy * dy) <= hit_radius * hit_radius).then_some(id)
+        })
     }
 
     fn get_selection_rects_for_page(
@@ -468,6 +745,8 @@ impl PdfViewer {
         page_height_screen: f32,
         cx: &mut Context<Self>,
     ) {
+        let _ = self.set_markdown_note_hover_id(None);
+
         // Ensure text is loaded before handling mouse down
         self.ensure_page_text_loaded(page_index);
 
@@ -530,7 +809,19 @@ impl PdfViewer {
         // Ensure text is loaded before handling mouse move
         self.ensure_page_text_loaded(page_index);
 
+        let hovered_note_id = self.hit_test_markdown_note_id_on_page(
+            page_index,
+            local_x,
+            local_y,
+            page_width_screen,
+            page_height_screen,
+        );
+        let note_hover_changed = self.set_markdown_note_hover_id(hovered_note_id);
+
         let Some(manager_ref) = self.active_tab_text_selection_manager() else {
+            if note_hover_changed {
+                cx.notify();
+            }
             return;
         };
         let manager = manager_ref.borrow();
@@ -538,7 +829,8 @@ impl PdfViewer {
         // Get cache page dimensions - these must match the dimensions used in get_char_bounds_for_page
         let Some(cache) = manager.get_page_cache(page_index) else {
             drop(manager);
-            if self.set_text_hover_hit(page_index, false) {
+            let text_hover_changed = self.set_text_hover_hit(page_index, false);
+            if text_hover_changed || note_hover_changed {
                 cx.notify();
             }
             return;
@@ -575,7 +867,7 @@ impl PdfViewer {
         let hover_changed = self.set_text_hover_hit(page_index, is_over_text);
 
         if !is_selecting {
-            if hover_changed {
+            if hover_changed || note_hover_changed {
                 cx.notify();
             }
             return;
@@ -588,7 +880,7 @@ impl PdfViewer {
                     .update_selection(page_index, char_index);
             }
             cx.notify();
-        } else if hover_changed {
+        } else if hover_changed || note_hover_changed {
             cx.notify();
         }
     }
@@ -701,13 +993,76 @@ impl PdfViewer {
             );
         }
 
+        if let Some(note_id) = self.context_menu_note_id {
+            let note = self.markdown_note_by_id(note_id);
+            let note_markdown = note
+                .as_ref()
+                .map(|entry| entry.markdown.clone())
+                .unwrap_or_default();
+            return Some(
+                div()
+                    .id(("context-menu-note", note_id))
+                    .absolute()
+                    .left(px(x))
+                    .top(px(y))
+                    .w(px(220.))
+                    .v_flex()
+                    .gap_1()
+                    .popover_style(cx)
+                    .p_1()
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|_, _: &gpui::MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                        }),
+                    )
+                    .child(
+                        Button::new(("note-edit", note_id))
+                            .small()
+                            .w_full()
+                            .label(i18n.edit_markdown_note_button)
+                            .disabled(note.is_none())
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.close_context_menu(cx);
+                                this.open_markdown_note_editor_for_edit(note_id, window, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new(("note-copy", note_id))
+                            .small()
+                            .w_full()
+                            .label(i18n.copy_markdown_note_button)
+                            .disabled(note_markdown.trim().is_empty())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if !note_markdown.trim().is_empty() {
+                                    let _ = super::copy_to_clipboard(&note_markdown);
+                                }
+                                this.close_context_menu(cx);
+                            })),
+                    )
+                    .child(
+                        Button::new(("note-delete", note_id))
+                            .small()
+                            .w_full()
+                            .label(i18n.delete_markdown_note_button)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.delete_markdown_note_by_id(note_id, cx);
+                                this.close_context_menu(cx);
+                            })),
+                    )
+                    .into_any_element(),
+            );
+        }
+
+        let note_anchor = self.context_menu_note_anchor;
+        let has_text_selection = self.has_text_selection();
         Some(
             div()
                 .id("context-menu")
                 .absolute()
                 .left(px(x))
                 .top(px(y))
-                .w(px(160.))
+                .w(px(220.))
                 .v_flex()
                 .gap_1()
                 .popover_style(cx)
@@ -721,15 +1076,31 @@ impl PdfViewer {
                         cx.stop_propagation();
                     }),
                 )
+                .when(has_text_selection, |this| {
+                    this.child(
+                        Button::new("copy-text")
+                            .small()
+                            .w_full()
+                            .label(i18n.copy_button)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                crate::debug_log!("[context_menu] copy button clicked");
+                                this.copy_selected_text();
+                                this.close_context_menu(cx);
+                            })),
+                    )
+                })
                 .child(
-                    Button::new("copy-text")
+                    Button::new("markdown-note-add")
                         .small()
                         .w_full()
-                        .label(i18n.copy_button)
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            crate::debug_log!("[context_menu] copy button clicked");
-                            this.copy_selected_text();
+                        .label(i18n.add_markdown_note_here_button)
+                        .disabled(note_anchor.is_none())
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            let Some(anchor) = note_anchor else {
+                                return;
+                            };
                             this.close_context_menu(cx);
+                            this.open_markdown_note_editor_for_new(anchor, window, cx);
                         })),
                 )
                 .into_any_element(),

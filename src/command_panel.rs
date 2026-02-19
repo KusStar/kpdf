@@ -60,6 +60,10 @@ impl PdfViewer {
             self.close_bookmark_popup(cx);
             changed = true;
         }
+        if self.note_editor_open {
+            self.close_markdown_note_editor(cx);
+            changed = true;
+        }
         self.command_panel_input_state.update(cx, |input, cx| {
             input.set_value("", window, cx);
         });

@@ -31,6 +31,7 @@ kPDF 是一个基于 Rust + GPUI 的轻量级桌面 PDF 阅读器，专注于流
   - 记住窗口大小
 - 命令面板：快速在“打开文件 / 已打开文件 / 最近文件”间切换和过滤
 - 文本选择与复制：支持鼠标框选文本、右键复制和快捷键复制
+- Markdown 笔记：在任意页面位置右键可添加/编辑/删除锚点笔记，预览使用 `TextView::markdown`
 - 中英文界面：自动根据系统环境选择语言，可通过环境变量覆盖
 - 可选文件日志：可在应用菜单中启用/关闭，并打开日志目录
 
@@ -80,8 +81,10 @@ cargo build --release
 - `Cmd/Ctrl + A`：全选当前页文本（已加载文本时）
 - `Cmd/Ctrl + C`：复制已选中文本
 - `Esc`：
-  - 关闭关于弹窗 / 命令面板
+  - 关闭关于弹窗 / 命令面板 / Markdown 笔记编辑器
   - 清除文本选择
+- Markdown 笔记编辑器中：
+  - `Cmd/Ctrl + Enter`：保存笔记
 - 命令面板中：
   - `Up/Down`：移动选择
   - `Enter`：执行当前项
@@ -93,7 +96,7 @@ cargo build --release
 
 ## 数据与日志路径
 
-### 本地状态数据库（最近文件、阅读位置、窗口大小、打开标签）
+### 本地状态数据库（最近文件、阅读位置、窗口大小、打开标签、书签、Markdown 笔记）
 
 - Windows: `%APPDATA%/kpdf/recent_files_db`
 - macOS / Linux: `~/.kpdf/recent_files_db`

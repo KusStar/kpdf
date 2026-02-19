@@ -24,13 +24,15 @@ use crate::{
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::checkbox::Checkbox;
-use gpui_component::input::{InputEvent, InputState};
+use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::popover::{Popover, PopoverState};
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectState};
+use gpui_component::text::TextView;
 use gpui_component::{button::*, *};
 #[cfg(target_os = "windows")]
 use raw_window_handle::RawWindowHandle;
+use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -74,6 +76,25 @@ pub(super) enum BookmarkScope {
     All,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct MarkdownNoteEntry {
+    id: u64,
+    path: PathBuf,
+    page_index: usize,
+    x_ratio: f32,
+    y_ratio: f32,
+    markdown: String,
+    created_at_unix_secs: u64,
+    updated_at_unix_secs: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct MarkdownNoteAnchor {
+    page_index: usize,
+    x_ratio: f32,
+    y_ratio: f32,
+}
+
 use self::tab::{PdfTab, TabBar};
 use self::text_selection::copy_to_clipboard;
 use self::utils::{
@@ -104,6 +125,7 @@ const OPEN_TABS_TREE: &str = "open_tabs";
 const TITLEBAR_PREFERENCES_TREE: &str = "titlebar_preferences";
 const THEME_PREFERENCES_TREE: &str = "theme_preferences";
 const BOOKMARKS_TREE: &str = "bookmarks";
+const NOTES_TREE: &str = "notes";
 const WINDOW_SIZE_KEY_WIDTH: &str = "width";
 const WINDOW_SIZE_KEY_HEIGHT: &str = "height";
 const OPEN_TABS_KEY_ACTIVE_INDEX: &str = "active_index";
@@ -117,6 +139,9 @@ const TAB_BAR_HEIGHT: f32 = 36.0;
 const TAB_DRAG_START_DISTANCE: f32 = 4.0;
 const ABOUT_DIALOG_WIDTH: f32 = 460.0;
 const SETTINGS_DIALOG_WIDTH: f32 = 520.0;
+const MARKDOWN_NOTE_EDITOR_WIDTH: f32 = 640.0;
+const MARKDOWN_NOTE_EDITOR_INPUT_HEIGHT: f32 = 300.0;
+pub(super) const MARKDOWN_NOTE_MARKER_RADIUS: f32 = 7.0;
 #[cfg(target_os = "macos")]
 const TITLE_BAR_CONTENT_LEFT_PADDING: f32 = 80.0;
 #[cfg(not(target_os = "macos"))]
@@ -192,6 +217,7 @@ pub struct PdfViewer {
     titlebar_preferences_store: Option<sled::Tree>,
     theme_preferences_store: Option<sled::Tree>,
     bookmarks_store: Option<sled::Tree>,
+    notes_store: Option<sled::Tree>,
     last_window_size: Option<(f32, f32)>,
     theme_mode: ThemeMode,
     preferred_light_theme_name: Option<String>,
@@ -205,11 +231,15 @@ pub struct PdfViewer {
     recent_popup_hover_epoch: u64,
     recent_popup_anchor: Option<RecentPopupAnchor>,
     bookmarks: Vec<BookmarkEntry>,
+    markdown_notes: Vec<MarkdownNoteEntry>,
     bookmark_popup_open: bool,
     bookmark_scope: BookmarkScope,
     bookmark_popup_trigger_hovered: bool,
     bookmark_popup_panel_hovered: bool,
     bookmark_popup_hover_epoch: u64,
+    note_editor_open: bool,
+    note_editor_anchor: Option<MarkdownNoteAnchor>,
+    note_editor_edit_note_id: Option<u64>,
     about_dialog_open: bool,
     settings_dialog_open: bool,
     updater_state: UpdaterUiState,
@@ -222,6 +252,7 @@ pub struct PdfViewer {
     command_panel_list_scroll: ScrollHandle,
     recent_home_list_scroll: ScrollHandle,
     command_panel_input_state: Entity<InputState>,
+    note_editor_input_state: Entity<InputState>,
     _command_panel_input_subscription: Subscription,
     theme_color_select_state: Entity<SelectState<SearchableVec<SharedString>>>,
     _theme_color_select_subscription: Subscription,
@@ -229,6 +260,9 @@ pub struct PdfViewer {
     context_menu_open: bool,
     context_menu_position: Option<Point<Pixels>>,
     context_menu_tab_id: Option<usize>,
+    context_menu_note_anchor: Option<MarkdownNoteAnchor>,
+    context_menu_note_id: Option<u64>,
+    hovered_markdown_note_id: Option<u64>,
     hovered_tab_id: Option<usize>,
     // 拖放相关状态
     drag_state: DragState,
@@ -237,6 +271,7 @@ pub struct PdfViewer {
     text_hover_target: Option<(usize, usize)>, // (tab_id, page_index)
     needs_initial_focus: bool,
     command_panel_needs_focus: bool,
+    note_editor_needs_focus: bool,
     needs_root_refocus: bool,
     resize_restore_epoch: u64,
 }
@@ -246,6 +281,13 @@ impl PdfViewer {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|duration| duration.as_secs())
+            .unwrap_or(0)
+    }
+
+    fn now_unix_millis() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
             .unwrap_or(0)
     }
 
@@ -259,6 +301,7 @@ impl PdfViewer {
             titlebar_preferences_store,
             theme_preferences_store,
             bookmarks_store,
+            notes_store,
         ) = Self::open_persistent_stores();
         let recent_files = recent_store
             .as_ref()
@@ -286,8 +329,18 @@ impl PdfViewer {
             .as_ref()
             .map(Self::load_bookmarks_from_store)
             .unwrap_or_default();
+        let markdown_notes = notes_store
+            .as_ref()
+            .map(Self::load_markdown_notes_from_store)
+            .unwrap_or_default();
         let command_panel_input_state = cx.new(|cx| {
             InputState::new(window, cx).placeholder(I18n::new(language).command_panel_search_hint)
+        });
+        let note_editor_input_state = cx.new(|cx| {
+            InputState::new(window, cx)
+                .multi_line(true)
+                .rows(14)
+                .placeholder(I18n::new(language).markdown_note_input_placeholder)
         });
         let command_panel_input_state_for_sub = command_panel_input_state.clone();
         let command_panel_input_subscription = cx.subscribe(
@@ -366,6 +419,7 @@ impl PdfViewer {
             titlebar_preferences_store,
             theme_preferences_store,
             bookmarks_store,
+            notes_store,
             last_window_size: None,
             theme_mode,
             preferred_light_theme_name,
@@ -379,11 +433,15 @@ impl PdfViewer {
             recent_popup_hover_epoch: 0,
             recent_popup_anchor: None,
             bookmarks,
+            markdown_notes,
             bookmark_popup_open: false,
             bookmark_scope: BookmarkScope::CurrentPdf,
             bookmark_popup_trigger_hovered: false,
             bookmark_popup_panel_hovered: false,
             bookmark_popup_hover_epoch: 0,
+            note_editor_open: false,
+            note_editor_anchor: None,
+            note_editor_edit_note_id: None,
             about_dialog_open: false,
             settings_dialog_open: false,
             updater_state: UpdaterUiState::Idle,
@@ -396,6 +454,7 @@ impl PdfViewer {
             command_panel_list_scroll: ScrollHandle::new(),
             recent_home_list_scroll: ScrollHandle::new(),
             command_panel_input_state,
+            note_editor_input_state,
             _command_panel_input_subscription: command_panel_input_subscription,
             theme_color_select_state,
             _theme_color_select_subscription: theme_color_select_subscription,
@@ -403,6 +462,9 @@ impl PdfViewer {
             context_menu_open: false,
             context_menu_position: None,
             context_menu_tab_id: None,
+            context_menu_note_anchor: None,
+            context_menu_note_id: None,
+            hovered_markdown_note_id: None,
             hovered_tab_id: None,
             drag_state: DragState::None,
             drag_mouse_position: None,
@@ -410,6 +472,7 @@ impl PdfViewer {
             text_hover_target: None,
             needs_initial_focus: true,
             command_panel_needs_focus: false,
+            note_editor_needs_focus: false,
             needs_root_refocus: false,
             resize_restore_epoch: 0,
         };
@@ -462,12 +525,13 @@ impl PdfViewer {
         Option<sled::Tree>,
         Option<sled::Tree>,
         Option<sled::Tree>,
+        Option<sled::Tree>,
     ) {
         let db_path = Self::recent_files_db_path();
         if let Some(parent) = db_path.parent() {
             if std::fs::create_dir_all(parent).is_err() {
                 crate::debug_log!("[store] create dir failed: {}", parent.to_string_lossy());
-                return (None, None, None, None, None, None, None);
+                return (None, None, None, None, None, None, None, None);
             }
         }
 
@@ -479,7 +543,7 @@ impl PdfViewer {
                     db_path.to_string_lossy(),
                     err
                 );
-                return (None, None, None, None, None, None, None);
+                return (None, None, None, None, None, None, None, None);
             }
         };
 
@@ -544,9 +608,16 @@ impl PdfViewer {
                 None
             }
         };
+        let notes_store = match db.open_tree(NOTES_TREE) {
+            Ok(tree) => Some(tree),
+            Err(err) => {
+                crate::debug_log!("[store] open tree failed: {} | {}", NOTES_TREE, err);
+                None
+            }
+        };
 
         crate::debug_log!(
-            "[store] init recent={} positions={} window_size={} open_tabs={} titlebar_preferences={} theme_preferences={} bookmarks={} path={}",
+            "[store] init recent={} positions={} window_size={} open_tabs={} titlebar_preferences={} theme_preferences={} bookmarks={} notes={} path={}",
             recent_store.is_some(),
             position_store.is_some(),
             window_size_store.is_some(),
@@ -554,6 +625,7 @@ impl PdfViewer {
             titlebar_preferences_store.is_some(),
             theme_preferences_store.is_some(),
             bookmarks_store.is_some(),
+            notes_store.is_some(),
             db_path.to_string_lossy()
         );
 
@@ -565,6 +637,7 @@ impl PdfViewer {
             titlebar_preferences_store,
             theme_preferences_store,
             bookmarks_store,
+            notes_store,
         )
     }
 
@@ -645,6 +718,33 @@ impl PdfViewer {
             .into_iter()
             .map(|(_, bookmark)| bookmark)
             .collect()
+    }
+
+    fn load_markdown_notes_from_store(store: &sled::Tree) -> Vec<MarkdownNoteEntry> {
+        let mut indexed_notes = Vec::new();
+        for entry in store.iter() {
+            let (key, value) = match entry {
+                Ok(entry) => entry,
+                Err(_) => continue,
+            };
+            if key.len() != 4 {
+                continue;
+            }
+            let note_index = u32::from_be_bytes([key[0], key[1], key[2], key[3]]) as usize;
+            let note = match serde_json::from_slice::<MarkdownNoteEntry>(&value) {
+                Ok(note) => note,
+                Err(_) => continue,
+            };
+            if note.markdown.trim().is_empty() {
+                continue;
+            }
+            indexed_notes.push((note_index, note));
+        }
+        indexed_notes.sort_by_key(|(index, _)| *index);
+        indexed_notes
+            .into_iter()
+            .map(|(_, note)| note)
+            .collect::<Vec<_>>()
     }
 
     fn load_open_tabs_from_store(store: &sled::Tree) -> (Vec<PathBuf>, Option<usize>) {
@@ -879,6 +979,28 @@ impl PdfViewer {
         let _ = store.flush();
     }
 
+    fn persist_markdown_notes(&self) {
+        let Some(store) = self.notes_store.as_ref() else {
+            return;
+        };
+
+        if store.clear().is_err() {
+            return;
+        }
+
+        for (index, note) in self.markdown_notes.iter().enumerate() {
+            let key = (index as u32).to_be_bytes();
+            let Ok(value) = serde_json::to_vec(note) else {
+                continue;
+            };
+            if store.insert(key, value).is_err() {
+                return;
+            }
+        }
+
+        let _ = store.flush();
+    }
+
     fn restore_open_tabs(
         &mut self,
         tabs_to_restore: Vec<(usize, PathBuf)>,
@@ -1025,6 +1147,7 @@ impl PdfViewer {
         self.close_command_panel(cx);
         self.close_recent_popup(cx);
         self.close_bookmark_popup(cx);
+        self.close_markdown_note_editor(cx);
 
         let picker = cx.prompt_for_paths(PathPromptOptions {
             files: true,
@@ -1299,6 +1422,10 @@ impl PdfViewer {
         }
         if self.about_dialog_open {
             self.about_dialog_open = false;
+            changed = true;
+        }
+        if self.note_editor_open {
+            self.close_markdown_note_editor(cx);
             changed = true;
         }
         if !self.settings_dialog_open {
@@ -1786,6 +1913,9 @@ impl PdfViewer {
         if self.settings_dialog_open {
             self.settings_dialog_open = false;
         }
+        if self.note_editor_open {
+            self.close_markdown_note_editor(cx);
+        }
         if !self.about_dialog_open {
             self.about_dialog_open = true;
             cx.notify();
@@ -1988,6 +2118,160 @@ impl PdfViewer {
         )
     }
 
+    fn render_markdown_note_editor_dialog(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if !self.note_editor_open {
+            return None;
+        }
+
+        let i18n = self.i18n();
+        let is_editing = self.note_editor_edit_note_id.is_some();
+        let title = if is_editing {
+            i18n.markdown_note_edit_dialog_title
+        } else {
+            i18n.markdown_note_new_dialog_title
+        };
+        let editor_text = self.note_editor_input_state.read(cx).value().to_string();
+        let can_save = !editor_text.trim().is_empty()
+            && (self.note_editor_edit_note_id.is_some() || self.note_editor_anchor.is_some());
+        let preview_text = if editor_text.trim().is_empty() {
+            i18n.markdown_note_input_placeholder.to_string()
+        } else {
+            editor_text.clone()
+        };
+        let preview_id: SharedString = if is_editing {
+            "markdown-note-preview-edit".into()
+        } else {
+            "markdown-note-preview-new".into()
+        };
+
+        Some(
+            div()
+                .id("markdown-note-editor-overlay")
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .bg(cx.theme().background.opacity(0.45))
+                .on_scroll_wheel(cx.listener(|_, _: &ScrollWheelEvent, _, cx| {
+                    cx.stop_propagation();
+                }))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.close_markdown_note_editor(cx);
+                    }),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .v_flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .id("markdown-note-editor")
+                                .w(px(MARKDOWN_NOTE_EDITOR_WIDTH))
+                                .max_w_full()
+                                .v_flex()
+                                .gap_3()
+                                .popover_style(cx)
+                                .p_4()
+                                .on_scroll_wheel(cx.listener(|_, _: &ScrollWheelEvent, _, cx| {
+                                    cx.stop_propagation();
+                                }))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|_, _, _, cx| {
+                                        cx.stop_propagation();
+                                    }),
+                                )
+                                .child(
+                                    div()
+                                        .text_lg()
+                                        .text_color(cx.theme().foreground)
+                                        .child(title),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .whitespace_normal()
+                                        .child(i18n.markdown_note_dialog_hint),
+                                )
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .h(px(MARKDOWN_NOTE_EDITOR_INPUT_HEIGHT))
+                                        .child(Input::new(&self.note_editor_input_state).h_full()),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(i18n.markdown_note_preview_label),
+                                )
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .h(px(220.))
+                                        .rounded_md()
+                                        .border_1()
+                                        .border_color(cx.theme().border)
+                                        .bg(cx.theme().background)
+                                        .overflow_hidden()
+                                        .p_3()
+                                        .child(
+                                            TextView::markdown(
+                                                preview_id,
+                                                preview_text,
+                                                window,
+                                                cx,
+                                            )
+                                            .selectable(true)
+                                            .scrollable(true),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .flex()
+                                        .items_center()
+                                        .justify_end()
+                                        .gap_2()
+                                        .child(
+                                            Button::new("markdown-note-cancel")
+                                                .small()
+                                                .ghost()
+                                                .label(i18n.markdown_note_cancel_button)
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.close_markdown_note_editor(cx);
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("markdown-note-save")
+                                                .small()
+                                                .label(i18n.markdown_note_save_button)
+                                                .disabled(!can_save)
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.save_markdown_note_from_editor(cx);
+                                                })),
+                                        ),
+                                ),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+
     #[allow(dead_code)]
     fn create_new_tab(&mut self, cx: &mut Context<Self>) {
         self.tab_bar.create_tab();
@@ -2009,6 +2293,8 @@ impl PdfViewer {
         if tab_ids.is_empty() {
             return;
         }
+
+        let _ = self.set_markdown_note_hover_id(None);
 
         for tab_id in &tab_ids {
             self.save_tab_position_if_needed(*tab_id);
@@ -2066,6 +2352,7 @@ impl PdfViewer {
 
     fn switch_to_tab(&mut self, tab_id: usize, cx: &mut Context<Self>) {
         if self.tab_bar.switch_to_tab(tab_id) {
+            let _ = self.set_markdown_note_hover_id(None);
             self.persist_open_tabs();
             self.scroll_tab_bar_to_active_tab();
             if self.load_tab_if_needed(tab_id, cx) {
@@ -2130,6 +2417,20 @@ impl PdfViewer {
             if key == "escape" {
                 self.close_about_dialog(cx);
                 cx.stop_propagation();
+            }
+            return;
+        }
+
+        if self.note_editor_open {
+            if key == "escape" {
+                self.close_markdown_note_editor(cx);
+                cx.stop_propagation();
+                return;
+            }
+            if key == "enter" && is_primary_modifier {
+                self.save_markdown_note_from_editor(cx);
+                cx.stop_propagation();
+                return;
             }
             return;
         }
@@ -2720,6 +3021,178 @@ impl PdfViewer {
             self.persist_bookmarks();
             cx.notify();
         }
+    }
+
+    fn next_markdown_note_id(&self) -> u64 {
+        let mut candidate = Self::now_unix_millis().saturating_mul(1000);
+        while self.markdown_notes.iter().any(|note| note.id == candidate) {
+            candidate = candidate.saturating_add(1);
+        }
+        candidate
+    }
+
+    pub(super) fn active_tab_markdown_notes_for_page(
+        &self,
+        page_index: usize,
+    ) -> Vec<MarkdownNoteEntry> {
+        let Some(path) = self.active_tab_path() else {
+            return Vec::new();
+        };
+        self.markdown_notes
+            .iter()
+            .filter(|note| note.path == *path && note.page_index == page_index)
+            .cloned()
+            .collect::<Vec<_>>()
+    }
+
+    fn markdown_note_by_id(&self, note_id: u64) -> Option<MarkdownNoteEntry> {
+        self.markdown_notes
+            .iter()
+            .find(|note| note.id == note_id)
+            .cloned()
+    }
+
+    pub(super) fn hovered_markdown_note_id(&self) -> Option<u64> {
+        self.hovered_markdown_note_id
+    }
+
+    pub(super) fn set_markdown_note_hover_id(&mut self, note_id: Option<u64>) -> bool {
+        if self.hovered_markdown_note_id != note_id {
+            self.hovered_markdown_note_id = note_id;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn upsert_markdown_note(&mut self, note: MarkdownNoteEntry) {
+        self.markdown_notes.retain(|item| item.id != note.id);
+        self.markdown_notes.insert(0, note);
+        self.markdown_notes.sort_by(|a, b| {
+            b.updated_at_unix_secs
+                .cmp(&a.updated_at_unix_secs)
+                .then_with(|| b.id.cmp(&a.id))
+        });
+        self.persist_markdown_notes();
+    }
+
+    fn delete_markdown_note_by_id(&mut self, note_id: u64, cx: &mut Context<Self>) {
+        let original_len = self.markdown_notes.len();
+        self.markdown_notes.retain(|note| note.id != note_id);
+        if self.markdown_notes.len() != original_len {
+            let _ = self.set_markdown_note_hover_id(None);
+            self.persist_markdown_notes();
+            cx.notify();
+        }
+    }
+
+    fn open_markdown_note_editor_for_new(
+        &mut self,
+        anchor: MarkdownNoteAnchor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.note_editor_anchor = Some(anchor);
+        self.note_editor_edit_note_id = None;
+        self.note_editor_open = true;
+        self.note_editor_needs_focus = true;
+        self.needs_root_refocus = false;
+        self.note_editor_input_state.update(cx, |input, cx| {
+            input.set_value("", window, cx);
+        });
+        cx.notify();
+    }
+
+    fn open_markdown_note_editor_for_edit(
+        &mut self,
+        note_id: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(note) = self.markdown_note_by_id(note_id) else {
+            return;
+        };
+        self.note_editor_anchor = None;
+        self.note_editor_edit_note_id = Some(note_id);
+        self.note_editor_open = true;
+        self.note_editor_needs_focus = true;
+        self.needs_root_refocus = false;
+        self.note_editor_input_state.update(cx, |input, cx| {
+            input.set_value(note.markdown, window, cx);
+        });
+        cx.notify();
+    }
+
+    fn close_markdown_note_editor(&mut self, cx: &mut Context<Self>) {
+        if !self.note_editor_open {
+            return;
+        }
+        self.note_editor_open = false;
+        self.note_editor_anchor = None;
+        self.note_editor_edit_note_id = None;
+        self.note_editor_needs_focus = false;
+        self.needs_root_refocus = true;
+        cx.notify();
+    }
+
+    fn save_markdown_note_from_editor(&mut self, cx: &mut Context<Self>) {
+        if !self.note_editor_open {
+            return;
+        }
+        let markdown = self.note_editor_input_state.read(cx).value().to_string();
+        let markdown = markdown.trim().to_string();
+        if markdown.is_empty() {
+            return;
+        }
+
+        let now = Self::now_unix_secs();
+        if let Some(note_id) = self.note_editor_edit_note_id
+            && let Some(mut note) = self.markdown_note_by_id(note_id)
+        {
+            note.markdown = markdown;
+            note.updated_at_unix_secs = now;
+            self.upsert_markdown_note(note);
+            self.close_markdown_note_editor(cx);
+            cx.notify();
+            return;
+        }
+
+        let Some(path) = self.active_tab_path().cloned() else {
+            return;
+        };
+        let Some(anchor) = self.note_editor_anchor else {
+            return;
+        };
+
+        let note = MarkdownNoteEntry {
+            id: self.next_markdown_note_id(),
+            path,
+            page_index: anchor.page_index,
+            x_ratio: anchor.x_ratio.clamp(0.0, 1.0),
+            y_ratio: anchor.y_ratio.clamp(0.0, 1.0),
+            markdown,
+            created_at_unix_secs: now,
+            updated_at_unix_secs: now,
+        };
+        self.upsert_markdown_note(note);
+        self.close_markdown_note_editor(cx);
+        cx.notify();
+    }
+
+    pub(super) fn open_page_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        note_anchor: Option<MarkdownNoteAnchor>,
+        note_id: Option<u64>,
+        cx: &mut Context<Self>,
+    ) {
+        let _ = self.set_markdown_note_hover_id(note_id);
+        self.context_menu_open = true;
+        self.context_menu_position = Some(position);
+        self.context_menu_tab_id = None;
+        self.context_menu_note_anchor = note_anchor;
+        self.context_menu_note_id = note_id;
+        cx.notify();
     }
 
     pub(super) fn render_bookmark_popup_panel(
@@ -3761,13 +4234,6 @@ impl PdfViewer {
         cx.notify();
     }
 
-    pub fn open_context_menu(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
-        self.context_menu_open = true;
-        self.context_menu_position = Some(position);
-        self.context_menu_tab_id = None;
-        cx.notify();
-    }
-
     pub fn open_tab_context_menu(
         &mut self,
         tab_id: usize,
@@ -3816,6 +4282,8 @@ impl PdfViewer {
             self.context_menu_open = true;
             self.context_menu_position = Some(position);
             self.context_menu_tab_id = Some(tab_id);
+            self.context_menu_note_anchor = None;
+            self.context_menu_note_id = None;
             cx.notify();
         }
     }
@@ -3831,6 +4299,8 @@ impl PdfViewer {
         self.context_menu_open = false;
         self.context_menu_position = None;
         self.context_menu_tab_id = None;
+        self.context_menu_note_anchor = None;
+        self.context_menu_note_id = None;
         cx.notify();
     }
 
@@ -4354,6 +4824,12 @@ impl Render for PdfViewer {
                 .command_panel_input_state
                 .update(cx, |input, cx| input.focus(window, cx));
         }
+        if self.note_editor_open && self.note_editor_needs_focus {
+            self.note_editor_needs_focus = false;
+            let _ = self
+                .note_editor_input_state
+                .update(cx, |input, cx| input.focus(window, cx));
+        }
         if !self.command_panel_open && self.needs_root_refocus {
             self.needs_root_refocus = false;
             window.focus(&self.focus_handle);
@@ -4472,6 +4948,7 @@ impl Render for PdfViewer {
         let command_panel = self.render_command_panel(cx);
         let about_dialog = self.render_about_dialog(cx);
         let settings_dialog = self.render_settings_dialog(cx);
+        let markdown_note_dialog = self.render_markdown_note_editor_dialog(window, cx);
 
         div()
             .size_full()
@@ -4722,6 +5199,9 @@ impl Render for PdfViewer {
                     })
                     .when(settings_dialog.is_some(), |this| {
                         this.child(settings_dialog.unwrap())
+                    })
+                    .when(markdown_note_dialog.is_some(), |this| {
+                        this.child(markdown_note_dialog.unwrap())
                     }),
             )
     }

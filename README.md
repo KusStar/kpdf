@@ -34,6 +34,7 @@ kPDF is a lightweight desktop PDF viewer built with Rust + GPUI, focused on smoo
   - Opened files
   - Recent files
 - Text selection and copy (mouse selection, context menu, keyboard shortcuts)
+- Markdown notes: right-click any page position to add/edit/delete note anchors, with live preview via `TextView::markdown`
 - Bilingual UI (English and Simplified Chinese), auto-detected from system locale
 - Optional file logging, with menu toggles and quick-open logs folder
 
@@ -84,8 +85,10 @@ cargo build --release
 - `Cmd/Ctrl + A`: Select all text on current page (if page text is loaded)
 - `Cmd/Ctrl + C`: Copy selected text
 - `Esc`:
-  - Close About dialog / Command Panel
+  - Close About dialog / Command Panel / Markdown note editor
   - Clear text selection
+- In Markdown note editor:
+  - `Cmd/Ctrl + Enter`: Save note
 - In Command Panel:
   - `Up/Down`: Move selection
   - `Enter`: Execute selected item
@@ -99,7 +102,7 @@ cargo build --release
 
 ### Local state database
 
-Stores recent files, reading positions, window size, and open tabs.
+Stores recent files, reading positions, window size, open tabs, bookmarks, and markdown notes.
 
 - Windows: `%APPDATA%/kpdf/recent_files_db`
 - macOS / Linux: `~/.kpdf/recent_files_db`
