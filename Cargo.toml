@@ -36,7 +36,7 @@ product-name = "kPDF"
 identifier = "com.kuss.kpdf"
 before-packaging-command = "cargo build --release"
 resources = ["lib", "assets/themes", "assets/i18n"]
-icons = ["assets/app.icns", "assets/app.ico"]
+icons = ["assets/app.png", "assets/app.icns", "assets/app.ico"]
 
 [package.metadata.packager.nsis]
 installer-icon = "assets/app.ico"
