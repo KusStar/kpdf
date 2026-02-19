@@ -126,6 +126,13 @@ impl I18n {
         }
     }
 
+    pub fn settings_button(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "设置...",
+            Language::EnUs => "Settings...",
+        }
+    }
+
     pub fn about_dialog_title(self) -> &'static str {
         match self.lang {
             Language::ZhCn => "关于",
@@ -214,6 +221,48 @@ impl I18n {
         match self.lang {
             Language::ZhCn => "关闭",
             Language::EnUs => "Close",
+        }
+    }
+
+    pub fn settings_dialog_title(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "设置",
+            Language::EnUs => "Settings",
+        }
+    }
+
+    pub fn settings_titlebar_section(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "标题栏",
+            Language::EnUs => "Title Bar",
+        }
+    }
+
+    pub fn settings_titlebar_navigation_label(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "页面导航",
+            Language::EnUs => "Page Navigation",
+        }
+    }
+
+    pub fn settings_titlebar_navigation_hint(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "显示首页/上一页/页码/下一页/末页控件",
+            Language::EnUs => "Show first/prev/page/next/last controls",
+        }
+    }
+
+    pub fn settings_titlebar_zoom_label(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "缩放控件",
+            Language::EnUs => "Zoom Controls",
+        }
+    }
+
+    pub fn settings_titlebar_zoom_hint(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "显示缩小/默认/放大按钮与缩放百分比",
+            Language::EnUs => "Show zoom out/reset/in buttons and zoom percentage",
         }
     }
 
@@ -312,6 +361,13 @@ impl I18n {
         match self.lang {
             Language::ZhCn => "检查最新版本",
             Language::EnUs => "Check for updates",
+        }
+    }
+
+    pub fn command_panel_open_settings_hint(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "打开设置窗口",
+            Language::EnUs => "Open Settings dialog",
         }
     }
 

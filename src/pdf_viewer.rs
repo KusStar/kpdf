@@ -19,10 +19,11 @@ mod utils;
 use crate::i18n::{I18n, Language};
 use crate::{
     APP_REPOSITORY_URL, CheckForUpdatesMenu, DisableLoggingMenu, EnableLoggingMenu, OpenLogsMenu,
-    ShowAboutMenu, configure_app_menus, updater,
+    ShowAboutMenu, ShowSettingsMenu, configure_app_menus, updater,
 };
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
+use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{InputEvent, InputState};
 use gpui_component::popover::{Popover, PopoverState};
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
@@ -85,12 +86,16 @@ const RECENT_FILES_TREE: &str = "recent_files";
 const FILE_POSITIONS_TREE: &str = "file_positions";
 const WINDOW_SIZE_TREE: &str = "window_size";
 const OPEN_TABS_TREE: &str = "open_tabs";
+const TITLEBAR_PREFERENCES_TREE: &str = "titlebar_preferences";
 const WINDOW_SIZE_KEY_WIDTH: &str = "width";
 const WINDOW_SIZE_KEY_HEIGHT: &str = "height";
 const OPEN_TABS_KEY_ACTIVE_INDEX: &str = "active_index";
+const TITLEBAR_PREFERENCES_KEY_SHOW_NAVIGATION: &str = "show_navigation";
+const TITLEBAR_PREFERENCES_KEY_SHOW_ZOOM: &str = "show_zoom";
 const TITLE_BAR_HEIGHT: f32 = 34.0;
 const TAB_BAR_HEIGHT: f32 = 36.0;
 const ABOUT_DIALOG_WIDTH: f32 = 460.0;
+const SETTINGS_DIALOG_WIDTH: f32 = 520.0;
 #[cfg(target_os = "macos")]
 const TITLE_BAR_CONTENT_LEFT_PADDING: f32 = 80.0;
 #[cfg(not(target_os = "macos"))]
@@ -110,6 +115,21 @@ enum UpdaterUiState {
     Error {
         message: String,
     },
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TitleBarVisibilityPreferences {
+    show_navigation: bool,
+    show_zoom: bool,
+}
+
+impl Default for TitleBarVisibilityPreferences {
+    fn default() -> Self {
+        Self {
+            show_navigation: true,
+            show_zoom: true,
+        }
+    }
 }
 
 pub use self::utils::PageSummary;
@@ -148,7 +168,9 @@ pub struct PdfViewer {
     position_store: Option<sled::Tree>,
     window_size_store: Option<sled::Tree>,
     open_tabs_store: Option<sled::Tree>,
+    titlebar_preferences_store: Option<sled::Tree>,
     last_window_size: Option<(f32, f32)>,
+    titlebar_preferences: TitleBarVisibilityPreferences,
     recent_files: Vec<PathBuf>,
     recent_popup_open: bool,
     recent_popup_trigger_hovered: bool,
@@ -157,6 +179,7 @@ pub struct PdfViewer {
     recent_popup_hover_epoch: u64,
     recent_popup_anchor: Option<RecentPopupAnchor>,
     about_dialog_open: bool,
+    settings_dialog_open: bool,
     updater_state: UpdaterUiState,
     command_panel_open: bool,
     command_panel_query: String,
@@ -184,8 +207,13 @@ pub struct PdfViewer {
 impl PdfViewer {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let language = Language::detect();
-        let (recent_store, position_store, window_size_store, open_tabs_store) =
-            Self::open_persistent_stores();
+        let (
+            recent_store,
+            position_store,
+            window_size_store,
+            open_tabs_store,
+            titlebar_preferences_store,
+        ) = Self::open_persistent_stores();
         let recent_files = recent_store
             .as_ref()
             .map(Self::load_recent_files_from_store)
@@ -194,6 +222,10 @@ impl PdfViewer {
             .as_ref()
             .map(Self::load_open_tabs_from_store)
             .unwrap_or_else(|| (Vec::new(), None));
+        let titlebar_preferences = titlebar_preferences_store
+            .as_ref()
+            .map(Self::load_titlebar_preferences_from_store)
+            .unwrap_or_default();
         let command_panel_input_state = cx.new(|cx| {
             InputState::new(window, cx).placeholder(I18n::new(language).command_panel_search_hint())
         });
@@ -246,7 +278,9 @@ impl PdfViewer {
             position_store,
             window_size_store,
             open_tabs_store,
+            titlebar_preferences_store,
             last_window_size: None,
+            titlebar_preferences,
             recent_files,
             recent_popup_open: false,
             recent_popup_trigger_hovered: false,
@@ -255,6 +289,7 @@ impl PdfViewer {
             recent_popup_hover_epoch: 0,
             recent_popup_anchor: None,
             about_dialog_open: false,
+            settings_dialog_open: false,
             updater_state: UpdaterUiState::Idle,
             command_panel_open: false,
             command_panel_query: String::new(),
@@ -321,12 +356,13 @@ impl PdfViewer {
         Option<sled::Tree>,
         Option<sled::Tree>,
         Option<sled::Tree>,
+        Option<sled::Tree>,
     ) {
         let db_path = Self::recent_files_db_path();
         if let Some(parent) = db_path.parent() {
             if std::fs::create_dir_all(parent).is_err() {
                 crate::debug_log!("[store] create dir failed: {}", parent.to_string_lossy());
-                return (None, None, None, None);
+                return (None, None, None, None, None);
             }
         }
 
@@ -338,7 +374,7 @@ impl PdfViewer {
                     db_path.to_string_lossy(),
                     err
                 );
-                return (None, None, None, None);
+                return (None, None, None, None, None);
             }
         };
 
@@ -374,13 +410,25 @@ impl PdfViewer {
                 None
             }
         };
+        let titlebar_preferences_store = match db.open_tree(TITLEBAR_PREFERENCES_TREE) {
+            Ok(tree) => Some(tree),
+            Err(err) => {
+                crate::debug_log!(
+                    "[store] open tree failed: {} | {}",
+                    TITLEBAR_PREFERENCES_TREE,
+                    err
+                );
+                None
+            }
+        };
 
         crate::debug_log!(
-            "[store] init recent={} positions={} window_size={} open_tabs={} path={}",
+            "[store] init recent={} positions={} window_size={} open_tabs={} titlebar_preferences={} path={}",
             recent_store.is_some(),
             position_store.is_some(),
             window_size_store.is_some(),
             open_tabs_store.is_some(),
+            titlebar_preferences_store.is_some(),
             db_path.to_string_lossy()
         );
 
@@ -389,6 +437,7 @@ impl PdfViewer {
             position_store,
             window_size_store,
             open_tabs_store,
+            titlebar_preferences_store,
         )
     }
 
@@ -458,6 +507,57 @@ impl PdfViewer {
                 .collect::<Vec<_>>(),
             active_index,
         )
+    }
+
+    fn decode_stored_bool(value: Option<sled::IVec>, default: bool) -> bool {
+        let Some(raw) = value else {
+            return default;
+        };
+        raw.first().copied().map(|v| v != 0).unwrap_or(default)
+    }
+
+    fn load_titlebar_preferences_from_store(store: &sled::Tree) -> TitleBarVisibilityPreferences {
+        let default = TitleBarVisibilityPreferences::default();
+        TitleBarVisibilityPreferences {
+            show_navigation: Self::decode_stored_bool(
+                store
+                    .get(TITLEBAR_PREFERENCES_KEY_SHOW_NAVIGATION)
+                    .ok()
+                    .flatten(),
+                default.show_navigation,
+            ),
+            show_zoom: Self::decode_stored_bool(
+                store.get(TITLEBAR_PREFERENCES_KEY_SHOW_ZOOM).ok().flatten(),
+                default.show_zoom,
+            ),
+        }
+    }
+
+    fn persist_titlebar_preferences(&self) {
+        let Some(store) = self.titlebar_preferences_store.as_ref() else {
+            return;
+        };
+
+        if store
+            .insert(
+                TITLEBAR_PREFERENCES_KEY_SHOW_NAVIGATION,
+                [u8::from(self.titlebar_preferences.show_navigation)].as_slice(),
+            )
+            .is_err()
+        {
+            return;
+        }
+        if store
+            .insert(
+                TITLEBAR_PREFERENCES_KEY_SHOW_ZOOM,
+                [u8::from(self.titlebar_preferences.show_zoom)].as_slice(),
+            )
+            .is_err()
+        {
+            return;
+        }
+
+        let _ = store.flush();
     }
 
     fn persist_open_tabs(&self) {
@@ -908,12 +1008,264 @@ impl PdfViewer {
         .detach();
     }
 
+    fn open_settings_dialog(&mut self, cx: &mut Context<Self>) {
+        let mut changed = false;
+        if self.command_panel_open {
+            self.close_command_panel(cx);
+            changed = true;
+        }
+        if self.recent_popup_open {
+            self.close_recent_popup(cx);
+            changed = true;
+        }
+        if self.about_dialog_open {
+            self.about_dialog_open = false;
+            changed = true;
+        }
+        if !self.settings_dialog_open {
+            self.settings_dialog_open = true;
+            changed = true;
+        }
+        if changed {
+            cx.notify();
+        }
+    }
+
+    fn close_settings_dialog(&mut self, cx: &mut Context<Self>) {
+        if self.settings_dialog_open {
+            self.settings_dialog_open = false;
+            self.needs_root_refocus = true;
+            cx.notify();
+        }
+    }
+
+    fn set_titlebar_navigation_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        if self.titlebar_preferences.show_navigation == visible {
+            return;
+        }
+        self.titlebar_preferences.show_navigation = visible;
+        self.persist_titlebar_preferences();
+        cx.notify();
+    }
+
+    fn set_titlebar_zoom_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        if self.titlebar_preferences.show_zoom == visible {
+            return;
+        }
+        self.titlebar_preferences.show_zoom = visible;
+        self.persist_titlebar_preferences();
+        cx.notify();
+    }
+
+    fn render_settings_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.settings_dialog_open {
+            return None;
+        }
+
+        let i18n = self.i18n();
+
+        Some(
+            div()
+                .id("settings-dialog-overlay")
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .bg(cx.theme().background.opacity(0.45))
+                .on_scroll_wheel(cx.listener(|_, _: &ScrollWheelEvent, _, cx| {
+                    cx.stop_propagation();
+                }))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.close_settings_dialog(cx);
+                    }),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .v_flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .id("settings-dialog")
+                                .w(px(SETTINGS_DIALOG_WIDTH))
+                                .v_flex()
+                                .gap_3()
+                                .popover_style(cx)
+                                .p_4()
+                                .on_scroll_wheel(cx.listener(|_, _: &ScrollWheelEvent, _, cx| {
+                                    cx.stop_propagation();
+                                }))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|_, _, _, cx| {
+                                        cx.stop_propagation();
+                                    }),
+                                )
+                                .child(
+                                    div()
+                                        .text_lg()
+                                        .text_color(cx.theme().foreground)
+                                        .child(i18n.settings_dialog_title()),
+                                )
+                                .child(div().h(px(1.)).bg(cx.theme().border))
+                                .child(
+                                    div()
+                                        .v_flex()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child(i18n.settings_titlebar_section()),
+                                        )
+                                        .child(
+                                            div()
+                                                .w_full()
+                                                .rounded_md()
+                                                .border_1()
+                                                .border_color(cx.theme().border)
+                                                .p_3()
+                                                .v_flex()
+                                                .gap_3()
+                                                .child(
+                                                    div()
+                                                        .w_full()
+                                                        .flex()
+                                                        .items_start()
+                                                        .justify_between()
+                                                        .gap_3()
+                                                        .child(
+                                                            div()
+                                                                .flex_1()
+                                                                .v_flex()
+                                                                .items_start()
+                                                                .gap_1()
+                                                                .child(
+                                                                    div()
+                                                                        .text_sm()
+                                                                        .text_color(cx.theme().foreground)
+                                                                        .child(
+                                                                            i18n.settings_titlebar_navigation_label(),
+                                                                        ),
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .text_xs()
+                                                                        .text_color(
+                                                                            cx.theme()
+                                                                                .muted_foreground,
+                                                                        )
+                                                                        .whitespace_normal()
+                                                                        .child(
+                                                                            i18n.settings_titlebar_navigation_hint(),
+                                                                        ),
+                                                                ),
+                                                        )
+                                                        .child(
+                                                            Checkbox::new("settings-show-titlebar-navigation")
+                                                                .checked(
+                                                                    self.titlebar_preferences
+                                                                        .show_navigation,
+                                                                )
+                                                                .on_click(cx.listener(
+                                                                    |this, checked: &bool, _, cx| {
+                                                                        this.set_titlebar_navigation_visible(
+                                                                            *checked,
+                                                                            cx,
+                                                                        );
+                                                                    },
+                                                                )),
+                                                        ),
+                                                )
+                                                .child(div().h(px(1.)).bg(cx.theme().border))
+                                                .child(
+                                                    div()
+                                                        .w_full()
+                                                        .flex()
+                                                        .items_start()
+                                                        .justify_between()
+                                                        .gap_3()
+                                                        .child(
+                                                            div()
+                                                                .flex_1()
+                                                                .v_flex()
+                                                                .items_start()
+                                                                .gap_1()
+                                                                .child(
+                                                                    div()
+                                                                        .text_sm()
+                                                                        .text_color(cx.theme().foreground)
+                                                                        .child(
+                                                                            i18n.settings_titlebar_zoom_label(),
+                                                                        ),
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .text_xs()
+                                                                        .text_color(
+                                                                            cx.theme()
+                                                                                .muted_foreground,
+                                                                        )
+                                                                        .whitespace_normal()
+                                                                        .child(
+                                                                            i18n.settings_titlebar_zoom_hint(),
+                                                                        ),
+                                                                ),
+                                                        )
+                                                        .child(
+                                                            Checkbox::new("settings-show-titlebar-zoom")
+                                                                .checked(self.titlebar_preferences.show_zoom)
+                                                                .on_click(cx.listener(
+                                                                    |this, checked: &bool, _, cx| {
+                                                                        this.set_titlebar_zoom_visible(
+                                                                            *checked,
+                                                                            cx,
+                                                                        );
+                                                                    },
+                                                                )),
+                                                        ),
+                                                ),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .flex()
+                                        .items_center()
+                                        .justify_end()
+                                        .child(
+                                            Button::new("settings-close")
+                                                .small()
+                                                .ghost()
+                                                .label(i18n.close_button())
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.close_settings_dialog(cx);
+                                                })),
+                                        ),
+                                ),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+
     fn open_about_dialog(&mut self, cx: &mut Context<Self>) {
         if self.command_panel_open {
             self.close_command_panel(cx);
         }
         if self.recent_popup_open {
             self.close_recent_popup(cx);
+        }
+        if self.settings_dialog_open {
+            self.settings_dialog_open = false;
         }
         if !self.about_dialog_open {
             self.about_dialog_open = true;
@@ -1249,6 +1601,14 @@ impl PdfViewer {
     ) {
         let is_primary_modifier = event.keystroke.modifiers.secondary();
         let key = event.keystroke.key.as_str();
+
+        if self.settings_dialog_open {
+            if key == "escape" {
+                self.close_settings_dialog(cx);
+                cx.stop_propagation();
+            }
+            return;
+        }
 
         if self.about_dialog_open {
             if key == "escape" {
@@ -3106,6 +3466,7 @@ impl Render for PdfViewer {
         let drag_tab_preview = self.render_drag_tab_preview(cx);
         let command_panel = self.render_command_panel(cx);
         let about_dialog = self.render_about_dialog(cx);
+        let settings_dialog = self.render_settings_dialog(cx);
 
         div()
             .size_full()
@@ -3115,6 +3476,9 @@ impl Render for PdfViewer {
             .on_action(cx.listener(|this, _: &CheckForUpdatesMenu, _, cx| {
                 this.open_about_dialog(cx);
                 this.check_for_updates(cx);
+            }))
+            .on_action(cx.listener(|this, _: &ShowSettingsMenu, _, cx| {
+                this.open_settings_dialog(cx);
             }))
             .on_action(cx.listener(|this, _: &EnableLoggingMenu, _, cx| {
                 if crate::logger::enable_file_logging() {
@@ -3207,6 +3571,8 @@ impl Render for PdfViewer {
                                                         page_count,
                                                         current_page_num,
                                                         zoom_label,
+                                                        self.titlebar_preferences.show_navigation,
+                                                        self.titlebar_preferences.show_zoom,
                                                         cx,
                                                     )),
                                             )
@@ -3347,6 +3713,9 @@ impl Render for PdfViewer {
                     })
                     .when(about_dialog.is_some(), |this| {
                         this.child(about_dialog.unwrap())
+                    })
+                    .when(settings_dialog.is_some(), |this| {
+                        this.child(settings_dialog.unwrap())
                     }),
             )
     }

@@ -31,6 +31,7 @@ enum CommandPanelItem {
 enum CommandPanelMenuAction {
     ShowAbout,
     CheckForUpdates,
+    ShowSettings,
     OpenLogs,
     EnableLogging,
     DisableLogging,
@@ -106,7 +107,14 @@ impl PdfViewer {
             file_name.contains(&query) || path_text.contains(&query)
         };
 
-        let mut items = vec![CommandPanelItem::OpenFile];
+        let mut items = Vec::new();
+        if !query.is_empty()
+            && (query_matches_text(i18n.choose_file_button())
+                || query_matches_text(i18n.open_pdf_prompt()))
+        {
+            items.push(CommandPanelItem::OpenFile);
+        }
+
         let active_tab_id = self.tab_bar.active_tab_id();
         let open_files = self.opened_file_tabs();
         let open_file_paths: HashSet<PathBuf> =
@@ -158,6 +166,11 @@ impl PdfViewer {
             CommandPanelMenuAction::CheckForUpdates,
             i18n.check_updates_button().to_string(),
             i18n.command_panel_check_updates_hint().to_string(),
+        );
+        push_menu_item(
+            CommandPanelMenuAction::ShowSettings,
+            i18n.settings_button().to_string(),
+            i18n.command_panel_open_settings_hint().to_string(),
         );
         if crate::logger::file_logging_enabled() {
             push_menu_item(
@@ -232,6 +245,9 @@ impl PdfViewer {
                     CommandPanelMenuAction::CheckForUpdates => {
                         self.open_about_dialog(cx);
                         self.check_for_updates(cx);
+                    }
+                    CommandPanelMenuAction::ShowSettings => {
+                        self.open_settings_dialog(cx);
                     }
                     CommandPanelMenuAction::OpenLogs => {
                         self.open_logs_directory();

@@ -23,6 +23,7 @@ gpui::actions!(
     [
         ShowAboutMenu,
         CheckForUpdatesMenu,
+        ShowSettingsMenu,
         EnableLoggingMenu,
         DisableLoggingMenu,
         OpenLogsMenu
@@ -33,6 +34,7 @@ pub(crate) fn configure_app_menus(cx: &mut App, i18n: i18n::I18n) {
     let mut items = vec![
         MenuItem::action(i18n.about_button(), ShowAboutMenu),
         MenuItem::action(i18n.check_updates_button(), CheckForUpdatesMenu),
+        MenuItem::action(i18n.settings_button(), ShowSettingsMenu),
         MenuItem::separator(),
     ];
 
