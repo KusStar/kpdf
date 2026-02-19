@@ -109,6 +109,7 @@ const TITLEBAR_PREFERENCES_KEY_SHOW_NAVIGATION: &str = "show_navigation";
 const TITLEBAR_PREFERENCES_KEY_SHOW_ZOOM: &str = "show_zoom";
 const TITLE_BAR_HEIGHT: f32 = 34.0;
 const TAB_BAR_HEIGHT: f32 = 36.0;
+const TAB_DRAG_START_DISTANCE: f32 = 4.0;
 const ABOUT_DIALOG_WIDTH: f32 = 460.0;
 const SETTINGS_DIALOG_WIDTH: f32 = 520.0;
 #[cfg(target_os = "macos")]
@@ -220,6 +221,7 @@ pub struct PdfViewer {
     // 拖放相关状态
     drag_state: DragState,
     drag_mouse_position: Option<Point<Pixels>>,
+    pending_drag_start: Option<(usize, Point<Pixels>)>,
     text_hover_target: Option<(usize, usize)>, // (tab_id, page_index)
     needs_initial_focus: bool,
     command_panel_needs_focus: bool,
@@ -349,6 +351,7 @@ impl PdfViewer {
             hovered_tab_id: None,
             drag_state: DragState::None,
             drag_mouse_position: None,
+            pending_drag_start: None,
             text_hover_target: None,
             needs_initial_focus: true,
             command_panel_needs_focus: false,
@@ -3552,7 +3555,33 @@ impl PdfViewer {
         }
     }
 
+    fn maybe_start_pending_tab_drag(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some((source_tab_id, start_position)) = self.pending_drag_start else {
+            return;
+        };
+
+        if self.current_drag_source_tab_id().is_some() {
+            return;
+        }
+
+        let dx = f32::from(position.x) - f32::from(start_position.x);
+        let dy = f32::from(position.y) - f32::from(start_position.y);
+        let distance_sq = dx * dx + dy * dy;
+        let threshold_sq = TAB_DRAG_START_DISTANCE * TAB_DRAG_START_DISTANCE;
+
+        if distance_sq < threshold_sq {
+            return;
+        }
+
+        self.drag_state = DragState::Started { source_tab_id };
+        self.drag_mouse_position = Some(position);
+        self.pending_drag_start = None;
+        cx.notify();
+    }
+
     fn update_drag_mouse_position(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        self.maybe_start_pending_tab_drag(position, cx);
+
         let Some(source_tab_id) = self.current_drag_source_tab_id() else {
             return;
         };
@@ -3579,6 +3608,10 @@ impl PdfViewer {
     }
 
     fn finish_tab_drag(&mut self, cx: &mut Context<Self>) {
+        if self.pending_drag_start.take().is_some() {
+            cx.notify();
+        }
+
         match self.drag_state.clone() {
             DragState::Over {
                 source_tab_id,
@@ -3677,6 +3710,10 @@ impl PdfViewer {
             }
             _ => None,
         };
+        let drag_in_progress = matches!(
+            self.drag_state,
+            DragState::Started { .. } | DragState::Over { .. }
+        );
 
         div()
             .h(px(TAB_BAR_HEIGHT))
@@ -3751,13 +3788,6 @@ impl PdfViewer {
                         for (index, tab) in tabs_to_show.iter().enumerate() {
                             let tab_id = tab.id;
                             let is_active = active_tab_id == Some(tab_id);
-                            let is_drag_source = matches!(
-                                self.drag_state,
-                                DragState::Started { source_tab_id, .. } if source_tab_id == tab_id
-                            ) || matches!(
-                                self.drag_state,
-                                DragState::Over { source_tab_id, .. } if source_tab_id == tab_id
-                            );
                             let show_close_button = is_active || self.hovered_tab_id == Some(tab_id);
                             let close_icon_color = if show_close_button {
                                 cx.theme().muted_foreground
@@ -3841,10 +3871,10 @@ impl PdfViewer {
                                         MouseButton::Left,
                                         cx.listener(move |this, event: &MouseDownEvent, _, cx| {
                                             if this.tab_bar.get_tab_index_by_id(tab_id).is_some() {
-                                                this.drag_state = DragState::Started {
-                                                    source_tab_id: tab_id,
-                                                };
-                                                this.drag_mouse_position = Some(event.position);
+                                                this.pending_drag_start =
+                                                    Some((tab_id, event.position));
+                                                this.drag_state = DragState::None;
+                                                this.drag_mouse_position = None;
                                                 cx.notify();
                                             }
                                         }),
@@ -3908,8 +3938,8 @@ impl PdfViewer {
                                             this.switch_to_tab(tab_id, cx);
                                         }
                                     }))
-                                    .when(is_drag_source, |this| this.cursor_grab())
-                                    .when(!is_drag_source, |this| this.cursor_pointer())
+                                    .when(drag_in_progress, |this| this.cursor_grab())
+                                    .when(!drag_in_progress, |this| this.cursor_pointer())
                                     .into_any_element(),
                             );
                         }
