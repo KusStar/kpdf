@@ -11,6 +11,11 @@ use std::path::PathBuf;
 #[derive(Clone)]
 enum CommandPanelItem {
     OpenFile,
+    MenuCommand {
+        action: CommandPanelMenuAction,
+        title: String,
+        subtitle: String,
+    },
     OpenTab {
         tab_id: usize,
         path: PathBuf,
@@ -20,6 +25,15 @@ enum CommandPanelItem {
         path: PathBuf,
         last_seen_page: Option<usize>,
     },
+}
+
+#[derive(Clone, Copy)]
+enum CommandPanelMenuAction {
+    ShowAbout,
+    CheckForUpdates,
+    OpenLogs,
+    EnableLogging,
+    DisableLogging,
 }
 
 const COMMAND_PANEL_WIDTH: f32 = 560.0;
@@ -75,7 +89,14 @@ impl PdfViewer {
     }
 
     fn command_panel_items(&self) -> Vec<CommandPanelItem> {
+        let i18n = self.i18n();
         let query = self.command_panel_query.trim().to_ascii_lowercase();
+        let query_matches_text = |text: &str| {
+            if query.is_empty() {
+                return true;
+            }
+            text.to_ascii_lowercase().contains(&query)
+        };
         let query_matches = |path: &PathBuf| {
             if query.is_empty() {
                 return true;
@@ -117,6 +138,46 @@ impl PdfViewer {
                 }),
         );
 
+        let mut push_menu_item =
+            |action: CommandPanelMenuAction, title: String, subtitle: String| {
+                if query_matches_text(&title) || query_matches_text(&subtitle) {
+                    items.push(CommandPanelItem::MenuCommand {
+                        action,
+                        title,
+                        subtitle,
+                    });
+                }
+            };
+
+        push_menu_item(
+            CommandPanelMenuAction::ShowAbout,
+            i18n.about_button().to_string(),
+            i18n.command_panel_open_about_hint().to_string(),
+        );
+        push_menu_item(
+            CommandPanelMenuAction::CheckForUpdates,
+            i18n.check_updates_button().to_string(),
+            i18n.command_panel_check_updates_hint().to_string(),
+        );
+        if crate::logger::file_logging_enabled() {
+            push_menu_item(
+                CommandPanelMenuAction::OpenLogs,
+                i18n.open_logs_button().to_string(),
+                i18n.command_panel_open_logs_hint().to_string(),
+            );
+            push_menu_item(
+                CommandPanelMenuAction::DisableLogging,
+                i18n.disable_logging_button().to_string(),
+                i18n.command_panel_disable_logging_hint().to_string(),
+            );
+        } else {
+            push_menu_item(
+                CommandPanelMenuAction::EnableLogging,
+                i18n.enable_logging_button().to_string(),
+                i18n.command_panel_enable_logging_hint().to_string(),
+            );
+        }
+
         items
     }
 
@@ -148,10 +209,43 @@ impl PdfViewer {
         let index = self
             .command_panel_selected_index
             .min(items.len().saturating_sub(1));
-        match items[index].clone() {
+        self.execute_command_panel_item(items[index].clone(), window, cx);
+    }
+
+    fn execute_command_panel_item(
+        &mut self,
+        item: CommandPanelItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match item {
             CommandPanelItem::OpenFile => {
                 self.close_command_panel(cx);
                 self.open_pdf_dialog(window, cx);
+            }
+            CommandPanelItem::MenuCommand { action, .. } => {
+                self.close_command_panel(cx);
+                match action {
+                    CommandPanelMenuAction::ShowAbout => {
+                        self.open_about_dialog(cx);
+                    }
+                    CommandPanelMenuAction::CheckForUpdates => {
+                        self.open_about_dialog(cx);
+                        self.check_for_updates(cx);
+                    }
+                    CommandPanelMenuAction::OpenLogs => {
+                        self.open_logs_directory();
+                    }
+                    CommandPanelMenuAction::EnableLogging => {
+                        if crate::logger::enable_file_logging() {
+                            crate::configure_app_menus(cx, self.i18n());
+                        }
+                    }
+                    CommandPanelMenuAction::DisableLogging => {
+                        crate::logger::disable_file_logging();
+                        crate::configure_app_menus(cx, self.i18n());
+                    }
+                }
             }
             CommandPanelItem::OpenTab { tab_id, .. } => {
                 self.close_command_panel(cx);
@@ -212,6 +306,14 @@ impl PdfViewer {
                                     None,
                                     None,
                                 ),
+                                CommandPanelItem::MenuCommand {
+                                    title, subtitle, ..
+                                } => (
+                                    title.clone(),
+                                    subtitle.clone(),
+                                    Some(i18n.command_panel_menu_badge().to_string()),
+                                    None,
+                                ),
                                 CommandPanelItem::OpenTab {
                                     path, is_active, ..
                                 } => (
@@ -263,21 +365,12 @@ impl PdfViewer {
                                 .on_click({
                                     let viewer = viewer.clone();
                                     move |_, window, cx| {
-                                        let _ = viewer.update(cx, |this, cx| match item_for_click
-                                            .clone()
-                                        {
-                                            CommandPanelItem::OpenFile => {
-                                                this.close_command_panel(cx);
-                                                this.open_pdf_dialog(window, cx);
-                                            }
-                                            CommandPanelItem::OpenTab { tab_id, .. } => {
-                                                this.close_command_panel(cx);
-                                                this.switch_to_tab(tab_id, cx);
-                                            }
-                                            CommandPanelItem::RecentFile { path, .. } => {
-                                                this.close_command_panel(cx);
-                                                this.open_recent_pdf(path, cx);
-                                            }
+                                        let _ = viewer.update(cx, |this, cx| {
+                                            this.execute_command_panel_item(
+                                                item_for_click.clone(),
+                                                window,
+                                                cx,
+                                            );
                                         });
                                     }
                                 })
@@ -395,11 +488,20 @@ impl PdfViewer {
                                     }),
                                 )
                                 .child(
-                                    Input::new(&self.command_panel_input_state)
-                                        .small()
-                                        .cleanable(true),
+                                    div()
+                                        .w_full()
+                                        .v_flex()
+                                        .gap_1()
+                                        .child(
+                                            Input::new(&self.command_panel_input_state)
+                                                .small()
+                                                .appearance(false)
+                                                .bordered(false)
+                                                .focus_bordered(false)
+                                                .cleanable(true),
+                                        )
+                                        .child(div().h(px(1.)).bg(cx.theme().border)),
                                 )
-                                .child(div().h(px(1.)).bg(cx.theme().border))
                                 .child(
                                     div()
                                         .id("command-panel-list-wrap")

@@ -294,6 +294,48 @@ impl I18n {
         }
     }
 
+    pub fn command_panel_menu_badge(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "菜单",
+            Language::EnUs => "Menu",
+        }
+    }
+
+    pub fn command_panel_open_about_hint(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "打开关于窗口",
+            Language::EnUs => "Open About dialog",
+        }
+    }
+
+    pub fn command_panel_check_updates_hint(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "检查最新版本",
+            Language::EnUs => "Check for updates",
+        }
+    }
+
+    pub fn command_panel_open_logs_hint(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "打开日志目录",
+            Language::EnUs => "Open logs folder",
+        }
+    }
+
+    pub fn command_panel_enable_logging_hint(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "启用文件日志记录",
+            Language::EnUs => "Enable file logging",
+        }
+    }
+
+    pub fn command_panel_disable_logging_hint(self) -> &'static str {
+        match self.lang {
+            Language::ZhCn => "关闭文件日志记录",
+            Language::EnUs => "Disable file logging",
+        }
+    }
+
     pub fn pdfium_not_found(self) -> &'static str {
         match self.lang {
             Language::ZhCn => {
