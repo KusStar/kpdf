@@ -1,0 +1,83 @@
+use serde::{Deserialize, Serialize};
+
+// 定义拖放状态
+#[derive(Debug, Clone)]
+pub enum DragState {
+    None,
+    Started {
+        source_tab_id: usize,
+    },
+    Over {
+        source_tab_id: usize,
+        target_tab_id: usize,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum RecentPopupAnchor {
+    OpenButton,
+    TabAddButton,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(super) struct BookmarkEntry {
+    pub(super) path: PathBuf,
+    pub(super) page_index: usize,
+    pub(super) created_at_unix_secs: u64,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(super) enum BookmarkScope {
+    CurrentPdf,
+    All,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct MarkdownNoteEntry {
+    pub(super) id: u64,
+    pub(super) path: PathBuf,
+    pub(super) page_index: usize,
+    pub(super) x_ratio: f32,
+    pub(super) y_ratio: f32,
+    pub(super) markdown: String,
+    pub(super) created_at_unix_secs: u64,
+    pub(super) updated_at_unix_secs: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct MarkdownNoteAnchor {
+    pub(super) page_index: usize,
+    pub(super) x_ratio: f32,
+    pub(super) y_ratio: f32,
+}
+
+#[derive(Debug, Clone)]
+pub(super) enum UpdaterUiState {
+    Idle,
+    Checking,
+    UpToDate {
+        latest_version: String,
+    },
+    Available {
+        latest_version: String,
+        download_url: String,
+    },
+    Error {
+        message: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct TitleBarVisibilityPreferences {
+    pub(super) show_navigation: bool,
+    pub(super) show_zoom: bool,
+}
+
+impl Default for TitleBarVisibilityPreferences {
+    fn default() -> Self {
+        Self {
+            show_navigation: true,
+            show_zoom: true,
+        }
+    }
+}

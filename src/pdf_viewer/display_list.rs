@@ -739,7 +739,7 @@ impl PdfViewer {
         let display_panel_width = self.display_panel_width(window, zoom);
         let horizontal_offset = (display_panel_width - page_width) / 2.0;
 
-        // Keep this aligned with the actual top-bar layout in `pdf_viewer.rs`.
+        // Keep this aligned with the actual top-bar layout in `pdf_viewer/mod.rs`.
         let content_offset_y = super::TITLE_BAR_HEIGHT + super::TAB_BAR_HEIGHT;
         let sidebar_width = if self.show_thumbnail_panel() {
             super::SIDEBAR_WIDTH
