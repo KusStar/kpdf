@@ -112,6 +112,7 @@ fn select_asset_for_current_platform(assets: &[GithubAsset]) -> Option<&GithubAs
     None
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn select_macos_asset(assets: &[GithubAsset]) -> Option<&GithubAsset> {
     assets
         .iter()
@@ -131,11 +132,13 @@ fn select_linux_asset(assets: &[GithubAsset]) -> Option<&GithubAsset> {
     assets.iter().find(|asset| is_linux_installer(&asset.name))
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn is_macos_dmg(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     (name.starts_with("macos-") || name.contains("macos")) && name.ends_with(".dmg")
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn is_macos_app_zip(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     (name.starts_with("macos-") || name.contains("macos")) && name.ends_with(".app.zip")
