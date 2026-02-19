@@ -3110,6 +3110,7 @@ dependencies = [
  "rust-embed",
  "semver",
  "serde",
+ "serde_json",
  "sled",
  "tklog",
  "windows 0.61.3",

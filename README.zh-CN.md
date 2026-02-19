@@ -113,6 +113,7 @@ cargo build --release
 ```text
 .
 ├── assets/                  # 图标与应用资源
+│   └── i18n/                # 国际化 JSON 文案
 ├── lib/                     # Pdfium 动态库（当前含 macOS 版本）
 ├── src/
 │   ├── main.rs              # 应用入口

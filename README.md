@@ -118,6 +118,7 @@ Stores recent files, reading positions, window size, and open tabs.
 ```text
 .
 ├── assets/                  # App assets and icons
+│   └── i18n/                # Locale JSON files
 ├── lib/                     # Pdfium dynamic library (macOS included)
 ├── src/
 │   ├── main.rs              # Application entry point
