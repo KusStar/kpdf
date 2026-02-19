@@ -15,6 +15,7 @@ on:
         options:
           - all
           - macos
+          - linux
           - windows
   push:
     tags:
@@ -53,16 +54,19 @@ jobs:
 
           case "${platform}" in
             all)
-              matrix='{"include":[{"platform":"macos","runner":"macos-latest"},{"platform":"windows","runner":"windows-latest"}]}'
+              matrix='{"include":[{"platform":"macos","runner":"macos-latest"},{"platform":"linux","runner":"ubuntu-latest"},{"platform":"windows","runner":"windows-latest"}]}'
               ;;
             macos)
               matrix='{"include":[{"platform":"macos","runner":"macos-latest"}]}'
+              ;;
+            linux)
+              matrix='{"include":[{"platform":"linux","runner":"ubuntu-latest"}]}'
               ;;
             windows)
               matrix='{"include":[{"platform":"windows","runner":"windows-latest"}]}'
               ;;
             *)
-              echo "::error::Unsupported platform input: ${platform} (expected all/macos/windows)."
+              echo "::error::Unsupported platform input: ${platform} (expected all/macos/linux/windows)."
               exit 1
               ;;
           esac
@@ -109,6 +113,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: .\scripts\fetch_pdfium_lib.bat -o .\lib
+
+      - name: Fetch PDFium (Linux)
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x ./scripts/fetch_pdfium_lib.sh
+          ./scripts/fetch_pdfium_lib.sh -o ./lib
 
       - name: Import macOS signing certificate
         if: matrix.platform == 'macos'
@@ -234,7 +247,7 @@ jobs:
             for file in "${dmg_files[@]}"; do
               cp "${file}" "${out_dir}/macos-$(basename "${file}")"
             done
-          else
+          elif [[ "${{ matrix.platform }}" == "windows" ]]; then
             shopt -s nullglob
             exe_files=(target/release/kpdf_*_x64-setup.exe)
             shopt -u nullglob
@@ -249,6 +262,28 @@ jobs:
 
             for file in "${exe_files[@]}"; do
               cp "${file}" "${out_dir}/windows-$(basename "${file}")"
+            done
+          else
+            shopt -s nullglob
+            linux_files=(target/release/*.deb target/release/*.rpm target/release/*.AppImage target/release/*.appimage target/release/*.tar.gz)
+            shopt -u nullglob
+
+            if [[ ${#linux_files[@]} -eq 0 ]]; then
+              while IFS= read -r -d '' file; do
+                linux_files+=("${file}")
+              done < <(find target -type f \( -iname "*.deb" -o -iname "*.rpm" -o -iname "*.AppImage" -o -iname "*.appimage" -o -name "*.tar.gz" \) -print0)
+            fi
+
+            if [[ ${#linux_files[@]} -eq 0 ]]; then
+              echo "::group::target/release"
+              ls -lah target/release || true
+              echo "::endgroup::"
+              echo "::error::No Linux package found (expected .deb/.rpm/.AppImage/.tar.gz)."
+              exit 1
+            fi
+
+            for file in "${linux_files[@]}"; do
+              cp "${file}" "${out_dir}/linux-$(basename "${file}")"
             done
           fi
 
