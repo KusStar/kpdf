@@ -259,8 +259,7 @@ fn load_saved_window_size() -> Option<(f32, f32)> {
 
 #[cfg(target_os = "linux")]
 fn running_inside_wsl() -> bool {
-    if std::env::var_os("WSL_DISTRO_NAME").is_some() || std::env::var_os("WSL_INTEROP").is_some()
-    {
+    if std::env::var_os("WSL_DISTRO_NAME").is_some() || std::env::var_os("WSL_INTEROP").is_some() {
         return true;
     }
 
@@ -332,39 +331,80 @@ fn hide_linux_server_window_decorations(_window: &Window) {
     let Ok(net_wm_pid_cookie) = conn.intern_atom(false, b"_NET_WM_PID") else {
         return;
     };
+    let Ok(net_active_window_cookie) = conn.intern_atom(false, b"_NET_ACTIVE_WINDOW") else {
+        return;
+    };
     let Ok(motif_atom) = motif_cookie.reply().map(|reply| reply.atom) else {
         return;
     };
     let Ok(net_wm_pid_atom) = net_wm_pid_cookie.reply().map(|reply| reply.atom) else {
         return;
     };
-
-    let root = conn.setup().roots[screen_num].root;
-    let Ok(root_tree) = conn.query_tree(root).and_then(|cookie| cookie.reply()) else {
+    let Ok(net_active_window_atom) = net_active_window_cookie.reply().map(|reply| reply.atom)
+    else {
         return;
     };
+
+    let root = conn.setup().roots[screen_num].root;
     let current_pid = std::process::id();
 
     let mut targets = Vec::new();
-    let mut queue: std::collections::VecDeque<u32> = root_tree.children.into();
-    while let Some(candidate) = queue.pop_front() {
-        let child_pid = conn
-            .get_property(false, candidate, net_wm_pid_atom, AtomEnum::CARDINAL, 0, 1)
-            .and_then(|cookie| cookie.reply())
-            .ok()
-            .and_then(|reply| reply.value32().and_then(|mut values| values.next()));
-
-        if child_pid == Some(current_pid) {
-            targets.push(candidate);
+    if let Some(active_window) = conn
+        .get_property(false, root, net_active_window_atom, AtomEnum::WINDOW, 0, 1)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .and_then(|reply| reply.value32().and_then(|mut values| values.next()))
+    {
+        if active_window > 1 {
+            targets.push(active_window);
         }
+    }
 
-        if let Ok(tree_reply) = conn.query_tree(candidate).and_then(|cookie| cookie.reply()) {
-            queue.extend(tree_reply.children);
+    if let Some(focus_window) = conn
+        .get_input_focus()
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .map(|reply| reply.focus)
+        .filter(|focus| *focus > 1)
+    {
+        targets.push(focus_window);
+    }
+
+    targets.sort_unstable();
+    targets.dedup();
+
+    targets.retain(|&window_id| {
+        conn.get_property(false, window_id, net_wm_pid_atom, AtomEnum::CARDINAL, 0, 1)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .and_then(|reply| reply.value32().and_then(|mut values| values.next()))
+            == Some(current_pid)
+    });
+
+    if targets.is_empty() {
+        if let Some(root_tree) = conn
+            .query_tree(root)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+        {
+            for candidate in root_tree.children {
+                let child_pid = conn
+                    .get_property(false, candidate, net_wm_pid_atom, AtomEnum::CARDINAL, 0, 1)
+                    .ok()
+                    .and_then(|cookie| cookie.reply().ok())
+                    .and_then(|reply| reply.value32().and_then(|mut values| values.next()));
+                if child_pid == Some(current_pid) {
+                    targets.push(candidate);
+                }
+            }
         }
     }
 
     if targets.is_empty() {
-        crate::debug_log!("[linux] no X11 windows found for pid={} when setting borderless mode", current_pid);
+        crate::debug_log!(
+            "[linux] no X11 windows found for pid={} when setting borderless mode",
+            current_pid
+        );
         return;
     }
 
@@ -374,13 +414,7 @@ fn hide_linux_server_window_decorations(_window: &Window) {
     let mut changed = 0_u32;
     for window_id in targets {
         if conn
-            .change_property32(
-                PropMode::REPLACE,
-                window_id,
-                motif_atom,
-                motif_atom,
-                &hints,
-            )
+            .change_property32(PropMode::REPLACE, window_id, motif_atom, motif_atom, &hints)
             .is_ok()
         {
             changed += 1;
