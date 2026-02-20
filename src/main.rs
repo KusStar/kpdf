@@ -321,7 +321,11 @@ fn configure_linux_display_backend() {
 
 #[cfg(target_os = "linux")]
 fn hide_linux_server_window_decorations(window: &Window) {
-    let Ok(window_handle) = raw_window_handle::HasWindowHandle::window_handle(window) else {
+    let window_handle_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        raw_window_handle::HasWindowHandle::window_handle(window)
+    }));
+    let Ok(Ok(window_handle)) = window_handle_result else {
+        crate::debug_log!("[linux] skip server decoration hints: window_handle unavailable");
         return;
     };
 
