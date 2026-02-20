@@ -3104,6 +3104,7 @@ dependencies = [
  "tklog",
  "windows 0.61.3",
  "winresource",
+ "x11rb",
 ]
 
 [[package]]

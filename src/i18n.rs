@@ -420,6 +420,16 @@ fn app_resources_i18n_dir(current_exe: &Path) -> Option<PathBuf> {
     Some(contents_dir.join("Resources").join("i18n"))
 }
 
+#[cfg(target_os = "linux")]
+fn linux_packaged_i18n_dir(current_exe: &Path) -> Option<PathBuf> {
+    let exe_dir = current_exe.parent()?;
+    if exe_dir.file_name()?.to_string_lossy() != "bin" {
+        return None;
+    }
+    let prefix_dir = exe_dir.parent()?;
+    Some(prefix_dir.join("lib").join("kpdf").join("i18n"))
+}
+
 fn push_i18n_dir(
     candidates: &mut Vec<PathBuf>,
     seen: &mut std::collections::HashSet<PathBuf>,
@@ -452,6 +462,10 @@ fn collect_i18n_dirs() -> Vec<PathBuf> {
         if let Some(resources_i18n_dir) = app_resources_i18n_dir(&current_exe) {
             push_i18n_dir(&mut candidates, &mut seen, resources_i18n_dir);
         }
+        #[cfg(target_os = "linux")]
+        if let Some(packaged_i18n_dir) = linux_packaged_i18n_dir(&current_exe) {
+            push_i18n_dir(&mut candidates, &mut seen, packaged_i18n_dir);
+        }
 
         if let Some(exe_dir) = current_exe.parent() {
             push_i18n_dir(
@@ -470,6 +484,16 @@ fn collect_i18n_dirs() -> Vec<PathBuf> {
                 push_i18n_dir(&mut candidates, &mut seen, ancestor.join("i18n"));
             }
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        push_i18n_dir(&mut candidates, &mut seen, PathBuf::from("/usr/lib/kpdf/i18n"));
+        push_i18n_dir(
+            &mut candidates,
+            &mut seen,
+            PathBuf::from("/usr/local/lib/kpdf/i18n"),
+        );
     }
 
     if let Ok(current_dir) = std::env::current_dir() {

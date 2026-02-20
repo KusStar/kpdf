@@ -83,6 +83,16 @@ fn app_resources_lib_dir(current_exe: &Path) -> Option<PathBuf> {
     Some(contents_dir.join("Resources").join("lib"))
 }
 
+#[cfg(target_os = "linux")]
+fn linux_packaged_lib_dir(current_exe: &Path) -> Option<PathBuf> {
+    let exe_dir = current_exe.parent()?;
+    if exe_dir.file_name()?.to_string_lossy() != "bin" {
+        return None;
+    }
+    let prefix_dir = exe_dir.parent()?;
+    Some(prefix_dir.join("lib").join("kpdf").join("lib"))
+}
+
 fn push_library_dir(
     candidates: &mut Vec<PathBuf>,
     seen: &mut HashSet<PathBuf>,
@@ -122,6 +132,10 @@ fn collect_library_dirs() -> Vec<PathBuf> {
         if let Some(resources_lib_dir) = app_resources_lib_dir(&current_exe) {
             push_library_dir(&mut candidates, &mut seen, resources_lib_dir);
         }
+        #[cfg(target_os = "linux")]
+        if let Some(packaged_lib_dir) = linux_packaged_lib_dir(&current_exe) {
+            push_library_dir(&mut candidates, &mut seen, packaged_lib_dir);
+        }
 
         if let Some(exe_dir) = current_exe.parent() {
             push_library_dir(&mut candidates, &mut seen, exe_dir.join("lib"));
@@ -131,6 +145,16 @@ fn collect_library_dirs() -> Vec<PathBuf> {
                 push_library_dir(&mut candidates, &mut seen, ancestor.join("lib"));
             }
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        push_library_dir(&mut candidates, &mut seen, PathBuf::from("/usr/lib/kpdf/lib"));
+        push_library_dir(
+            &mut candidates,
+            &mut seen,
+            PathBuf::from("/usr/local/lib/kpdf/lib"),
+        );
     }
 
     if let Ok(current_dir) = std::env::current_dir() {

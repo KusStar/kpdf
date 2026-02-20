@@ -12,6 +12,14 @@ mod updater;
 use gpui::*;
 use gpui_component::*;
 use pdf_viewer::PdfViewer;
+#[cfg(target_os = "linux")]
+use raw_window_handle::RawWindowHandle;
+#[cfg(target_os = "linux")]
+use x11rb::connection::Connection as _;
+#[cfg(target_os = "linux")]
+use x11rb::protocol::xproto::{ConnectionExt as _, PropMode};
+#[cfg(target_os = "linux")]
+use x11rb::wrapper::ConnectionExt as _;
 
 const WINDOW_SIZE_TREE: &str = "window_size";
 const WINDOW_SIZE_KEY_WIDTH: &str = "width";
@@ -85,6 +93,16 @@ fn app_resources_themes_dir(current_exe: &std::path::Path) -> Option<std::path::
     Some(contents_dir.join("Resources").join("themes"))
 }
 
+#[cfg(target_os = "linux")]
+fn linux_packaged_themes_dir(current_exe: &std::path::Path) -> Option<std::path::PathBuf> {
+    let exe_dir = current_exe.parent()?;
+    if exe_dir.file_name()?.to_string_lossy() != "bin" {
+        return None;
+    }
+    let prefix_dir = exe_dir.parent()?;
+    Some(prefix_dir.join("lib").join("kpdf").join("themes"))
+}
+
 fn push_theme_dir(
     candidates: &mut Vec<std::path::PathBuf>,
     seen: &mut std::collections::HashSet<std::path::PathBuf>,
@@ -117,6 +135,10 @@ fn collect_theme_dirs() -> Vec<std::path::PathBuf> {
         if let Some(resources_themes_dir) = app_resources_themes_dir(&current_exe) {
             push_theme_dir(&mut candidates, &mut seen, resources_themes_dir);
         }
+        #[cfg(target_os = "linux")]
+        if let Some(packaged_themes_dir) = linux_packaged_themes_dir(&current_exe) {
+            push_theme_dir(&mut candidates, &mut seen, packaged_themes_dir);
+        }
 
         if let Some(exe_dir) = current_exe.parent() {
             push_theme_dir(
@@ -135,6 +157,20 @@ fn collect_theme_dirs() -> Vec<std::path::PathBuf> {
                 push_theme_dir(&mut candidates, &mut seen, ancestor.join("themes"));
             }
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        push_theme_dir(
+            &mut candidates,
+            &mut seen,
+            std::path::PathBuf::from("/usr/lib/kpdf/themes"),
+        );
+        push_theme_dir(
+            &mut candidates,
+            &mut seen,
+            std::path::PathBuf::from("/usr/local/lib/kpdf/themes"),
+        );
     }
 
     if let Ok(current_dir) = std::env::current_dir() {
@@ -221,6 +257,48 @@ fn load_saved_window_size() -> Option<(f32, f32)> {
     Some((width, height))
 }
 
+#[cfg(target_os = "linux")]
+fn hide_linux_server_window_decorations(window: &Window) {
+    let Ok(window_handle) = raw_window_handle::HasWindowHandle::window_handle(window) else {
+        return;
+    };
+
+    let window_id = match window_handle.as_raw() {
+        RawWindowHandle::Xcb(handle) => handle.window.get(),
+        RawWindowHandle::Xlib(handle) => handle.window as u32,
+        _ => return,
+    };
+    if window_id == 0 {
+        return;
+    }
+
+    let Ok((conn, _)) = x11rb::connect(None) else {
+        return;
+    };
+    let Ok(atom_cookie) = conn.intern_atom(false, b"_MOTIF_WM_HINTS") else {
+        return;
+    };
+    let Ok(atom_reply) = atom_cookie.reply() else {
+        return;
+    };
+
+    const HINTS_FLAGS_DECORATIONS: u32 = 1 << 1;
+    let hints: [u32; 5] = [HINTS_FLAGS_DECORATIONS, 0, 0, 0, 0];
+
+    if conn
+        .change_property32(
+            PropMode::REPLACE,
+            window_id,
+            atom_reply.atom,
+            atom_reply.atom,
+            &hints,
+        )
+        .is_ok()
+    {
+        let _ = conn.flush();
+    }
+}
+
 fn main() {
     logger::initialize();
 
@@ -265,6 +343,8 @@ fn main() {
             };
 
             cx.open_window(window_options, |window, cx| {
+                #[cfg(target_os = "linux")]
+                hide_linux_server_window_decorations(window);
                 let view = cx.new(|cx| PdfViewer::new(window, cx));
                 cx.new(|cx| Root::new(view, window, cx))
             })?;

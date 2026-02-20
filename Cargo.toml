@@ -68,6 +68,10 @@ features = [
     "Win32_UI_WindowsAndMessaging",
 ]
 
+[target.'cfg(target_os = "linux")'.dependencies]
+raw-window-handle = "0.6"
+x11rb = "0.13.2"
+
 [profile.release]
 strip = true
 opt-level = "z"
