@@ -1,4 +1,6 @@
 impl PdfViewer {
+    const LOCAL_STATE_DB_DIR_NAME: &'static str = "kpdf_db";
+
     fn i18n(&self) -> I18n {
         I18n::new(self.language)
     }
@@ -37,7 +39,7 @@ impl PdfViewer {
         Option<sled::Tree>,
         Option<sled::Tree>,
     ) {
-        let db_path = Self::recent_files_db_path();
+        let db_path = Self::local_state_db_path();
         if let Some(parent) = db_path.parent() {
             if std::fs::create_dir_all(parent).is_err() {
                 crate::debug_log!("[store] create dir failed: {}", parent.to_string_lossy());
@@ -151,16 +153,20 @@ impl PdfViewer {
         )
     }
 
-    fn recent_files_db_path() -> PathBuf {
+    fn local_state_db_path() -> PathBuf {
         if let Some(app_data) = std::env::var_os("APPDATA") {
-            return PathBuf::from(app_data).join("kpdf").join("recent_files_db");
+            return PathBuf::from(app_data)
+                .join("kpdf")
+                .join(Self::LOCAL_STATE_DB_DIR_NAME);
         }
 
         if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home).join(".kpdf").join("recent_files_db");
+            return PathBuf::from(home)
+                .join(".kpdf")
+                .join(Self::LOCAL_STATE_DB_DIR_NAME);
         }
 
-        PathBuf::from(".kpdf").join("recent_files_db")
+        PathBuf::from(".kpdf").join(Self::LOCAL_STATE_DB_DIR_NAME)
     }
 
     fn load_recent_files_from_store(store: &sled::Tree) -> Vec<PathBuf> {

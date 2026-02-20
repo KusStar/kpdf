@@ -98,8 +98,8 @@ cargo build --release
 
 ### 本地状态数据库（最近文件、阅读位置、窗口大小、打开标签、书签、Markdown 笔记）
 
-- Windows: `%APPDATA%/kpdf/recent_files_db`
-- macOS / Linux: `~/.kpdf/recent_files_db`
+- Windows: `%APPDATA%/kpdf/kpdf_db`
+- macOS / Linux: `~/.kpdf/kpdf_db`
 
 ### 日志文件默认路径
 

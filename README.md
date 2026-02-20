@@ -104,8 +104,8 @@ cargo build --release
 
 Stores recent files, reading positions, window size, open tabs, bookmarks, and markdown notes.
 
-- Windows: `%APPDATA%/kpdf/recent_files_db`
-- macOS / Linux: `~/.kpdf/recent_files_db`
+- Windows: `%APPDATA%/kpdf/kpdf_db`
+- macOS / Linux: `~/.kpdf/kpdf_db`
 
 ### Default log file
 

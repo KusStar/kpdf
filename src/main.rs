@@ -16,6 +16,7 @@ use pdf_viewer::PdfViewer;
 const WINDOW_SIZE_TREE: &str = "window_size";
 const WINDOW_SIZE_KEY_WIDTH: &str = "width";
 const WINDOW_SIZE_KEY_HEIGHT: &str = "height";
+const LOCAL_STATE_DB_DIR_NAME: &str = "kpdf_db";
 pub(crate) const APP_REPOSITORY_URL: &str = "https://github.com/KusStar/kpdf";
 
 gpui::actions!(
@@ -61,14 +62,14 @@ fn window_size_db_path() -> std::path::PathBuf {
     if let Some(app_data) = std::env::var_os("APPDATA") {
         return std::path::PathBuf::from(app_data)
             .join("kpdf")
-            .join("recent_files_db");
+            .join(LOCAL_STATE_DB_DIR_NAME);
     }
     if let Some(home) = std::env::var_os("HOME") {
         return std::path::PathBuf::from(home)
             .join(".kpdf")
-            .join("recent_files_db");
+            .join(LOCAL_STATE_DB_DIR_NAME);
     }
-    std::path::PathBuf::from("kpdf_recent_files_db")
+    std::path::PathBuf::from("kpdf_db")
 }
 
 fn app_resources_themes_dir(current_exe: &std::path::Path) -> Option<std::path::PathBuf> {
