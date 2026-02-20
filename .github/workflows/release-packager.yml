@@ -116,7 +116,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           chmod +x ./scripts/fetch_pdfium_lib.sh
-          ./scripts/fetch_pdfium_lib.sh -o ./lib
+          ./scripts/fetch_pdfium_lib.sh -o ./lib --strip
 
       - name: Fetch PDFium (Windows)
         if: matrix.platform == 'windows'
@@ -132,7 +132,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           chmod +x ./scripts/fetch_pdfium_lib.sh
-          ./scripts/fetch_pdfium_lib.sh -o ./lib
+          ./scripts/fetch_pdfium_lib.sh -o ./lib --strip
 
       - name: Import macOS signing certificate
         if: matrix.platform == 'macos'

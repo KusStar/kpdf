@@ -6,6 +6,7 @@ TAG_ALIAS="chromium"
 TMP_DIR=""
 CANDIDATES=()
 TAG_ENCODED=""
+STRIP_LIB=0
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
@@ -21,6 +22,7 @@ https://github.com/bblanchon/pdfium-binaries/releases/tag/chromium
 
 Options:
   -o, --output-dir <dir>   Output directory for the dynamic library (default: ./lib)
+  -s, --strip              Strip symbols from downloaded library to reduce size
   -h, --help               Show this help message
 
 Environment:
@@ -42,6 +44,37 @@ cleanup() {
 ensure_cmd() {
   local cmd="$1"
   command -v "${cmd}" >/dev/null 2>&1 || die "Missing required command: ${cmd}"
+}
+
+file_size_bytes() {
+  local path="$1"
+  wc -c < "${path}" | tr -d '[:space:]'
+}
+
+strip_library() {
+  local path="$1"
+  local os="$2"
+
+  if command -v llvm-strip >/dev/null 2>&1; then
+    llvm-strip "${path}" || die "Failed to strip library with llvm-strip: ${path}"
+    return 0
+  fi
+
+  if ! command -v strip >/dev/null 2>&1; then
+    die "Missing strip tool for --strip (install llvm-strip or strip)."
+  fi
+
+  case "${os}" in
+    mac)
+      strip -x "${path}" 2>/dev/null || strip "${path}" || die "Failed to strip library: ${path}"
+      ;;
+    linux|win)
+      strip --strip-unneeded "${path}" 2>/dev/null || strip "${path}" || die "Failed to strip library: ${path}"
+      ;;
+    *)
+      strip "${path}" || die "Failed to strip library: ${path}"
+      ;;
+  esac
 }
 
 detect_os() {
@@ -246,6 +279,10 @@ main() {
         OUTPUT_DIR="$2"
         shift 2
         ;;
+      -s|--strip)
+        STRIP_LIB=1
+        shift
+        ;;
       -h|--help)
         usage
         exit 0
@@ -294,6 +331,14 @@ main() {
   mkdir -p "${OUTPUT_DIR}"
   target_lib="${OUTPUT_DIR}/${lib_name}"
   cp -f "${src_lib}" "${target_lib}"
+
+  local original_size stripped_size
+  original_size="$(file_size_bytes "${target_lib}")"
+  if [[ "${STRIP_LIB}" -eq 1 ]]; then
+    strip_library "${target_lib}" "${os}"
+    stripped_size="$(file_size_bytes "${target_lib}")"
+    printf 'Stripped: %s (saved %s bytes)\n' "${target_lib}" "$((original_size - stripped_size))"
+  fi
 
   printf 'Resolved tag: %s\n' "$(decode_tag_component "${selected_tag}")"
   printf 'Downloaded: %s\n' "${selected_asset}"

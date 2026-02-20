@@ -15,6 +15,7 @@ set "ARCH="
 set "TAG_ENCODED="
 set "TAG_DISPLAY="
 set "SELECTED_ASSET="
+set "STRIP_LIB=0"
 set "ERRMSG="
 set "SHOW_HELP="
 
@@ -85,6 +86,21 @@ if errorlevel 1 (
   goto fail
 )
 
+if /I "%STRIP_LIB%"=="1" (
+  set "SIZE_BEFORE="
+  set "SIZE_AFTER="
+  for %%S in ("%OUTPUT_DIR%\pdfium.dll") do set "SIZE_BEFORE=%%~zS"
+  call :strip_library "%OUTPUT_DIR%\pdfium.dll"
+  if errorlevel 1 goto fail
+  for %%S in ("%OUTPUT_DIR%\pdfium.dll") do set "SIZE_AFTER=%%~zS"
+  if defined SIZE_BEFORE if defined SIZE_AFTER (
+    set /a "SAVED_BYTES=!SIZE_BEFORE!-!SIZE_AFTER!"
+    echo Stripped: %OUTPUT_DIR%\pdfium.dll ^(saved !SAVED_BYTES! bytes^)
+  ) else (
+    echo Stripped: %OUTPUT_DIR%\pdfium.dll
+  )
+)
+
 echo Resolved tag: !TAG_DISPLAY!
 echo Downloaded: !SELECTED_ASSET!
 echo Copied: %OUTPUT_DIR%\pdfium.dll
@@ -103,6 +119,16 @@ if /I "%~1"=="--help" (
   call :usage
   set "SHOW_HELP=1"
   exit /b 0
+)
+if /I "%~1"=="-s" (
+  set "STRIP_LIB=1"
+  shift
+  goto parse_args
+)
+if /I "%~1"=="--strip" (
+  set "STRIP_LIB=1"
+  shift
+  goto parse_args
 )
 
 if /I "%~1"=="-o" (
@@ -137,6 +163,7 @@ echo https://github.com/bblanchon/pdfium-binaries/releases/tag/chromium
 echo.
 echo Options:
 echo   -o, --output-dir ^<dir^>   Output directory for pdfium.dll ^(default: .\lib^)
+echo   -s, --strip                Strip symbols from downloaded library to reduce size
 echo   -h, --help                 Show this help message
 exit /b 0
 
@@ -215,6 +242,37 @@ if errorlevel 1 exit /b 1
 
 set "SELECTED_ASSET=!ASSET!"
 exit /b 0
+
+:strip_library
+set "TARGET_LIB=%~1"
+if not exist "%TARGET_LIB%" (
+  set "ERRMSG=Library not found for strip: %TARGET_LIB%"
+  exit /b 1
+)
+
+where llvm-strip >nul 2>nul
+if not errorlevel 1 (
+  llvm-strip "%TARGET_LIB%" >nul 2>nul
+  if errorlevel 1 (
+    set "ERRMSG=Failed to strip with llvm-strip: %TARGET_LIB%"
+    exit /b 1
+  )
+  exit /b 0
+)
+
+where strip >nul 2>nul
+if not errorlevel 1 (
+  strip --strip-unneeded "%TARGET_LIB%" >nul 2>nul
+  if errorlevel 1 strip "%TARGET_LIB%" >nul 2>nul
+  if errorlevel 1 (
+    set "ERRMSG=Failed to strip with strip: %TARGET_LIB%"
+    exit /b 1
+  )
+  exit /b 0
+)
+
+set "ERRMSG=Missing strip tool for --strip ^(install llvm-strip or strip^)."
+exit /b 1
 
 :cleanup
 if defined TMP_DIR (
