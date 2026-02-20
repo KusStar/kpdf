@@ -26,6 +26,8 @@ const WINDOW_SIZE_KEY_WIDTH: &str = "width";
 const WINDOW_SIZE_KEY_HEIGHT: &str = "height";
 const LOCAL_STATE_DB_DIR_NAME: &str = "kpdf_db";
 pub(crate) const APP_REPOSITORY_URL: &str = "https://github.com/KusStar/kpdf";
+#[cfg(target_os = "linux")]
+const KPDF_LINUX_BACKEND_ENV: &str = "KPDF_LINUX_BACKEND";
 
 gpui::actions!(
     kpdf,
@@ -258,6 +260,66 @@ fn load_saved_window_size() -> Option<(f32, f32)> {
 }
 
 #[cfg(target_os = "linux")]
+fn running_inside_wsl() -> bool {
+    if std::env::var_os("WSL_DISTRO_NAME").is_some() || std::env::var_os("WSL_INTEROP").is_some()
+    {
+        return true;
+    }
+
+    std::fs::read_to_string("/proc/sys/kernel/osrelease")
+        .map(|release| release.to_ascii_lowercase().contains("microsoft"))
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+fn has_non_empty_env(key: &str) -> bool {
+    std::env::var_os(key).is_some_and(|value| !value.is_empty())
+}
+
+#[cfg(target_os = "linux")]
+fn configure_linux_display_backend() {
+    let requested_backend = std::env::var(KPDF_LINUX_BACKEND_ENV)
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase());
+
+    match requested_backend.as_deref() {
+        Some("wayland") => {
+            crate::debug_log!(
+                "[linux] backend override: {}=wayland",
+                KPDF_LINUX_BACKEND_ENV
+            );
+            return;
+        }
+        Some("x11") => {
+            if has_non_empty_env("WAYLAND_DISPLAY") {
+                // Safe here: this runs before any threads are spawned.
+                unsafe { std::env::remove_var("WAYLAND_DISPLAY") };
+            }
+            crate::debug_log!("[linux] backend override: {}=x11", KPDF_LINUX_BACKEND_ENV);
+            return;
+        }
+        Some("auto") | None => {}
+        Some(other) => {
+            crate::debug_log!(
+                "[linux] invalid {} value '{}', expected auto/x11/wayland; using auto",
+                KPDF_LINUX_BACKEND_ENV,
+                other
+            );
+        }
+    }
+
+    if running_inside_wsl() && has_non_empty_env("WAYLAND_DISPLAY") && has_non_empty_env("DISPLAY")
+    {
+        // Safe here: this runs before any threads are spawned.
+        unsafe { std::env::remove_var("WAYLAND_DISPLAY") };
+        crate::debug_log!(
+            "[linux] detected WSL with DISPLAY and WAYLAND_DISPLAY; forcing X11 to avoid Wayland UnsupportedVersion. set {}=wayland to override",
+            KPDF_LINUX_BACKEND_ENV
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn hide_linux_server_window_decorations(window: &Window) {
     let Ok(window_handle) = raw_window_handle::HasWindowHandle::window_handle(window) else {
         return;
@@ -301,6 +363,8 @@ fn hide_linux_server_window_decorations(window: &Window) {
 
 fn main() {
     logger::initialize();
+    #[cfg(target_os = "linux")]
+    configure_linux_display_backend();
 
     let app = Application::new().with_assets(icons::Assets);
     let language = i18n::Language::detect();
