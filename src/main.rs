@@ -13,11 +13,9 @@ use gpui::*;
 use gpui_component::*;
 use pdf_viewer::PdfViewer;
 #[cfg(target_os = "linux")]
-use raw_window_handle::RawWindowHandle;
-#[cfg(target_os = "linux")]
 use x11rb::connection::Connection as _;
 #[cfg(target_os = "linux")]
-use x11rb::protocol::xproto::{ConnectionExt as _, PropMode};
+use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, PropMode};
 #[cfg(target_os = "linux")]
 use x11rb::wrapper::ConnectionExt as _;
 
@@ -320,48 +318,81 @@ fn configure_linux_display_backend() {
 }
 
 #[cfg(target_os = "linux")]
-fn hide_linux_server_window_decorations(window: &Window) {
-    let window_handle_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        raw_window_handle::HasWindowHandle::window_handle(window)
-    }));
-    let Ok(Ok(window_handle)) = window_handle_result else {
-        crate::debug_log!("[linux] skip server decoration hints: window_handle unavailable");
-        return;
-    };
-
-    let window_id = match window_handle.as_raw() {
-        RawWindowHandle::Xcb(handle) => handle.window.get(),
-        RawWindowHandle::Xlib(handle) => handle.window as u32,
-        _ => return,
-    };
-    if window_id == 0 {
+fn hide_linux_server_window_decorations(_window: &Window) {
+    if has_non_empty_env("WAYLAND_DISPLAY") {
         return;
     }
 
-    let Ok((conn, _)) = x11rb::connect(None) else {
+    let Ok((conn, screen_num)) = x11rb::connect(None) else {
         return;
     };
-    let Ok(atom_cookie) = conn.intern_atom(false, b"_MOTIF_WM_HINTS") else {
+    let Ok(motif_cookie) = conn.intern_atom(false, b"_MOTIF_WM_HINTS") else {
         return;
     };
-    let Ok(atom_reply) = atom_cookie.reply() else {
+    let Ok(net_wm_pid_cookie) = conn.intern_atom(false, b"_NET_WM_PID") else {
         return;
     };
+    let Ok(motif_atom) = motif_cookie.reply().map(|reply| reply.atom) else {
+        return;
+    };
+    let Ok(net_wm_pid_atom) = net_wm_pid_cookie.reply().map(|reply| reply.atom) else {
+        return;
+    };
+
+    let root = conn.setup().roots[screen_num].root;
+    let Ok(root_tree) = conn.query_tree(root).and_then(|cookie| cookie.reply()) else {
+        return;
+    };
+    let current_pid = std::process::id();
+
+    let mut targets = Vec::new();
+    let mut queue: std::collections::VecDeque<u32> = root_tree.children.into();
+    while let Some(candidate) = queue.pop_front() {
+        let child_pid = conn
+            .get_property(false, candidate, net_wm_pid_atom, AtomEnum::CARDINAL, 0, 1)
+            .and_then(|cookie| cookie.reply())
+            .ok()
+            .and_then(|reply| reply.value32().and_then(|mut values| values.next()));
+
+        if child_pid == Some(current_pid) {
+            targets.push(candidate);
+        }
+
+        if let Ok(tree_reply) = conn.query_tree(candidate).and_then(|cookie| cookie.reply()) {
+            queue.extend(tree_reply.children);
+        }
+    }
+
+    if targets.is_empty() {
+        crate::debug_log!("[linux] no X11 windows found for pid={} when setting borderless mode", current_pid);
+        return;
+    }
 
     const HINTS_FLAGS_DECORATIONS: u32 = 1 << 1;
     let hints: [u32; 5] = [HINTS_FLAGS_DECORATIONS, 0, 0, 0, 0];
 
-    if conn
-        .change_property32(
-            PropMode::REPLACE,
-            window_id,
-            atom_reply.atom,
-            atom_reply.atom,
-            &hints,
-        )
-        .is_ok()
-    {
-        let _ = conn.flush();
+    let mut changed = 0_u32;
+    for window_id in targets {
+        if conn
+            .change_property32(
+                PropMode::REPLACE,
+                window_id,
+                motif_atom,
+                motif_atom,
+                &hints,
+            )
+            .is_ok()
+        {
+            changed += 1;
+        }
+    }
+
+    if changed > 0 {
+        if conn.flush().is_err() {
+            crate::debug_log!("[linux] failed to flush X11 borderless hint update");
+        }
+    } else {
+        crate::debug_log!("[linux] failed to set X11 borderless hints on matching windows");
     }
 }
 
