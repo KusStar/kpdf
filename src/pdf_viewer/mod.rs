@@ -18,7 +18,7 @@ use gpui::*;
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::popover::{Popover, PopoverState};
-use gpui_component::scroll::{Scrollbar, ScrollbarShow};
+use gpui_component::scroll::{ScrollableElement, Scrollbar, ScrollbarShow};
 use gpui_component::select::{SearchableVec, Select, SelectEvent, SelectState};
 use gpui_component::text::TextView;
 use gpui_component::{button::*, *};

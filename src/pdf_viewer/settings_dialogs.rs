@@ -412,10 +412,13 @@ impl PdfViewer {
                             div()
                                 .id("settings-dialog")
                                 .w(px(SETTINGS_DIALOG_WIDTH))
+                                .h_full()
+                                .max_h(px(SETTINGS_DIALOG_WINDOW_HEIGHT))
                                 .v_flex()
                                 .gap_3()
                                 .popover_style(cx)
                                 .p_4()
+                                .overflow_y_scrollbar()
                                 .on_scroll_wheel(cx.listener(|_, _: &ScrollWheelEvent, _, cx| {
                                     cx.stop_propagation();
                                 }))
@@ -986,11 +989,13 @@ impl Render for SettingsDialogWindow {
             .child(TitleBar::new())
             .child(
                 div()
+                    .id("settings-dialog-window-content")
                     .flex_1()
                     .min_h(px(0.))
                     .v_flex()
                     .gap_3()
                     .p_4()
+                    .overflow_y_scrollbar()
                     .child(
                         div()
                             .text_lg()
