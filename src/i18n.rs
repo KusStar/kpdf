@@ -64,6 +64,7 @@ macro_rules! locale_message_fields {
             bookmark_added_relative_minutes,
             bookmark_added_relative_hours,
             bookmark_added_relative_days,
+            bookmark_notes_count_label,
             open_logs_button,
             enable_logging_button,
             disable_logging_button,
@@ -239,6 +240,13 @@ impl I18n {
         format_template(
             self.bookmark_added_relative_days,
             &[("days", (seconds_ago / 86_400).to_string())],
+        )
+    }
+
+    pub fn bookmark_notes_count_label(self, count: usize) -> String {
+        format_template(
+            self.bookmark_notes_count_label,
+            &[("count", count.to_string())],
         )
     }
 

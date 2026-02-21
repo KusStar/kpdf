@@ -15,6 +15,7 @@
   "bookmark_added_relative_minutes": "添加于：{minutes} 分钟前",
   "bookmark_added_relative_hours": "添加于：{hours} 小时前",
   "bookmark_added_relative_days": "添加于：{days} 天前",
+  "bookmark_notes_count_label": "{count} 条笔记",
   "open_logs_button": "打开日志目录",
   "enable_logging_button": "启用日志记录",
   "disable_logging_button": "关闭日志记录",

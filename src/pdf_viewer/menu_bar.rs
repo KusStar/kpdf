@@ -21,6 +21,8 @@ impl PdfViewer {
         let bookmark_popup_open = self.bookmark_popup_open;
         let bookmark_scope = self.bookmark_scope;
         let bookmarks = self.bookmarks_for_scope(bookmark_scope);
+        let bookmark_notes = self.markdown_notes.clone();
+        let bookmark_expanded_notes = self.bookmark_popup_expanded_notes.clone();
         let bookmark_popup_list_scroll = self.bookmark_popup_list_scroll.clone();
 
         div()
@@ -139,6 +141,8 @@ impl PdfViewer {
                                 let viewer = cx.entity();
                                 let i18n = i18n;
                                 let bookmarks = bookmarks.clone();
+                                let bookmark_notes = bookmark_notes.clone();
+                                let bookmark_expanded_notes = bookmark_expanded_notes.clone();
                                 move |_, _window, cx| {
                                     Self::render_bookmark_popup_panel(
                                         "bookmark-popup",
@@ -146,6 +150,8 @@ impl PdfViewer {
                                         viewer.clone(),
                                         bookmark_scope,
                                         bookmarks.clone(),
+                                        bookmark_notes.clone(),
+                                        bookmark_expanded_notes.clone(),
                                         &bookmark_popup_list_scroll,
                                         cx,
                                     )

@@ -15,6 +15,7 @@
   "bookmark_added_relative_minutes": "Added: {minutes}m ago",
   "bookmark_added_relative_hours": "Added: {hours}h ago",
   "bookmark_added_relative_days": "Added: {days}d ago",
+  "bookmark_notes_count_label": "{count} notes",
   "open_logs_button": "Open Logs",
   "enable_logging_button": "Enable Logging",
   "disable_logging_button": "Disable Logging",

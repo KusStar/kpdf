@@ -181,6 +181,7 @@ impl PdfViewer {
         };
         self.bookmark_popup_list_scroll.scroll_to_item(0);
         self.bookmark_popup_hover_epoch = self.bookmark_popup_hover_epoch.wrapping_add(1);
+        self.bookmark_popup_expanded_notes = None;
         self.bookmark_popup_open = true;
         cx.notify();
     }
@@ -199,6 +200,9 @@ impl PdfViewer {
         }
         if self.bookmark_popup_open {
             self.bookmark_popup_open = false;
+            has_changed = true;
+        }
+        if self.bookmark_popup_expanded_notes.take().is_some() {
             has_changed = true;
         }
         if has_changed {
@@ -240,6 +244,7 @@ impl PdfViewer {
                     BookmarkScope::All
                 };
                 self.bookmark_popup_list_scroll.scroll_to_item(0);
+                self.bookmark_popup_expanded_notes = None;
                 self.bookmark_popup_open = true;
                 cx.notify();
             }
@@ -261,8 +266,9 @@ impl PdfViewer {
                 if this.bookmark_popup_trigger_hovered || this.bookmark_popup_panel_hovered {
                     return;
                 }
-                if this.bookmark_popup_open {
+                if this.bookmark_popup_open || this.bookmark_popup_expanded_notes.is_some() {
                     this.bookmark_popup_open = false;
+                    this.bookmark_popup_expanded_notes = None;
                     cx.notify();
                 }
             });
@@ -275,6 +281,7 @@ impl PdfViewer {
             return;
         }
         self.bookmark_scope = scope;
+        self.bookmark_popup_expanded_notes = None;
         self.bookmark_popup_list_scroll.scroll_to_item(0);
         cx.notify();
     }
@@ -342,6 +349,15 @@ impl PdfViewer {
         self.bookmarks
             .retain(|item| !(item.path == bookmark.path && item.page_index == bookmark.page_index));
         if self.bookmarks.len() != original_len {
+            if self
+                .bookmark_popup_expanded_notes
+                .as_ref()
+                .is_some_and(|(path, page_index)| {
+                    path == &bookmark.path && *page_index == bookmark.page_index
+                })
+            {
+                self.bookmark_popup_expanded_notes = None;
+            }
             self.persist_bookmarks();
             cx.notify();
         }
@@ -367,6 +383,36 @@ impl PdfViewer {
             .filter(|note| note.path == *path && note.page_index == page_index)
             .cloned()
             .collect::<Vec<_>>()
+    }
+
+    fn bookmark_notes_for_entry(
+        bookmark: &BookmarkEntry,
+        markdown_notes: &[MarkdownNoteEntry],
+    ) -> Vec<MarkdownNoteEntry> {
+        markdown_notes
+            .iter()
+            .filter(|note| note.path == bookmark.path && note.page_index == bookmark.page_index)
+            .cloned()
+            .collect::<Vec<_>>()
+    }
+
+    fn bookmark_note_preview_text(markdown: &str) -> String {
+        markdown
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    fn toggle_bookmark_notes_list(&mut self, bookmark: &BookmarkEntry, cx: &mut Context<Self>) {
+        let key = (bookmark.path.clone(), bookmark.page_index);
+        if self.bookmark_popup_expanded_notes.as_ref() == Some(&key) {
+            self.bookmark_popup_expanded_notes = None;
+        } else {
+            self.bookmark_popup_expanded_notes = Some(key);
+        }
+        cx.notify();
     }
 
     fn markdown_note_by_id(&self, note_id: u64) -> Option<MarkdownNoteEntry> {
@@ -625,6 +671,8 @@ impl PdfViewer {
         viewer: Entity<Self>,
         scope: BookmarkScope,
         bookmarks: Vec<BookmarkEntry>,
+        bookmark_notes: Vec<MarkdownNoteEntry>,
+        expanded_notes: Option<(PathBuf, usize)>,
         scroll_handle: &ScrollHandle,
         cx: &mut Context<PopoverState>,
     ) -> AnyElement {
@@ -730,6 +778,7 @@ impl PdfViewer {
                                             let bookmark = bookmark.clone();
                                             let bookmark_for_delete = bookmark.clone();
                                             let bookmark_for_open = bookmark.clone();
+                                            let bookmark_for_note_toggle = bookmark.clone();
                                             let file_name = display_file_name(&bookmark.path);
                                             let page_label =
                                                 i18n.bookmark_page_label(bookmark.page_index + 1);
@@ -744,6 +793,19 @@ impl PdfViewer {
                                                         ),
                                                     )
                                                 };
+                                            let notes_for_bookmark = Self::bookmark_notes_for_entry(
+                                                &bookmark,
+                                                &bookmark_notes,
+                                            );
+                                            let notes_count = notes_for_bookmark.len();
+                                            let is_notes_expanded = expanded_notes
+                                                .as_ref()
+                                                .is_some_and(|(path, page_index)| {
+                                                    *path == bookmark.path
+                                                        && *page_index == bookmark.page_index
+                                                });
+                                            let notes_count_label =
+                                                i18n.bookmark_notes_count_label(notes_count);
                                             div()
                                                 .id(("bookmark-item", ix))
                                                 .w_full()
@@ -774,12 +836,70 @@ impl PdfViewer {
                                                                 .child(
                                                                     div()
                                                                         .w_full()
-                                                                        .text_sm()
-                                                                        .text_color(
-                                                                            cx.theme()
-                                                                                .popover_foreground,
+                                                                        .flex()
+                                                                        .items_center()
+                                                                        .justify_between()
+                                                                        .gap_2()
+                                                                        .child(
+                                                                            div()
+                                                                                .text_sm()
+                                                                                .text_color(
+                                                                                    cx.theme()
+                                                                                        .popover_foreground,
+                                                                                )
+                                                                                .child(page_label),
                                                                         )
-                                                                        .child(page_label),
+                                                                        .child(
+                                                                            div()
+                                                                                .min_w(px(0.))
+                                                                                .truncate()
+                                                                                .text_xs()
+                                                                                .text_color(
+                                                                                    if notes_count
+                                                                                        == 0
+                                                                                    {
+                                                                                        cx.theme()
+                                                                                            .muted_foreground
+                                                                                    } else if is_notes_expanded
+                                                                                    {
+                                                                                        cx.theme()
+                                                                                            .primary
+                                                                                    } else {
+                                                                                        cx.theme()
+                                                                                            .foreground
+                                                                                            .opacity(0.75)
+                                                                                    },
+                                                                                )
+                                                                                .when(
+                                                                                    notes_count > 0,
+                                                                                    |this| {
+                                                                                        this.cursor_pointer()
+                                                                                            .on_mouse_down(
+                                                                                                MouseButton::Left,
+                                                                                                {
+                                                                                                    let viewer =
+                                                                                                        viewer
+                                                                                                            .clone();
+                                                                                                    cx.listener(
+                                                                                                        move |_, _: &MouseDownEvent, _, cx| {
+                                                                                                            cx.stop_propagation();
+                                                                                                            let bookmark = bookmark_for_note_toggle.clone();
+                                                                                                            let _ = viewer.update(
+                                                                                                                cx,
+                                                                                                                |this, cx| {
+                                                                                                                    this.toggle_bookmark_notes_list(
+                                                                                                                        &bookmark, cx,
+                                                                                                                    );
+                                                                                                                },
+                                                                                                            );
+                                                                                                        },
+                                                                                                    )
+                                                                                                },
+                                                                                            )
+                                                                                    },
+                                                                                )
+                                                                                .child(notes_count_label),
+                                                                        ),
                                                                 )
                                                                 .child(
                                                                     div()
@@ -818,6 +938,56 @@ impl PdfViewer {
                                                                                 .muted_foreground,
                                                                         )
                                                                         .child(added_time_label),
+                                                                )
+                                                                .when(
+                                                                    is_notes_expanded
+                                                                        && !notes_for_bookmark
+                                                                            .is_empty(),
+                                                                    |this| {
+                                                                        this.child(
+                                                                            div()
+                                                                                .w_full()
+                                                                                .v_flex()
+                                                                                .gap_1()
+                                                                                .children(
+                                                                                    notes_for_bookmark
+                                                                                        .iter()
+                                                                                        .enumerate()
+                                                                                        .map(
+                                                                                            |(
+                                                                                                note_ix,
+                                                                                                note,
+                                                                                            )| {
+                                                                                                let preview = Self::bookmark_note_preview_text(&note.markdown);
+                                                                                                let label = if preview.is_empty() {
+                                                                                                    format!(
+                                                                                                        "{}. {}",
+                                                                                                        note_ix + 1,
+                                                                                                        note.markdown.trim()
+                                                                                                    )
+                                                                                                } else {
+                                                                                                    format!(
+                                                                                                        "{}. {}",
+                                                                                                        note_ix + 1,
+                                                                                                        preview
+                                                                                                    )
+                                                                                                };
+                                                                                                div()
+                                                                                                    .w_full()
+                                                                                                    .truncate()
+                                                                                                    .text_xs()
+                                                                                                    .text_color(
+                                                                                                        cx.theme()
+                                                                                                            .foreground
+                                                                                                            .opacity(0.75),
+                                                                                                    )
+                                                                                                    .child(label)
+                                                                                            },
+                                                                                        )
+                                                                                        .collect::<Vec<_>>(),
+                                                                                ),
+                                                                        )
+                                                                    },
                                                                 ),
                                                         )
                                                         .child(
