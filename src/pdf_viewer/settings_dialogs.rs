@@ -1,4 +1,43 @@
 impl PdfViewer {
+    fn format_storage_size(bytes: u64) -> String {
+        const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+        let mut size = bytes as f64;
+        let mut unit_index = 0usize;
+        while size >= 1024.0 && unit_index < UNITS.len().saturating_sub(1) {
+            size /= 1024.0;
+            unit_index += 1;
+        }
+
+        if unit_index == 0 {
+            format!("{bytes} {}", UNITS[unit_index])
+        } else {
+            format!("{size:.1} {}", UNITS[unit_index])
+        }
+    }
+
+    fn refresh_db_usage(&mut self, cx: &mut Context<Self>) {
+        if self.db_usage_refreshing {
+            return;
+        }
+        self.db_usage_refreshing = true;
+        let db_path = self.db_path.clone();
+        cx.notify();
+
+        cx.spawn(async move |view, cx| {
+            let usage_bytes = cx
+                .background_executor()
+                .spawn(async move { Self::directory_usage_bytes(&db_path) })
+                .await;
+
+            let _ = view.update(cx, |this, cx| {
+                this.db_usage_bytes = usage_bytes;
+                this.db_usage_refreshing = false;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn summarize_updater_error(raw: &str) -> String {
         const MAX_LEN: usize = 88;
         let mut message = raw
@@ -97,6 +136,7 @@ impl PdfViewer {
             changed = true;
         }
         self.sync_theme_color_select(window, cx);
+        self.refresh_db_usage(cx);
         if changed {
             cx.notify();
         }
@@ -260,6 +300,13 @@ impl PdfViewer {
         let i18n = self.i18n();
         let has_theme_color_options =
             !Self::available_theme_names_for_mode(self.theme_mode, cx).is_empty();
+        let db_usage_text = Self::format_storage_size(self.db_usage_bytes);
+        let db_path_text = self.db_path.to_string_lossy().to_string();
+        let refresh_db_label: SharedString = if self.db_usage_refreshing {
+            "…".into()
+        } else {
+            i18n.settings_db_refresh_button.into()
+        };
 
         Some(
             div()
@@ -656,6 +703,84 @@ impl PdfViewer {
                                                                             *checked,
                                                                             cx,
                                                                         );
+                                                                    },
+                                                                )),
+                                                        ),
+                                                ),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(i18n.settings_db_section),
+                                )
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .rounded_md()
+                                        .border_1()
+                                        .border_color(cx.theme().border)
+                                        .p_3()
+                                        .v_flex()
+                                        .gap_3()
+                                        .child(
+                                            div()
+                                                .w_full()
+                                                .flex()
+                                                .items_start()
+                                                .justify_between()
+                                                .gap_3()
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .v_flex()
+                                                        .items_start()
+                                                        .gap_1()
+                                                        .child(
+                                                            div()
+                                                                .text_sm()
+                                                                .text_color(cx.theme().foreground)
+                                                                .child(i18n.settings_db_usage_label),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(cx.theme().muted_foreground)
+                                                                .whitespace_normal()
+                                                                .child(i18n.settings_db_usage_hint),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(cx.theme().muted_foreground)
+                                                                .whitespace_normal()
+                                                                .child(format!(
+                                                                    "{}: {}",
+                                                                    i18n.settings_db_path_label, db_path_text
+                                                                )),
+                                                        ),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .v_flex()
+                                                        .items_end()
+                                                        .gap_2()
+                                                        .child(
+                                                            div()
+                                                                .text_sm()
+                                                                .text_color(cx.theme().foreground)
+                                                                .child(db_usage_text),
+                                                        )
+                                                        .child(
+                                                            Button::new("settings-db-refresh")
+                                                                .small()
+                                                                .ghost()
+                                                                .label(refresh_db_label)
+                                                                .disabled(self.db_usage_refreshing)
+                                                                .on_click(cx.listener(
+                                                                    |this, _, _, cx| {
+                                                                        this.refresh_db_usage(cx);
                                                                     },
                                                                 )),
                                                         ),

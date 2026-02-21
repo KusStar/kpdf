@@ -51,6 +51,9 @@ pub struct PdfViewer {
     focus_handle: FocusHandle,
     language: Language,
     language_preference: LanguagePreference,
+    db_path: PathBuf,
+    db_usage_bytes: u64,
+    db_usage_refreshing: bool,
     tab_bar: TabBar,
     recent_store: Option<sled::Tree>,
     position_store: Option<sled::Tree>,
@@ -161,6 +164,8 @@ impl PdfViewer {
             notes_store,
             text_markups_store,
         ) = Self::open_persistent_stores();
+        let db_path = Self::local_state_db_path();
+        let db_usage_bytes = Self::directory_usage_bytes(&db_path);
         let recent_files = recent_store
             .as_ref()
             .map(Self::load_recent_files_from_store)
@@ -273,6 +278,9 @@ impl PdfViewer {
             focus_handle: cx.focus_handle(),
             language,
             language_preference,
+            db_path,
+            db_usage_bytes,
+            db_usage_refreshing: false,
             tab_bar,
             recent_store,
             position_store,

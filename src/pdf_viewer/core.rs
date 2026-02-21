@@ -179,6 +179,33 @@ impl PdfViewer {
         PathBuf::from(".kpdf").join(Self::LOCAL_STATE_DB_DIR_NAME)
     }
 
+    fn directory_usage_bytes(path: &Path) -> u64 {
+        let metadata = match std::fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(_) => return 0,
+        };
+
+        if metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            return metadata.len();
+        }
+
+        if !metadata.file_type().is_dir() {
+            return 0;
+        }
+
+        let mut total = 0u64;
+        let entries = match std::fs::read_dir(path) {
+            Ok(entries) => entries,
+            Err(_) => return 0,
+        };
+
+        for entry in entries.flatten() {
+            total = total.saturating_add(Self::directory_usage_bytes(&entry.path()));
+        }
+
+        total
+    }
+
     fn load_recent_files_from_store(store: &sled::Tree) -> Vec<PathBuf> {
         store
             .iter()
