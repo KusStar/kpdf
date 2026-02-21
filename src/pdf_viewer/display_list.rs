@@ -1166,7 +1166,7 @@ impl PdfViewer {
                                             if selected_color == TextMarkupColor::Yellow {
                                                 cx.theme().foreground
                                             } else {
-                                                cx.theme().border.opacity(0.7)
+                                                cx.theme().transparent
                                             },
                                         )
                                         .bg(Self::text_markup_color_rgb(TextMarkupColor::Yellow))
@@ -1192,7 +1192,7 @@ impl PdfViewer {
                                         .border_color(if selected_color == TextMarkupColor::Green {
                                             cx.theme().foreground
                                         } else {
-                                            cx.theme().border.opacity(0.7)
+                                            cx.theme().transparent
                                         })
                                         .bg(Self::text_markup_color_rgb(TextMarkupColor::Green))
                                         .cursor_pointer()
@@ -1217,7 +1217,7 @@ impl PdfViewer {
                                         .border_color(if selected_color == TextMarkupColor::Blue {
                                             cx.theme().foreground
                                         } else {
-                                            cx.theme().border.opacity(0.7)
+                                            cx.theme().transparent
                                         })
                                         .bg(Self::text_markup_color_rgb(TextMarkupColor::Blue))
                                         .cursor_pointer()
@@ -1242,7 +1242,7 @@ impl PdfViewer {
                                         .border_color(if selected_color == TextMarkupColor::Pink {
                                             cx.theme().foreground
                                         } else {
-                                            cx.theme().border.opacity(0.7)
+                                            cx.theme().transparent
                                         })
                                         .bg(Self::text_markup_color_rgb(TextMarkupColor::Pink))
                                         .cursor_pointer()
@@ -1258,7 +1258,7 @@ impl PdfViewer {
                                         ),
                                 ),
                         )
-                        .child(div().h(px(16.)).w_px().bg(cx.theme().border.opacity(0.7)))
+                        .child(div().h(px(16.)).w_px().bg(cx.theme().border))
                         .child(
                             Button::new("selection-highlight")
                                 .ghost()
@@ -1271,7 +1271,7 @@ impl PdfViewer {
                                     );
                                 })),
                         )
-                        .child(div().h(px(16.)).w_px().bg(cx.theme().border.opacity(0.7)))
+                        .child(div().h(px(16.)).w_px().bg(cx.theme().border))
                         .child(
                             Button::new("selection-underline")
                                 .ghost()
@@ -1284,7 +1284,7 @@ impl PdfViewer {
                                     );
                                 })),
                         )
-                        .child(div().h(px(16.)).w_px().bg(cx.theme().border.opacity(0.7)))
+                        .child(div().h(px(16.)).w_px().bg(cx.theme().border))
                         .child(
                             Button::new("selection-note")
                                 .ghost()
@@ -1293,6 +1293,16 @@ impl PdfViewer {
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     let _ = this
                                         .open_markdown_note_editor_for_text_selection(window, cx);
+                                })),
+                        )
+                        .child(div().h(px(16.)).w_px().bg(cx.theme().border))
+                        .child(
+                            Button::new("selection-reset")
+                                .ghost()
+                                .xsmall()
+                                .label(i18n.text_markup_reset_button)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let _ = this.clear_text_markups_in_selection(cx);
                                 })),
                         ),
                 )

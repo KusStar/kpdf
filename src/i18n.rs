@@ -126,6 +126,7 @@ macro_rules! locale_message_fields {
             text_markup_highlight_button,
             text_markup_underline_button,
             text_markup_add_note_button,
+            text_markup_reset_button,
             add_note_here_button,
             edit_note_button,
             delete_note_button,

@@ -1,4 +1,6 @@
 impl PdfViewer {
+    const TEXT_MARKUP_RECT_EPSILON: f32 = 0.000_01;
+
     pub(super) fn set_text_selection_markup_color(
         &mut self,
         color: TextMarkupColor,
@@ -16,6 +18,172 @@ impl PdfViewer {
             candidate = candidate.saturating_add(1);
         }
         candidate
+    }
+
+    fn rects_overlap(a: &TextMarkupRect, b: &TextMarkupRect) -> bool {
+        let left = a.left_ratio.max(b.left_ratio);
+        let right = a.right_ratio.min(b.right_ratio);
+        let bottom = a.bottom_ratio.max(b.bottom_ratio);
+        let top = a.top_ratio.min(b.top_ratio);
+        left < right && bottom < top
+    }
+
+    fn subtract_text_markup_rect(
+        base: &TextMarkupRect,
+        cutter: &TextMarkupRect,
+    ) -> Vec<TextMarkupRect> {
+        let left = base.left_ratio.max(cutter.left_ratio);
+        let right = base.right_ratio.min(cutter.right_ratio);
+        let bottom = base.bottom_ratio.max(cutter.bottom_ratio);
+        let top = base.top_ratio.min(cutter.top_ratio);
+
+        if left >= right || bottom >= top {
+            return vec![base.clone()];
+        }
+
+        let mut pieces = Vec::with_capacity(4);
+        let eps = Self::TEXT_MARKUP_RECT_EPSILON;
+
+        if base.left_ratio + eps < left {
+            pieces.push(TextMarkupRect {
+                left_ratio: base.left_ratio,
+                top_ratio: base.top_ratio,
+                right_ratio: left,
+                bottom_ratio: base.bottom_ratio,
+            });
+        }
+        if right + eps < base.right_ratio {
+            pieces.push(TextMarkupRect {
+                left_ratio: right,
+                top_ratio: base.top_ratio,
+                right_ratio: base.right_ratio,
+                bottom_ratio: base.bottom_ratio,
+            });
+        }
+        if top + eps < base.top_ratio {
+            pieces.push(TextMarkupRect {
+                left_ratio: left,
+                top_ratio: base.top_ratio,
+                right_ratio: right,
+                bottom_ratio: top,
+            });
+        }
+        if base.bottom_ratio + eps < bottom {
+            pieces.push(TextMarkupRect {
+                left_ratio: left,
+                top_ratio: bottom,
+                right_ratio: right,
+                bottom_ratio: base.bottom_ratio,
+            });
+        }
+
+        pieces
+            .into_iter()
+            .filter(|rect| {
+                rect.right_ratio - rect.left_ratio > eps
+                    && rect.top_ratio - rect.bottom_ratio > eps
+            })
+            .collect::<Vec<_>>()
+    }
+
+    fn subtract_text_markup_rects(
+        base_rects: &[TextMarkupRect],
+        cutter_rects: &[TextMarkupRect],
+    ) -> Vec<TextMarkupRect> {
+        let mut remaining = base_rects.to_vec();
+        for cutter in cutter_rects {
+            let mut next = Vec::new();
+            for rect in &remaining {
+                next.extend(Self::subtract_text_markup_rect(rect, cutter));
+            }
+            remaining = next;
+            if remaining.is_empty() {
+                break;
+            }
+        }
+        remaining
+    }
+
+    fn normalize_text_markup_rects(
+        page_width_pt: f32,
+        page_height_pt: f32,
+        rects: Vec<(f32, f32, f32, f32)>,
+    ) -> Vec<TextMarkupRect> {
+        if page_width_pt <= 0.0 || page_height_pt <= 0.0 {
+            return Vec::new();
+        }
+
+        let eps = Self::TEXT_MARKUP_RECT_EPSILON;
+        rects
+            .into_iter()
+            .filter_map(|(left, top, right, bottom)| {
+                let left_ratio = (left / page_width_pt).clamp(0.0, 1.0);
+                let right_ratio = (right / page_width_pt).clamp(0.0, 1.0);
+                let top_ratio = (top / page_height_pt).clamp(0.0, 1.0);
+                let bottom_ratio = (bottom / page_height_pt).clamp(0.0, 1.0);
+                let (left_ratio, right_ratio) = if left_ratio <= right_ratio {
+                    (left_ratio, right_ratio)
+                } else {
+                    (right_ratio, left_ratio)
+                };
+                let (bottom_ratio, top_ratio) = if bottom_ratio <= top_ratio {
+                    (bottom_ratio, top_ratio)
+                } else {
+                    (top_ratio, bottom_ratio)
+                };
+                (right_ratio - left_ratio > eps && top_ratio - bottom_ratio > eps).then_some(
+                    TextMarkupRect {
+                        left_ratio,
+                        top_ratio,
+                        right_ratio,
+                        bottom_ratio,
+                    },
+                )
+            })
+            .collect::<Vec<_>>()
+    }
+
+    fn remove_markup_overlaps_for_range(
+        &mut self,
+        path: &Path,
+        page_index: usize,
+        range_rects: &[TextMarkupRect],
+        now: u64,
+    ) -> bool {
+        if range_rects.is_empty() || self.text_markups.is_empty() {
+            return false;
+        }
+
+        let mut changed = false;
+        let mut rebuilt = Vec::with_capacity(self.text_markups.len());
+        for mut markup in self.text_markups.drain(..) {
+            if markup.path != path || markup.page_index != page_index {
+                rebuilt.push(markup);
+                continue;
+            }
+
+            let has_overlap = markup
+                .rects
+                .iter()
+                .any(|existing| range_rects.iter().any(|range| Self::rects_overlap(existing, range)));
+            if !has_overlap {
+                rebuilt.push(markup);
+                continue;
+            }
+            changed = true;
+
+            let remaining = Self::subtract_text_markup_rects(&markup.rects, range_rects);
+            if remaining.is_empty() {
+                continue;
+            }
+
+            markup.rects = remaining;
+            markup.updated_at_unix_secs = now;
+            rebuilt.push(markup);
+        }
+
+        self.text_markups = rebuilt;
+        changed
     }
 
     fn clear_text_selection_hover_menu_state(&mut self) -> bool {
@@ -123,6 +291,38 @@ impl PdfViewer {
         Self::selection_anchor_from_rects(page_index, page_width_pt, page_height_pt, &rects)
     }
 
+    pub(super) fn clear_text_markups_in_selection(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(path) = self.active_tab_path().cloned() else {
+            return false;
+        };
+
+        let Some((page_index, _, page_width_pt, page_height_pt, rects)) =
+            self.active_text_selection_snapshot()
+        else {
+            return false;
+        };
+
+        let normalized_rects =
+            Self::normalize_text_markup_rects(page_width_pt, page_height_pt, rects);
+        if normalized_rects.is_empty() {
+            return false;
+        }
+
+        let now = Self::now_unix_secs();
+        let changed = self.remove_markup_overlaps_for_range(&path, page_index, &normalized_rects, now);
+        if changed {
+            self.text_markups.sort_by(|a, b| {
+                b.updated_at_unix_secs
+                    .cmp(&a.updated_at_unix_secs)
+                    .then_with(|| b.id.cmp(&a.id))
+            });
+            self.persist_text_markups();
+        }
+
+        self.clear_text_selection(cx);
+        changed
+    }
+
     pub(super) fn add_text_markup_from_selection(
         &mut self,
         kind: TextMarkupKind,
@@ -138,40 +338,15 @@ impl PdfViewer {
             return false;
         };
 
-        let normalized_rects = rects
-            .into_iter()
-            .filter_map(|(left, top, right, bottom)| {
-                if page_width_pt <= 0.0 || page_height_pt <= 0.0 {
-                    return None;
-                }
-                let left_ratio = (left / page_width_pt).clamp(0.0, 1.0);
-                let right_ratio = (right / page_width_pt).clamp(0.0, 1.0);
-                let top_ratio = (top / page_height_pt).clamp(0.0, 1.0);
-                let bottom_ratio = (bottom / page_height_pt).clamp(0.0, 1.0);
-                let (left_ratio, right_ratio) = if left_ratio <= right_ratio {
-                    (left_ratio, right_ratio)
-                } else {
-                    (right_ratio, left_ratio)
-                };
-                let (bottom_ratio, top_ratio) = if bottom_ratio <= top_ratio {
-                    (bottom_ratio, top_ratio)
-                } else {
-                    (top_ratio, bottom_ratio)
-                };
-                Some(TextMarkupRect {
-                    left_ratio,
-                    top_ratio,
-                    right_ratio,
-                    bottom_ratio,
-                })
-            })
-            .collect::<Vec<_>>();
+        let normalized_rects =
+            Self::normalize_text_markup_rects(page_width_pt, page_height_pt, rects);
 
         if normalized_rects.is_empty() {
             return false;
         }
 
         let now = Self::now_unix_secs();
+        let _ = self.remove_markup_overlaps_for_range(&path, page_index, &normalized_rects, now);
         self.text_markups.insert(
             0,
             TextMarkupEntry {
