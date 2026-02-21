@@ -177,7 +177,7 @@ impl PdfViewer {
         {
             note.markdown = markdown;
             note.updated_at_unix_secs = now;
-            self.upsert_markdown_note(note);
+            self.upsert_markdown_note(note, cx);
             self.on_markdown_note_editor_window_closed(session_id, cx);
             return true;
         }
@@ -191,7 +191,7 @@ impl PdfViewer {
 
         let note = MarkdownNoteEntry {
             id: self.next_markdown_note_id(),
-            path,
+            path: path.clone(),
             page_index: anchor.page_index,
             x_ratio: anchor.x_ratio.clamp(0.0, 1.0),
             y_ratio: anchor.y_ratio.clamp(0.0, 1.0),
@@ -199,7 +199,16 @@ impl PdfViewer {
             created_at_unix_secs: now,
             updated_at_unix_secs: now,
         };
-        self.upsert_markdown_note(note);
+        self.upsert_markdown_note(note, cx);
+
+        // 同时创建书签
+        let bookmark = BookmarkEntry {
+            path: path.clone(),
+            page_index: anchor.page_index,
+            created_at_unix_secs: now,
+        };
+        self.insert_bookmark_and_notify(cx, bookmark);
+
         self.on_markdown_note_editor_window_closed(session_id, cx);
         true
     }
