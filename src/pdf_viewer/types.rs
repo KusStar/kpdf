@@ -32,6 +32,19 @@ pub(super) enum BookmarkScope {
     All,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(super) enum LanguagePreference {
+    System,
+    ZhCn,
+    EnUs,
+}
+
+impl Default for LanguagePreference {
+    fn default() -> Self {
+        Self::System
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct MarkdownNoteEntry {
     pub(super) id: u64,

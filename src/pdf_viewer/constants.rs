@@ -32,6 +32,7 @@ pub(super) const TITLEBAR_PREFERENCES_KEY_SHOW_ZOOM: &str = "show_zoom";
 pub(super) const THEME_PREFERENCES_KEY_MODE: &str = "mode";
 pub(super) const THEME_PREFERENCES_KEY_LIGHT_NAME: &str = "light_name";
 pub(super) const THEME_PREFERENCES_KEY_DARK_NAME: &str = "dark_name";
+pub(super) const THEME_PREFERENCES_KEY_LANGUAGE: &str = "language";
 pub(super) const TITLE_BAR_HEIGHT: f32 = 34.0;
 pub(super) const TAB_BAR_HEIGHT: f32 = 36.0;
 pub(super) const TAB_DRAG_START_DISTANCE: f32 = 4.0;

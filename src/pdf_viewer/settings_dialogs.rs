@@ -119,6 +119,27 @@ impl PdfViewer {
         cx.notify();
     }
 
+    fn set_language_preference(
+        &mut self,
+        preference: LanguagePreference,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.language_preference == preference {
+            return;
+        }
+
+        self.language_preference = preference;
+        self.language = Self::resolve_language(preference, Language::detect());
+        self.persist_language_preference();
+
+        let i18n = self.i18n();
+        self.command_panel_input_state
+            .update(cx, |input, cx| input.set_placeholder(i18n.command_panel_search_hint, window, cx));
+        crate::configure_app_menus(cx, i18n);
+        cx.notify();
+    }
+
     fn active_theme_name_for_mode(&self, mode: ThemeMode, cx: &Context<Self>) -> SharedString {
         let theme = cx.theme();
         if mode == ThemeMode::Dark {
@@ -292,6 +313,105 @@ impl PdfViewer {
                                         .child(i18n.settings_dialog_title),
                                 )
                                 .child(div().h(px(1.)).bg(cx.theme().border))
+                                .child(
+                                    div()
+                                        .v_flex()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child(i18n.settings_language_section),
+                                        )
+                                        .child(
+                                            div()
+                                                .w_full()
+                                                .rounded_md()
+                                                .border_1()
+                                                .border_color(cx.theme().border)
+                                                .p_3()
+                                                .v_flex()
+                                                .gap_3()
+                                                .child(
+                                                    div()
+                                                        .w_full()
+                                                        .flex()
+                                                        .items_start()
+                                                        .justify_between()
+                                                        .gap_3()
+                                                        .child(
+                                                            div()
+                                                                .flex_1()
+                                                                .v_flex()
+                                                                .items_start()
+                                                                .gap_1()
+                                                                .child(
+                                                                    div()
+                                                                        .text_sm()
+                                                                        .text_color(cx.theme().foreground)
+                                                                        .child(
+                                                                            i18n.settings_language_label,
+                                                                        ),
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .text_xs()
+                                                                        .text_color(
+                                                                            cx.theme()
+                                                                                .muted_foreground,
+                                                                        )
+                                                                        .whitespace_normal()
+                                                                        .child(
+                                                                            i18n.settings_language_hint,
+                                                                        ),
+                                                                ),
+                                                        )
+                                                        .child(
+                                                            ButtonGroup::new("settings-language-preference")
+                                                                .small()
+                                                                .outline()
+                                                                .child(
+                                                                    Button::new("settings-language-system")
+                                                                        .label(i18n.settings_language_system)
+                                                                        .selected(
+                                                                            self.language_preference
+                                                                                == LanguagePreference::System,
+                                                                        ),
+                                                                )
+                                                                .child(
+                                                                    Button::new("settings-language-zh-cn")
+                                                                        .label(i18n.settings_language_zh_cn)
+                                                                        .selected(
+                                                                            self.language_preference
+                                                                                == LanguagePreference::ZhCn,
+                                                                        ),
+                                                                )
+                                                                .child(
+                                                                    Button::new("settings-language-en-us")
+                                                                        .label(i18n.settings_language_en_us)
+                                                                        .selected(
+                                                                            self.language_preference
+                                                                                == LanguagePreference::EnUs,
+                                                                        ),
+                                                                )
+                                                                .on_click(cx.listener(
+                                                                    |this, selected: &Vec<usize>, window, cx| {
+                                                                        let preference = match selected.first().copied() {
+                                                                            Some(1) => LanguagePreference::ZhCn,
+                                                                            Some(2) => LanguagePreference::EnUs,
+                                                                            _ => LanguagePreference::System,
+                                                                        };
+                                                                        this.set_language_preference(
+                                                                            preference,
+                                                                            window,
+                                                                            cx,
+                                                                        );
+                                                                    },
+                                                                )),
+                                                        ),
+                                                ),
+                                        ),
+                                )
                                 .child(
                                     div()
                                         .v_flex()

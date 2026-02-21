@@ -50,6 +50,7 @@ pub use self::utils::PageSummary;
 pub struct PdfViewer {
     focus_handle: FocusHandle,
     language: Language,
+    language_preference: LanguagePreference,
     tab_bar: TabBar,
     recent_store: Option<sled::Tree>,
     position_store: Option<sled::Tree>,
@@ -125,6 +126,14 @@ pub struct PdfViewer {
 }
 
 impl PdfViewer {
+    fn resolve_language(preference: LanguagePreference, system_language: Language) -> Language {
+        match preference {
+            LanguagePreference::System => system_language,
+            LanguagePreference::ZhCn => Language::ZhCn,
+            LanguagePreference::EnUs => Language::EnUs,
+        }
+    }
+
     fn now_unix_secs() -> u64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -140,7 +149,7 @@ impl PdfViewer {
     }
 
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let language = Language::detect();
+        let system_language = Language::detect();
         let (
             recent_store,
             position_store,
@@ -174,6 +183,11 @@ impl PdfViewer {
                     )
                 })
                 .unwrap_or_else(|| (ThemeMode::from(window.appearance()), None, None));
+        let language_preference = theme_preferences_store
+            .as_ref()
+            .map(Self::load_language_preference_from_store)
+            .unwrap_or_default();
+        let language = Self::resolve_language(language_preference, system_language);
         let bookmarks = bookmarks_store
             .as_ref()
             .map(Self::load_bookmarks_from_store)
@@ -258,6 +272,7 @@ impl PdfViewer {
         let mut viewer = Self {
             focus_handle: cx.focus_handle(),
             language,
+            language_preference,
             tab_bar,
             recent_store,
             position_store,

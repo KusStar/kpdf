@@ -393,6 +393,17 @@ impl PdfViewer {
         (mode, light_name, dark_name)
     }
 
+    fn load_language_preference_from_store(store: &sled::Tree) -> LanguagePreference {
+        match store.get(THEME_PREFERENCES_KEY_LANGUAGE).ok().flatten() {
+            Some(raw) => match raw.as_ref() {
+                b"zh_cn" => LanguagePreference::ZhCn,
+                b"en_us" => LanguagePreference::EnUs,
+                _ => LanguagePreference::System,
+            },
+            None => LanguagePreference::System,
+        }
+    }
+
     fn persist_titlebar_preferences(&self) {
         let Some(store) = self.titlebar_preferences_store.as_ref() else {
             return;
@@ -453,6 +464,26 @@ impl PdfViewer {
                 return;
             }
         } else if store.remove(THEME_PREFERENCES_KEY_DARK_NAME).is_err() {
+            return;
+        }
+
+        let _ = store.flush();
+    }
+
+    fn persist_language_preference(&self) {
+        let Some(store) = self.theme_preferences_store.as_ref() else {
+            return;
+        };
+
+        let stored_value = match self.language_preference {
+            LanguagePreference::System => b"system".as_slice(),
+            LanguagePreference::ZhCn => b"zh_cn".as_slice(),
+            LanguagePreference::EnUs => b"en_us".as_slice(),
+        };
+        if store
+            .insert(THEME_PREFERENCES_KEY_LANGUAGE, stored_value)
+            .is_err()
+        {
             return;
         }
 
