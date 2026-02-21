@@ -1314,14 +1314,23 @@ impl PdfViewer {
                         )
                         .child(div().h(px(16.)).w_px().bg(cx.theme().border))
                         .child(
-                            Button::new("selection-note")
-                                .ghost()
-                                .xsmall()
-                                .label(i18n.text_markup_add_note_button)
+                            div()
+                                .id("selection-note")
+                                .px_1()
+                                .py_0()
+                                .rounded_md()
+                                .cursor_pointer()
+                                .hover(|this| this.bg(cx.theme().secondary.opacity(0.8)))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     let _ = this
                                         .open_markdown_note_editor_for_text_selection(window, cx);
-                                })),
+                                }))
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(cx.theme().foreground)
+                                        .child(i18n.text_markup_add_note_button),
+                                ),
                         )
                         .child(div().h(px(16.)).w_px().bg(cx.theme().border))
                         .when(self.has_markups_in_current_selection(), |div| {
@@ -1418,6 +1427,7 @@ impl PdfViewer {
                 .as_ref()
                 .map(|entry| entry.markdown.clone())
                 .unwrap_or_default();
+            let is_note_empty = note_markdown.trim().is_empty();
             return Some(
                 div()
                     .id(("context-menu-note", note_id))
@@ -1436,38 +1446,71 @@ impl PdfViewer {
                         }),
                     )
                     .child(
-                        Button::new(("note-edit", note_id))
-                            .small()
-                            .w_full()
-                            .label(i18n.edit_note_button)
-                            .disabled(note.is_none())
+                        div()
+                            .id(("note-edit", note_id))
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .hover(|this| this.bg(cx.theme().secondary.opacity(0.6)))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.close_context_menu(cx);
                                 this.open_markdown_note_editor_for_edit(note_id, window, cx);
-                            })),
+                            }))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(if note.is_none() {
+                                        cx.theme().muted_foreground
+                                    } else {
+                                        cx.theme().foreground
+                                    })
+                                    .child(i18n.edit_note_button),
+                            ),
                     )
                     .child(
-                        Button::new(("note-copy", note_id))
-                            .small()
-                            .w_full()
-                            .label(i18n.copy_note_button)
-                            .disabled(note_markdown.trim().is_empty())
+                        div()
+                            .id(("note-copy", note_id))
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .hover(|this| this.bg(cx.theme().secondary.opacity(0.6)))
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                if !note_markdown.trim().is_empty() {
+                                if !is_note_empty {
                                     let _ = super::copy_to_clipboard(&note_markdown);
                                 }
                                 this.close_context_menu(cx);
-                            })),
+                            }))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(if is_note_empty {
+                                        cx.theme().muted_foreground
+                                    } else {
+                                        cx.theme().foreground
+                                    })
+                                    .child(i18n.copy_note_button),
+                            ),
                     )
                     .child(
-                        Button::new(("note-delete", note_id))
-                            .small()
-                            .w_full()
-                            .label(i18n.delete_note_button)
+                        div()
+                            .id(("note-delete", note_id))
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .hover(|this| this.bg(cx.theme().secondary.opacity(0.6)))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.delete_markdown_note_by_id(note_id, cx);
                                 this.close_context_menu(cx);
-                            })),
+                            }))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().foreground)
+                                    .child(i18n.delete_note_button),
+                            ),
                     )
                     .into_any_element(),
             );
@@ -1497,30 +1540,51 @@ impl PdfViewer {
                 )
                 .when(has_text_selection, |this| {
                     this.child(
-                        Button::new("copy-text")
-                            .small()
-                            .w_full()
-                            .label(i18n.copy_button)
+                        div()
+                            .id("copy-text")
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .hover(|this| this.bg(cx.theme().secondary.opacity(0.6)))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 crate::debug_log!("[context_menu] copy button clicked");
                                 this.copy_selected_text();
                                 this.close_context_menu(cx);
-                            })),
+                            }))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().foreground)
+                                    .child(i18n.copy_button),
+                            ),
                     )
                 })
                 .child(
-                    Button::new("markdown-note-add")
-                        .small()
-                        .w_full()
-                        .label(i18n.add_note_here_button)
-                        .disabled(note_anchor.is_none())
+                    div()
+                        .id("markdown-note-add")
+                        .px_2()
+                        .py_1()
+                        .rounded_md()
+                        .cursor_pointer()
+                        .hover(|this| this.bg(cx.theme().secondary.opacity(0.6)))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             let Some(anchor) = note_anchor else {
                                 return;
                             };
                             this.close_context_menu(cx);
                             this.open_markdown_note_editor_for_new(anchor, window, cx);
-                        })),
+                        }))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(if note_anchor.is_none() {
+                                    cx.theme().muted_foreground
+                                } else {
+                                    cx.theme().foreground
+                                })
+                                .child(i18n.add_note_here_button),
+                        ),
                 )
                 .into_any_element(),
         )
