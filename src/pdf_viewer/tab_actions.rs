@@ -134,22 +134,6 @@ impl PdfViewer {
         let is_primary_modifier = event.keystroke.modifiers.secondary();
         let key = event.keystroke.key.as_str();
 
-        if self.settings_dialog_open {
-            if key == "escape" {
-                self.close_settings_dialog(cx);
-                cx.stop_propagation();
-            }
-            return;
-        }
-
-        if self.about_dialog_open {
-            if key == "escape" {
-                self.close_about_dialog(cx);
-                cx.stop_propagation();
-            }
-            return;
-        }
-
         if self.note_editor_open {
             if key == "escape" {
                 self.close_markdown_note_editor(cx);

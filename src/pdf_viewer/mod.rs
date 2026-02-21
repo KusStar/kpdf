@@ -91,7 +91,11 @@ pub struct PdfViewer {
     note_editor_window: Option<AnyWindowHandle>,
     note_editor_session: u64,
     about_dialog_open: bool,
+    about_dialog_window: Option<AnyWindowHandle>,
+    about_dialog_session: u64,
     settings_dialog_open: bool,
+    settings_dialog_window: Option<AnyWindowHandle>,
+    settings_dialog_session: u64,
     updater_state: UpdaterUiState,
     command_panel_open: bool,
     command_panel_query: String,
@@ -318,7 +322,11 @@ impl PdfViewer {
             note_editor_window: None,
             note_editor_session: 0,
             about_dialog_open: false,
+            about_dialog_window: None,
+            about_dialog_session: 0,
             settings_dialog_open: false,
+            settings_dialog_window: None,
+            settings_dialog_session: 0,
             updater_state: UpdaterUiState::Idle,
             command_panel_open: false,
             command_panel_query: String::new(),
@@ -369,7 +377,11 @@ impl PdfViewer {
 
 include!("core.rs");
 include!("file_actions.rs");
+include!("dialog_utils.rs");
+include!("about_dialog.rs");
 include!("settings_dialogs.rs");
+include!("markdown_note_window.rs");
+include!("markdown_note_dialog.rs");
 include!("tab_actions.rs");
 include!("recent_bookmark_notes.rs");
 include!("page_rendering.rs");
@@ -510,8 +522,6 @@ impl Render for PdfViewer {
         let context_menu = self.render_context_menu(cx);
         let drag_tab_preview = self.render_drag_tab_preview(cx);
         let command_panel = self.render_command_panel(cx);
-        let about_dialog = self.render_about_dialog(cx);
-        let settings_dialog = self.render_settings_dialog(cx);
 
         div()
             .size_full()
@@ -760,12 +770,6 @@ impl Render for PdfViewer {
                     })
                     .when(command_panel.is_some(), |this| {
                         this.child(command_panel.unwrap())
-                    })
-                    .when(about_dialog.is_some(), |this| {
-                        this.child(about_dialog.unwrap())
-                    })
-                    .when(settings_dialog.is_some(), |this| {
-                        this.child(settings_dialog.unwrap())
                     }),
             )
     }

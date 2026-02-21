@@ -110,41 +110,112 @@ impl PdfViewer {
     }
 
     fn open_settings_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let mut changed = false;
         if self.command_panel_open {
             self.close_command_panel(cx);
-            changed = true;
         }
         if self.recent_popup_open {
             self.close_recent_popup(cx);
-            changed = true;
         }
         if self.bookmark_popup_open {
             self.close_bookmark_popup(cx);
-            changed = true;
         }
-        if self.about_dialog_open {
-            self.about_dialog_open = false;
-            changed = true;
-        }
+        self.close_about_dialog(cx);
         if self.note_editor_open {
             self.close_markdown_note_editor(cx);
-            changed = true;
         }
-        if !self.settings_dialog_open {
-            self.settings_dialog_open = true;
-            changed = true;
+
+        if self.settings_dialog_open {
+            if let Some(handle) = self.settings_dialog_window.as_ref() {
+                let _ = handle.update(cx, |_, window, _| {
+                    window.activate_window();
+                });
+            }
+            return;
         }
+
+        self.settings_dialog_open = true;
+        self.needs_root_refocus = false;
+        self.settings_dialog_session = self.settings_dialog_session.wrapping_add(1);
+        let session_id = self.settings_dialog_session;
+
         self.sync_theme_color_select(window, cx);
         self.refresh_db_usage(cx);
-        if changed {
-            cx.notify();
+
+        let initial_snapshot = SettingsDialogSnapshot::from_viewer(self);
+        let theme_color_select_state = self.theme_color_select_state.clone();
+        let viewer = cx.entity();
+        let viewer_for_close = viewer.clone();
+        let window_options = WindowOptions {
+            titlebar: Some(Self::dialog_titlebar_options()),
+            window_bounds: Some(WindowBounds::centered(
+                size(px(SETTINGS_DIALOG_WIDTH + 96.), px(SETTINGS_DIALOG_WINDOW_HEIGHT)),
+                cx,
+            )),
+            window_decorations: Some(WindowDecorations::Client),
+            ..WindowOptions::default()
+        };
+        let initial_snapshot_for_window = initial_snapshot.clone();
+        let theme_color_select_state_for_window = theme_color_select_state.clone();
+
+        match cx.open_window(window_options, move |window, cx| {
+            window.on_window_should_close(cx, move |_, cx| {
+                let _ = viewer_for_close.update(cx, |this, cx| {
+                    this.on_settings_dialog_window_closed(session_id, cx);
+                });
+                true
+            });
+            let dialog = cx.new(|cx| {
+                SettingsDialogWindow::new(
+                    viewer,
+                    theme_color_select_state_for_window,
+                    initial_snapshot_for_window,
+                    cx,
+                )
+            });
+            cx.new(|cx| Root::new(dialog, window, cx))
+        }) {
+            Ok(handle) => {
+                self.settings_dialog_window = Some(handle.into());
+                cx.notify();
+            }
+            Err(err) => {
+                crate::debug_log!("[settings] failed to open settings window: {}", err);
+                self.on_settings_dialog_window_closed(session_id, cx);
+            }
         }
     }
 
     fn close_settings_dialog(&mut self, cx: &mut Context<Self>) {
+        let window_handle = self.settings_dialog_window.take();
+        let mut changed = false;
         if self.settings_dialog_open {
             self.settings_dialog_open = false;
+            changed = true;
+        }
+        if changed || window_handle.is_some() {
+            self.needs_root_refocus = true;
+            cx.notify();
+        }
+        if let Some(window_handle) = window_handle {
+            let _ = window_handle.update(cx, |_, window, _| {
+                window.remove_window();
+            });
+        }
+    }
+
+    fn on_settings_dialog_window_closed(&mut self, session_id: u64, cx: &mut Context<Self>) {
+        if self.settings_dialog_session != session_id {
+            return;
+        }
+        let mut changed = false;
+        if self.settings_dialog_open {
+            self.settings_dialog_open = false;
+            changed = true;
+        }
+        if self.settings_dialog_window.take().is_some() {
+            changed = true;
+        }
+        if changed {
             self.needs_root_refocus = true;
             cx.notify();
         }
@@ -292,6 +363,7 @@ impl PdfViewer {
         cx.notify();
     }
 
+    #[allow(dead_code)]
     fn render_settings_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.settings_dialog_open {
             return None;
@@ -809,339 +881,113 @@ impl PdfViewer {
         )
     }
 
-    fn open_about_dialog(&mut self, cx: &mut Context<Self>) {
-        if self.command_panel_open {
-            self.close_command_panel(cx);
-        }
-        if self.recent_popup_open {
-            self.close_recent_popup(cx);
-        }
-        if self.bookmark_popup_open {
-            self.close_bookmark_popup(cx);
-        }
-        if self.settings_dialog_open {
-            self.settings_dialog_open = false;
-        }
-        if self.note_editor_open {
-            self.close_markdown_note_editor(cx);
-        }
-        if !self.about_dialog_open {
-            self.about_dialog_open = true;
-            cx.notify();
-        }
-    }
-
-    fn close_about_dialog(&mut self, cx: &mut Context<Self>) {
-        if self.about_dialog_open {
-            self.about_dialog_open = false;
-            self.needs_root_refocus = true;
-            cx.notify();
-        }
-    }
-
-    fn render_about_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.about_dialog_open {
-            return None;
-        }
-
-        let i18n = self.i18n();
-        let version = env!("CARGO_PKG_VERSION");
-        let updater_status = self.updater_status_text();
-        let updater_download_url = match &self.updater_state {
-            UpdaterUiState::Available { download_url, .. } => Some(download_url.clone()),
-            _ => None,
-        };
-        let updater_is_checking = matches!(self.updater_state, UpdaterUiState::Checking);
-
-        Some(
-            div()
-                .id("about-dialog-overlay")
-                .absolute()
-                .top_0()
-                .left_0()
-                .right_0()
-                .bottom_0()
-                .bg(cx.theme().background.opacity(0.45))
-                .on_scroll_wheel(cx.listener(|_, _: &ScrollWheelEvent, _, cx| {
-                    cx.stop_propagation();
-                }))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, cx| {
-                        this.close_about_dialog(cx);
-                    }),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .right_0()
-                        .bottom_0()
-                        .v_flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            div()
-                                .id("about-dialog")
-                                .w(px(ABOUT_DIALOG_WIDTH))
-                                .v_flex()
-                                .gap_3()
-                                .popover_style(cx)
-                                .p_4()
-                                .on_scroll_wheel(cx.listener(|_, _: &ScrollWheelEvent, _, cx| {
-                                    cx.stop_propagation();
-                                }))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|_, _, _, cx| {
-                                        cx.stop_propagation();
-                                    }),
-                                )
-                                .child(
-                                    div()
-                                        .v_flex()
-                                        .gap_1()
-                                        .child(
-                                            div()
-                                                .text_lg()
-                                                .text_color(cx.theme().foreground)
-                                                .child(format!("{} kPDF", i18n.about_dialog_title)),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .text_color(cx.theme().muted_foreground)
-                                                .child(i18n.about_app_info),
-                                        ),
-                                )
-                                .child(div().h(px(1.)).bg(cx.theme().border))
-                                .child(
-                                    div()
-                                        .v_flex()
-                                        .gap_2()
-                                        .child(
-                                            div()
-                                                .flex()
-                                                .items_center()
-                                                .justify_between()
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .text_color(cx.theme().muted_foreground)
-                                                        .child(i18n.version_label),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .text_color(cx.theme().foreground)
-                                                        .child(version),
-                                                ),
-                                        )
-                                        .child(
-                                            div()
-                                                .v_flex()
-                                                .items_start()
-                                                .gap_1()
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .text_color(cx.theme().muted_foreground)
-                                                        .child(i18n.website_label),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .text_color(cx.theme().foreground)
-                                                        .child(APP_REPOSITORY_URL),
-                                                ),
-                                        )
-                                        .child(
-                                            div()
-                                                .v_flex()
-                                                .items_start()
-                                                .gap_1()
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .text_color(cx.theme().muted_foreground)
-                                                        .child(i18n.updates_label),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .text_sm()
-                                                        .text_color(cx.theme().foreground)
-                                                        .whitespace_normal()
-                                                        .child(updater_status),
-                                                ),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .flex()
-                                        .items_center()
-                                        .justify_end()
-                                        .gap_2()
-                                        .child(
-                                            Button::new("about-open-website")
-                                                .small()
-                                                .label(i18n.open_website_button)
-                                                .on_click(|_, _, cx| {
-                                                    cx.open_url(APP_REPOSITORY_URL);
-                                                }),
-                                        )
-                                        .child(
-                                            Button::new("about-check-updates")
-                                                .small()
-                                                .ghost()
-                                                .label(i18n.check_updates_button)
-                                                .disabled(updater_is_checking)
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.check_for_updates(cx);
-                                                })),
-                                        )
-                                        .when_some(updater_download_url, |this, download_url| {
-                                            this.child(
-                                                Button::new("about-download-update")
-                                                    .small()
-                                                    .label(i18n.download_update_button)
-                                                    .on_click(move |_, _, cx| {
-                                                        cx.open_url(download_url.as_str());
-                                                    }),
-                                            )
-                                        })
-                                        .child(
-                                            Button::new("about-close")
-                                                .small()
-                                                .ghost()
-                                                .label(i18n.close_button)
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.close_about_dialog(cx);
-                                                })),
-                                        ),
-                                ),
-                        ),
-                )
-                .into_any_element(),
-        )
-    }
 
 }
 
-struct MarkdownNoteEditorWindow {
-    viewer: Entity<PdfViewer>,
-    session_id: u64,
+#[derive(Clone)]
+struct SettingsDialogSnapshot {
     language: Language,
-    is_editing: bool,
-    input_state: Entity<InputState>,
-    needs_focus: bool,
-    preview_visible: bool,
+    language_preference: LanguagePreference,
+    theme_mode: ThemeMode,
+    titlebar_preferences: TitleBarVisibilityPreferences,
+    db_usage_refreshing: bool,
+    db_usage_bytes: u64,
+    db_path_text: String,
 }
 
-impl MarkdownNoteEditorWindow {
+impl SettingsDialogSnapshot {
+    fn from_viewer(viewer: &PdfViewer) -> Self {
+        Self {
+            language: viewer.language,
+            language_preference: viewer.language_preference,
+            theme_mode: viewer.theme_mode,
+            titlebar_preferences: viewer.titlebar_preferences,
+            db_usage_refreshing: viewer.db_usage_refreshing,
+            db_usage_bytes: viewer.db_usage_bytes,
+            db_path_text: viewer.db_path.to_string_lossy().to_string(),
+        }
+    }
+}
+
+
+struct SettingsDialogWindow {
+    viewer: Entity<PdfViewer>,
+    theme_color_select_state: Entity<SelectState<SearchableVec<SharedString>>>,
+    snapshot: SettingsDialogSnapshot,
+    _viewer_observation: Subscription,
+}
+
+impl SettingsDialogWindow {
     fn new(
         viewer: Entity<PdfViewer>,
-        session_id: u64,
-        language: Language,
-        is_editing: bool,
-        initial_markdown: String,
-        window: &mut Window,
+        theme_color_select_state: Entity<SelectState<SearchableVec<SharedString>>>,
+        snapshot: SettingsDialogSnapshot,
         cx: &mut Context<Self>,
     ) -> Self {
-        let input_state = cx.new(|cx| {
-            InputState::new(window, cx)
-                .multi_line(true)
-                .rows(14)
-                .placeholder(I18n::new(language).note_input_placeholder)
+        let viewer_for_observe = viewer.clone();
+        let viewer_observation = cx.observe(&viewer_for_observe, |this, viewer, cx| {
+            this.snapshot = {
+                let viewer = viewer.read(cx);
+                SettingsDialogSnapshot::from_viewer(&viewer)
+            };
+            cx.notify();
         });
-        input_state.update(cx, |input, cx| {
-            input.set_value(initial_markdown, window, cx);
-        });
-
         Self {
             viewer,
-            session_id,
-            language,
-            is_editing,
-            input_state,
-            needs_focus: true,
-            preview_visible: true,
+            theme_color_select_state,
+            snapshot,
+            _viewer_observation: viewer_observation,
         }
     }
 
-    fn close_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn close_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let _ = window;
         let _ = self.viewer.update(cx, |viewer, cx| {
-            viewer.on_markdown_note_editor_window_closed(self.session_id, cx);
+            viewer.close_settings_dialog(cx);
         });
-        window.remove_window();
-    }
-
-    fn save_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let markdown = self.input_state.read(cx).value().to_string();
-        let should_close = self.viewer.update(cx, |viewer, cx| {
-            viewer.save_markdown_note_from_editor_window(self.session_id, markdown, cx)
-        });
-        if should_close {
-            window.remove_window();
-        }
     }
 }
 
-impl Render for MarkdownNoteEditorWindow {
+impl Render for SettingsDialogWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.needs_focus {
-            self.needs_focus = false;
-            let _ = self
-                .input_state
-                .update(cx, |input, cx| input.focus(window, cx));
-        }
+        let i18n = I18n::new(self.snapshot.language);
+        let theme_mode = self.snapshot.theme_mode;
+        let language_preference = self.snapshot.language_preference;
+        let titlebar_preferences = self.snapshot.titlebar_preferences;
+        let theme_color_select_state = self.theme_color_select_state.clone();
+        let db_usage_refreshing = self.snapshot.db_usage_refreshing;
+        let db_usage_bytes = self.snapshot.db_usage_bytes;
+        let db_path_text = self.snapshot.db_path_text.clone();
+        let has_theme_color_options = ThemeRegistry::global(cx)
+            .sorted_themes()
+            .into_iter()
+            .any(|theme| theme.mode == theme_mode);
+        let db_usage_text = PdfViewer::format_storage_size(db_usage_bytes);
+        let refresh_db_label: SharedString = if db_usage_refreshing {
+            "…".into()
+        } else {
+            i18n.settings_db_refresh_button.into()
+        };
 
-        let i18n = I18n::new(self.language);
-        let title = if self.is_editing {
-            i18n.note_edit_dialog_title
-        } else {
-            i18n.note_new_dialog_title
-        };
-        window.set_window_title(title);
-
-        let editor_text = self.input_state.read(cx).value().to_string();
-        let can_save = !editor_text.trim().is_empty();
-        let preview_text = if editor_text.trim().is_empty() {
-            i18n.note_input_placeholder.to_string()
-        } else {
-            editor_text.clone()
-        };
-        let preview_toggle_label = if self.preview_visible {
-            i18n.note_hide_preview_button
-        } else {
-            i18n.note_show_preview_button
-        };
-        let preview_id: SharedString =
-            format!("markdown-note-preview-window-{}", self.session_id).into();
+        window.set_window_title(i18n.settings_dialog_title);
 
         div()
-            .id("markdown-note-editor-window")
             .size_full()
+            .v_flex()
             .bg(cx.theme().background)
             .capture_key_down(cx.listener(
                 |this, event: &KeyDownEvent, window, cx| {
-                    let is_primary_modifier = event.keystroke.modifiers.secondary();
-                    let key = event.keystroke.key.as_str();
-                    if key == "escape" {
-                        this.close_editor(window, cx);
-                        cx.stop_propagation();
-                        return;
-                    }
-                    if key == "enter" && is_primary_modifier {
-                        this.save_editor(window, cx);
+                    if event.keystroke.key.as_str() == "escape" {
+                        this.close_dialog(window, cx);
                         cx.stop_propagation();
                     }
                 },
             ))
+            .child(TitleBar::new())
             .child(
                 div()
-                    .size_full()
+                    .flex_1()
+                    .min_h(px(0.))
                     .v_flex()
                     .gap_3()
                     .p_4()
@@ -1149,70 +995,415 @@ impl Render for MarkdownNoteEditorWindow {
                         div()
                             .text_lg()
                             .text_color(cx.theme().foreground)
-                            .child(title),
+                            .child(i18n.settings_dialog_title),
                     )
+                    .child(div().h(px(1.)).bg(cx.theme().border))
                     .child(
                         div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .whitespace_normal()
-                            .child(i18n.note_dialog_hint),
-                    )
-                    .child(
-                        div().w_full().flex().justify_end().child(
-                            Button::new("markdown-note-preview-toggle-window")
-                                .small()
-                                .ghost()
-                                .label(preview_toggle_label)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.preview_visible = !this.preview_visible;
-                                    cx.notify();
-                                })),
-                        ),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .flex_1()
-                            .flex()
-                            .gap_3()
+                            .v_flex()
+                            .gap_2()
                             .child(
                                 div()
-                                    .flex_1()
-                                    .min_w(px(0.))
-                                    .child(Input::new(&self.input_state).h_full()),
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(i18n.settings_language_section),
                             )
-                            .when(self.preview_visible, |this| {
-                                this.child(
-                                    div()
-                                        .flex_1()
-                                        .min_w(px(0.))
-                                        .h_full()
-                                        .v_flex()
-                                        .gap_2()
-                                        .child(
-                                            div()
-                                                .w_full()
-                                                .flex_1()
-                                                .rounded_md()
-                                                .border_1()
-                                                .border_color(cx.theme().border)
-                                                .bg(cx.theme().background)
-                                                .overflow_hidden()
-                                                .p_3()
-                                                .child(
-                                                    TextView::markdown(
-                                                        preview_id,
-                                                        preview_text,
-                                                        window,
-                                                        cx,
+                            .child(
+                                div()
+                                    .w_full()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(cx.theme().border)
+                                    .p_3()
+                                    .v_flex()
+                                    .gap_3()
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .flex()
+                                            .items_start()
+                                            .justify_between()
+                                            .gap_3()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .v_flex()
+                                                    .items_start()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .text_sm()
+                                                            .text_color(cx.theme().foreground)
+                                                            .child(i18n.settings_language_label),
                                                     )
-                                                    .selectable(true)
-                                                    .scrollable(true),
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(cx.theme().muted_foreground)
+                                                            .whitespace_normal()
+                                                            .child(i18n.settings_language_hint),
+                                                    ),
+                                            )
+                                            .child(
+                                                ButtonGroup::new("settings-language-preference-window")
+                                                    .small()
+                                                    .outline()
+                                                    .child(
+                                                        Button::new("settings-language-system-window")
+                                                            .label(i18n.settings_language_system)
+                                                            .selected(
+                                                                language_preference
+                                                                    == LanguagePreference::System,
+                                                            ),
+                                                    )
+                                                    .child(
+                                                        Button::new("settings-language-zh-cn-window")
+                                                            .label(i18n.settings_language_zh_cn)
+                                                            .selected(
+                                                                language_preference
+                                                                    == LanguagePreference::ZhCn,
+                                                            ),
+                                                    )
+                                                    .child(
+                                                        Button::new("settings-language-en-us-window")
+                                                            .label(i18n.settings_language_en_us)
+                                                            .selected(
+                                                                language_preference
+                                                                    == LanguagePreference::EnUs,
+                                                            ),
+                                                    )
+                                                    .on_click(cx.listener(
+                                                        |this, selected: &Vec<usize>, window, cx| {
+                                                            let preference =
+                                                                match selected.first().copied() {
+                                                                    Some(1) => LanguagePreference::ZhCn,
+                                                                    Some(2) => LanguagePreference::EnUs,
+                                                                    _ => LanguagePreference::System,
+                                                                };
+                                                            let _ =
+                                                                this.viewer.update(cx, |viewer, cx| {
+                                                                    viewer.set_language_preference(
+                                                                        preference,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                });
+                                                        },
+                                                    )),
+                                            ),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .v_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(i18n.settings_theme_section),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(cx.theme().border)
+                                    .p_3()
+                                    .v_flex()
+                                    .gap_3()
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .flex()
+                                            .items_start()
+                                            .justify_between()
+                                            .gap_3()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .v_flex()
+                                                    .items_start()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .text_sm()
+                                                            .text_color(cx.theme().foreground)
+                                                            .child(i18n.settings_theme_label),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(cx.theme().muted_foreground)
+                                                            .whitespace_normal()
+                                                            .child(i18n.settings_theme_hint),
+                                                    ),
+                                            )
+                                            .child(
+                                                ButtonGroup::new("settings-theme-mode-window")
+                                                    .small()
+                                                    .outline()
+                                                    .child(
+                                                        Button::new("settings-theme-light-window")
+                                                            .label(i18n.settings_theme_light)
+                                                            .selected(theme_mode == ThemeMode::Light),
+                                                    )
+                                                    .child(
+                                                        Button::new("settings-theme-dark-window")
+                                                            .label(i18n.settings_theme_dark)
+                                                            .selected(theme_mode == ThemeMode::Dark),
+                                                    )
+                                                    .on_click(cx.listener(
+                                                        |this, selected: &Vec<usize>, window, cx| {
+                                                            let mode = if selected.first().copied()
+                                                                == Some(1)
+                                                            {
+                                                                ThemeMode::Dark
+                                                            } else {
+                                                                ThemeMode::Light
+                                                            };
+                                                            let _ =
+                                                                this.viewer.update(cx, |viewer, cx| {
+                                                                    viewer.set_theme_mode(
+                                                                        mode,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                });
+                                                        },
+                                                    )),
+                                            ),
+                                    )
+                                    .child(div().h(px(1.)).bg(cx.theme().border))
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .flex()
+                                            .items_start()
+                                            .justify_between()
+                                            .gap_3()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .v_flex()
+                                                    .items_start()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .text_sm()
+                                                            .text_color(cx.theme().foreground)
+                                                            .child(i18n.settings_theme_color_label),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(cx.theme().muted_foreground)
+                                                            .whitespace_normal()
+                                                            .child(i18n.settings_theme_color_hint),
+                                                    ),
+                                            )
+                                            .child(
+                                                div().w(px(200.)).child(
+                                                    Select::new(&theme_color_select_state)
+                                                        .small()
+                                                        .disabled(!has_theme_color_options)
+                                                        .placeholder(
+                                                            i18n.settings_theme_color_placeholder,
+                                                        ),
                                                 ),
-                                        ),
-                                )
-                            }),
+                                            ),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .v_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(i18n.settings_titlebar_section),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(cx.theme().border)
+                                    .p_3()
+                                    .v_flex()
+                                    .gap_3()
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .flex()
+                                            .items_start()
+                                            .justify_between()
+                                            .gap_3()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .v_flex()
+                                                    .items_start()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .text_sm()
+                                                            .text_color(cx.theme().foreground)
+                                                            .child(i18n.settings_titlebar_navigation_label),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(cx.theme().muted_foreground)
+                                                            .whitespace_normal()
+                                                            .child(i18n.settings_titlebar_navigation_hint),
+                                                    ),
+                                            )
+                                            .child(
+                                                Checkbox::new(
+                                                    "settings-show-titlebar-navigation-window",
+                                                )
+                                                .checked(titlebar_preferences.show_navigation)
+                                                .on_click(cx.listener(
+                                                    |this, checked: &bool, _, cx| {
+                                                        let _ = this.viewer.update(cx, |viewer, cx| {
+                                                            viewer.set_titlebar_navigation_visible(
+                                                                *checked, cx,
+                                                            );
+                                                        });
+                                                    },
+                                                )),
+                                            ),
+                                    )
+                                    .child(div().h(px(1.)).bg(cx.theme().border))
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .flex()
+                                            .items_start()
+                                            .justify_between()
+                                            .gap_3()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .v_flex()
+                                                    .items_start()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .text_sm()
+                                                            .text_color(cx.theme().foreground)
+                                                            .child(i18n.settings_titlebar_zoom_label),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(cx.theme().muted_foreground)
+                                                            .whitespace_normal()
+                                                            .child(i18n.settings_titlebar_zoom_hint),
+                                                    ),
+                                            )
+                                            .child(
+                                                Checkbox::new("settings-show-titlebar-zoom-window")
+                                                    .checked(titlebar_preferences.show_zoom)
+                                                    .on_click(cx.listener(
+                                                        |this, checked: &bool, _, cx| {
+                                                            let _ = this.viewer.update(cx, |viewer, cx| {
+                                                                viewer.set_titlebar_zoom_visible(*checked, cx);
+                                                            });
+                                                        },
+                                                    )),
+                                            ),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .v_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(i18n.settings_db_section),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(cx.theme().border)
+                                    .p_3()
+                                    .v_flex()
+                                    .gap_3()
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .flex()
+                                            .items_start()
+                                            .justify_between()
+                                            .gap_3()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .v_flex()
+                                                    .items_start()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .text_sm()
+                                                            .text_color(cx.theme().foreground)
+                                                            .child(i18n.settings_db_usage_label),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(cx.theme().muted_foreground)
+                                                            .whitespace_normal()
+                                                            .child(i18n.settings_db_usage_hint),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(cx.theme().muted_foreground)
+                                                            .whitespace_normal()
+                                                            .child(format!(
+                                                                "{}: {}",
+                                                                i18n.settings_db_path_label, db_path_text
+                                                            )),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .v_flex()
+                                                    .items_end()
+                                                    .gap_2()
+                                                    .child(
+                                                        div()
+                                                            .text_sm()
+                                                            .text_color(cx.theme().foreground)
+                                                            .child(db_usage_text),
+                                                    )
+                                                    .child(
+                                                        Button::new("settings-db-refresh-window")
+                                                            .small()
+                                                            .ghost()
+                                                            .label(refresh_db_label)
+                                                            .disabled(db_usage_refreshing)
+                                                            .on_click(cx.listener(
+                                                                |this, _, _, cx| {
+                                                                    let _ = this.viewer.update(cx, |viewer, cx| {
+                                                                        viewer.refresh_db_usage(cx);
+                                                                    });
+                                                                },
+                                                            )),
+                                                    ),
+                                            ),
+                                    ),
+                            ),
                     )
                     .child(
                         div()
@@ -1220,23 +1411,13 @@ impl Render for MarkdownNoteEditorWindow {
                             .flex()
                             .items_center()
                             .justify_end()
-                            .gap_2()
                             .child(
-                                Button::new("markdown-note-cancel-window")
+                                Button::new("settings-close-window")
                                     .small()
                                     .ghost()
-                                    .label(i18n.note_cancel_button)
+                                    .label(i18n.close_button)
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        this.close_editor(window, cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("markdown-note-save-window")
-                                    .small()
-                                    .label(i18n.note_save_button)
-                                    .disabled(!can_save)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.save_editor(window, cx);
+                                        this.close_dialog(window, cx);
                                     })),
                             ),
                     ),
