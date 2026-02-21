@@ -1045,7 +1045,7 @@ impl PdfViewer {
                         Button::new(("note-edit", note_id))
                             .small()
                             .w_full()
-                            .label(i18n.edit_markdown_note_button)
+                            .label(i18n.edit_note_button)
                             .disabled(note.is_none())
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.close_context_menu(cx);
@@ -1056,7 +1056,7 @@ impl PdfViewer {
                         Button::new(("note-copy", note_id))
                             .small()
                             .w_full()
-                            .label(i18n.copy_markdown_note_button)
+                            .label(i18n.copy_note_button)
                             .disabled(note_markdown.trim().is_empty())
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if !note_markdown.trim().is_empty() {
@@ -1069,7 +1069,7 @@ impl PdfViewer {
                         Button::new(("note-delete", note_id))
                             .small()
                             .w_full()
-                            .label(i18n.delete_markdown_note_button)
+                            .label(i18n.delete_note_button)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.delete_markdown_note_by_id(note_id, cx);
                                 this.close_context_menu(cx);
@@ -1118,7 +1118,7 @@ impl PdfViewer {
                     Button::new("markdown-note-add")
                         .small()
                         .w_full()
-                        .label(i18n.add_markdown_note_here_button)
+                        .label(i18n.add_note_here_button)
                         .disabled(note_anchor.is_none())
                         .on_click(cx.listener(move |this, _, window, cx| {
                             let Some(anchor) = note_anchor else {

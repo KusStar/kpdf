@@ -807,7 +807,7 @@ impl MarkdownNoteEditorWindow {
             InputState::new(window, cx)
                 .multi_line(true)
                 .rows(14)
-                .placeholder(I18n::new(language).markdown_note_input_placeholder)
+                .placeholder(I18n::new(language).note_input_placeholder)
         });
         input_state.update(cx, |input, cx| {
             input.set_value(initial_markdown, window, cx);
@@ -852,16 +852,16 @@ impl Render for MarkdownNoteEditorWindow {
 
         let i18n = I18n::new(self.language);
         let title = if self.is_editing {
-            i18n.markdown_note_edit_dialog_title
+            i18n.note_edit_dialog_title
         } else {
-            i18n.markdown_note_new_dialog_title
+            i18n.note_new_dialog_title
         };
         window.set_window_title(title);
 
         let editor_text = self.input_state.read(cx).value().to_string();
         let can_save = !editor_text.trim().is_empty();
         let preview_text = if editor_text.trim().is_empty() {
-            i18n.markdown_note_input_placeholder.to_string()
+            i18n.note_input_placeholder.to_string()
         } else {
             editor_text.clone()
         };
@@ -904,7 +904,7 @@ impl Render for MarkdownNoteEditorWindow {
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
                             .whitespace_normal()
-                            .child(i18n.markdown_note_dialog_hint),
+                            .child(i18n.note_dialog_hint),
                     )
                     .child(
                         div()
@@ -916,7 +916,7 @@ impl Render for MarkdownNoteEditorWindow {
                         div()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child(i18n.markdown_note_preview_label),
+                            .child(i18n.note_preview_label),
                     )
                     .child(
                         div()
@@ -945,7 +945,7 @@ impl Render for MarkdownNoteEditorWindow {
                                 Button::new("markdown-note-cancel-window")
                                     .small()
                                     .ghost()
-                                    .label(i18n.markdown_note_cancel_button)
+                                    .label(i18n.note_cancel_button)
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.close_editor(window, cx);
                                     })),
@@ -953,7 +953,7 @@ impl Render for MarkdownNoteEditorWindow {
                             .child(
                                 Button::new("markdown-note-save-window")
                                     .small()
-                                    .label(i18n.markdown_note_save_button)
+                                    .label(i18n.note_save_button)
                                     .disabled(!can_save)
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.save_editor(window, cx);

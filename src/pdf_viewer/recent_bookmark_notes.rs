@@ -450,9 +450,9 @@ impl PdfViewer {
         let language = self.language;
         let i18n = self.i18n();
         let title: SharedString = if is_editing {
-            i18n.markdown_note_edit_dialog_title.into()
+            i18n.note_edit_dialog_title.into()
         } else {
-            i18n.markdown_note_new_dialog_title.into()
+            i18n.note_new_dialog_title.into()
         };
         let viewer = cx.entity();
         let viewer_for_close = viewer.clone();
