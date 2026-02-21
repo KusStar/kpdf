@@ -1099,6 +1099,36 @@ impl PdfViewer {
         }
     }
 
+    pub(super) fn has_markups_in_current_selection(&self) -> bool {
+        if let Some((page_index, _, page_width_pt, page_height_pt, selection_rects)) =
+            self.active_text_selection_snapshot()
+        {
+            let normalized_selection_rects =
+                Self::normalize_text_markup_rects(page_width_pt, page_height_pt, selection_rects);
+
+            if normalized_selection_rects.is_empty() {
+                return false;
+            }
+
+            // 检查活动标签页中是否存在与此选择重叠的标记
+            let active_tab_path = self.active_tab_path();
+            if let Some(path) = active_tab_path {
+                for markup in &self.text_markups {
+                    if markup.path == *path && markup.page_index == page_index {
+                        for existing_rect in &markup.rects {
+                            for selection_rect in &normalized_selection_rects {
+                                if Self::rects_overlap(existing_rect, selection_rect) {
+                                    return true; // 找到重叠的标记
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
     pub(super) fn render_text_selection_hover_menu(
         &self,
         cx: &mut Context<Self>,
@@ -1120,7 +1150,6 @@ impl PdfViewer {
                 .left(px(x))
                 .top(px(y))
                 .h(px(38.))
-                .min_w(px(362.))
                 .rounded_lg()
                 .border_1()
                 .border_color(cx.theme().border.opacity(0.88))
@@ -1258,7 +1287,6 @@ impl PdfViewer {
                                         ),
                                 ),
                         )
-                        .child(div().h(px(16.)).w_px().bg(cx.theme().border))
                         .child(
                             Button::new("selection-highlight")
                                 .ghost()
@@ -1296,15 +1324,17 @@ impl PdfViewer {
                                 })),
                         )
                         .child(div().h(px(16.)).w_px().bg(cx.theme().border))
-                        .child(
-                            Button::new("selection-reset")
-                                .ghost()
-                                .xsmall()
-                                .label(i18n.text_markup_reset_button)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    let _ = this.clear_text_markups_in_selection(cx);
-                                })),
-                        ),
+                        .when(self.has_markups_in_current_selection(), |div| {
+                            div.child(
+                                Button::new("selection-reset")
+                                    .ghost()
+                                    .xsmall()
+                                    .label(i18n.text_markup_reset_button)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let _ = this.clear_text_markups_in_selection(cx);
+                                    })),
+                            )
+                        })
                 )
                 .into_any_element(),
         )
