@@ -148,7 +148,10 @@ impl PdfViewer {
         let window_options = WindowOptions {
             titlebar: Some(Self::dialog_titlebar_options()),
             window_bounds: Some(WindowBounds::centered(
-                size(px(SETTINGS_DIALOG_WIDTH + 96.), px(SETTINGS_DIALOG_WINDOW_HEIGHT)),
+                size(
+                    px(SETTINGS_DIALOG_WIDTH + 96.),
+                    px(SETTINGS_DIALOG_WINDOW_HEIGHT),
+                ),
                 cx,
             )),
             window_decorations: Some(WindowDecorations::Client),
@@ -245,8 +248,9 @@ impl PdfViewer {
         self.persist_language_preference();
 
         let i18n = self.i18n();
-        self.command_panel_input_state
-            .update(cx, |input, cx| input.set_placeholder(i18n.command_panel_search_hint, window, cx));
+        self.command_panel_input_state.update(cx, |input, cx| {
+            input.set_placeholder(i18n.command_panel_search_hint, window, cx)
+        });
         crate::configure_app_menus(cx, i18n);
         cx.notify();
     }
@@ -362,529 +366,6 @@ impl PdfViewer {
         self.persist_titlebar_preferences();
         cx.notify();
     }
-
-    #[allow(dead_code)]
-    fn render_settings_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.settings_dialog_open {
-            return None;
-        }
-
-        let i18n = self.i18n();
-        let has_theme_color_options =
-            !Self::available_theme_names_for_mode(self.theme_mode, cx).is_empty();
-        let db_usage_text = Self::format_storage_size(self.db_usage_bytes);
-        let db_path_text = self.db_path.to_string_lossy().to_string();
-        let refresh_db_label: SharedString = if self.db_usage_refreshing {
-            "…".into()
-        } else {
-            i18n.settings_db_refresh_button.into()
-        };
-
-        Some(
-            div()
-                .id("settings-dialog-overlay")
-                .absolute()
-                .top_0()
-                .left_0()
-                .right_0()
-                .bottom_0()
-                .bg(cx.theme().background.opacity(0.45))
-                .on_scroll_wheel(cx.listener(|_, _: &ScrollWheelEvent, _, cx| {
-                    cx.stop_propagation();
-                }))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, _, cx| {
-                        this.close_settings_dialog(cx);
-                    }),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .right_0()
-                        .bottom_0()
-                        .v_flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            div()
-                                .id("settings-dialog")
-                                .w(px(SETTINGS_DIALOG_WIDTH))
-                                .h_full()
-                                .max_h(px(SETTINGS_DIALOG_WINDOW_HEIGHT))
-                                .v_flex()
-                                .gap_3()
-                                .popover_style(cx)
-                                .p_4()
-                                .overflow_y_scrollbar()
-                                .on_scroll_wheel(cx.listener(|_, _: &ScrollWheelEvent, _, cx| {
-                                    cx.stop_propagation();
-                                }))
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|_, _, _, cx| {
-                                        cx.stop_propagation();
-                                    }),
-                                )
-                                .child(
-                                    div()
-                                        .text_lg()
-                                        .text_color(cx.theme().foreground)
-                                        .child(i18n.settings_dialog_title),
-                                )
-                                .child(div().h(px(1.)).bg(cx.theme().border))
-                                .child(
-                                    div()
-                                        .v_flex()
-                                        .gap_2()
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .text_color(cx.theme().muted_foreground)
-                                                .child(i18n.settings_language_section),
-                                        )
-                                        .child(
-                                            div()
-                                                .w_full()
-                                                .rounded_md()
-                                                .border_1()
-                                                .border_color(cx.theme().border)
-                                                .p_3()
-                                                .v_flex()
-                                                .gap_3()
-                                                .child(
-                                                    div()
-                                                        .w_full()
-                                                        .flex()
-                                                        .items_start()
-                                                        .justify_between()
-                                                        .gap_3()
-                                                        .child(
-                                                            div()
-                                                                .flex_1()
-                                                                .v_flex()
-                                                                .items_start()
-                                                                .gap_1()
-                                                                .child(
-                                                                    div()
-                                                                        .text_sm()
-                                                                        .text_color(cx.theme().foreground)
-                                                                        .child(
-                                                                            i18n.settings_language_label,
-                                                                        ),
-                                                                )
-                                                                .child(
-                                                                    div()
-                                                                        .text_xs()
-                                                                        .text_color(
-                                                                            cx.theme()
-                                                                                .muted_foreground,
-                                                                        )
-                                                                        .whitespace_normal()
-                                                                        .child(
-                                                                            i18n.settings_language_hint,
-                                                                        ),
-                                                                ),
-                                                        )
-                                                        .child(
-                                                            ButtonGroup::new("settings-language-preference")
-                                                                .small()
-                                                                .outline()
-                                                                .child(
-                                                                    Button::new("settings-language-system")
-                                                                        .label(i18n.settings_language_system)
-                                                                        .selected(
-                                                                            self.language_preference
-                                                                                == LanguagePreference::System,
-                                                                        ),
-                                                                )
-                                                                .child(
-                                                                    Button::new("settings-language-zh-cn")
-                                                                        .label(i18n.settings_language_zh_cn)
-                                                                        .selected(
-                                                                            self.language_preference
-                                                                                == LanguagePreference::ZhCn,
-                                                                        ),
-                                                                )
-                                                                .child(
-                                                                    Button::new("settings-language-en-us")
-                                                                        .label(i18n.settings_language_en_us)
-                                                                        .selected(
-                                                                            self.language_preference
-                                                                                == LanguagePreference::EnUs,
-                                                                        ),
-                                                                )
-                                                                .on_click(cx.listener(
-                                                                    |this, selected: &Vec<usize>, window, cx| {
-                                                                        let preference = match selected.first().copied() {
-                                                                            Some(1) => LanguagePreference::ZhCn,
-                                                                            Some(2) => LanguagePreference::EnUs,
-                                                                            _ => LanguagePreference::System,
-                                                                        };
-                                                                        this.set_language_preference(
-                                                                            preference,
-                                                                            window,
-                                                                            cx,
-                                                                        );
-                                                                    },
-                                                                )),
-                                                        ),
-                                                ),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .v_flex()
-                                        .gap_2()
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .text_color(cx.theme().muted_foreground)
-                                                .child(i18n.settings_theme_section),
-                                        )
-                                        .child(
-                                            div()
-                                                .w_full()
-                                                .rounded_md()
-                                                .border_1()
-                                                .border_color(cx.theme().border)
-                                                .p_3()
-                                                .v_flex()
-                                                .gap_3()
-                                                .child(
-                                                    div()
-                                                        .w_full()
-                                                        .flex()
-                                                        .items_start()
-                                                        .justify_between()
-                                                        .gap_3()
-                                                        .child(
-                                                            div()
-                                                                .flex_1()
-                                                                .v_flex()
-                                                                .items_start()
-                                                                .gap_1()
-                                                                .child(
-                                                                    div()
-                                                                        .text_sm()
-                                                                        .text_color(cx.theme().foreground)
-                                                                        .child(
-                                                                            i18n.settings_theme_label,
-                                                                        ),
-                                                                )
-                                                                .child(
-                                                                    div()
-                                                                        .text_xs()
-                                                                        .text_color(
-                                                                            cx.theme()
-                                                                                .muted_foreground,
-                                                                        )
-                                                                        .whitespace_normal()
-                                                                        .child(i18n.settings_theme_hint),
-                                                                ),
-                                                        )
-                                                        .child(
-                                                            ButtonGroup::new("settings-theme-mode")
-                                                                .small()
-                                                                .outline()
-                                                                .child(
-                                                                    Button::new("settings-theme-light")
-                                                                        .label(i18n.settings_theme_light)
-                                                                        .selected(
-                                                                            self.theme_mode
-                                                                                == ThemeMode::Light,
-                                                                        ),
-                                                                )
-                                                                .child(
-                                                                    Button::new("settings-theme-dark")
-                                                                        .label(i18n.settings_theme_dark)
-                                                                        .selected(
-                                                                            self.theme_mode
-                                                                                == ThemeMode::Dark,
-                                                                        ),
-                                                                )
-                                                                .on_click(cx.listener(
-                                                                    |this, selected: &Vec<usize>, window, cx| {
-                                                                        let mode = if selected.first().copied()
-                                                                            == Some(1)
-                                                                        {
-                                                                            ThemeMode::Dark
-                                                                        } else {
-                                                                            ThemeMode::Light
-                                                                        };
-                                                                        this.set_theme_mode(mode, window, cx);
-                                                                    },
-                                                                )),
-                                                        ),
-                                                )
-                                                .child(div().h(px(1.)).bg(cx.theme().border))
-                                                .child(
-                                                    div()
-                                                        .w_full()
-                                                        .flex()
-                                                        .items_start()
-                                                        .justify_between()
-                                                        .gap_3()
-                                                        .child(
-                                                            div()
-                                                                .flex_1()
-                                                                .v_flex()
-                                                                .items_start()
-                                                                .gap_1()
-                                                                .child(
-                                                                    div()
-                                                                        .text_sm()
-                                                                        .text_color(cx.theme().foreground)
-                                                                        .child(
-                                                                            i18n.settings_theme_color_label,
-                                                                        ),
-                                                                )
-                                                                .child(
-                                                                    div()
-                                                                        .text_xs()
-                                                                        .text_color(
-                                                                            cx.theme().muted_foreground,
-                                                                        )
-                                                                        .whitespace_normal()
-                                                                        .child(
-                                                                            i18n.settings_theme_color_hint,
-                                                                        ),
-                                                                ),
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .w(px(200.))
-                                                                .child(
-                                                                    Select::new(
-                                                                        &self.theme_color_select_state,
-                                                                    )
-                                                                    .small()
-                                                                    .disabled(!has_theme_color_options)
-                                                                    .placeholder(
-                                                                        i18n.settings_theme_color_placeholder,
-                                                                    ),
-                                                                ),
-                                                        ),
-                                                ),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .text_color(cx.theme().muted_foreground)
-                                                .child(i18n.settings_titlebar_section),
-                                        )
-                                        .child(
-                                            div()
-                                                .w_full()
-                                                .rounded_md()
-                                                .border_1()
-                                                .border_color(cx.theme().border)
-                                                .p_3()
-                                                .v_flex()
-                                                .gap_3()
-                                                .child(
-                                                    div()
-                                                        .w_full()
-                                                        .flex()
-                                                        .items_start()
-                                                        .justify_between()
-                                                        .gap_3()
-                                                        .child(
-                                                            div()
-                                                                .flex_1()
-                                                                .v_flex()
-                                                                .items_start()
-                                                                .gap_1()
-                                                                .child(
-                                                                    div()
-                                                                        .text_sm()
-                                                                        .text_color(cx.theme().foreground)
-                                                                        .child(
-                                                                            i18n.settings_titlebar_navigation_label,
-                                                                        ),
-                                                                )
-                                                                .child(
-                                                                    div()
-                                                                        .text_xs()
-                                                                        .text_color(
-                                                                            cx.theme()
-                                                                                .muted_foreground,
-                                                                        )
-                                                                        .whitespace_normal()
-                                                                        .child(
-                                                                            i18n.settings_titlebar_navigation_hint,
-                                                                        ),
-                                                                ),
-                                                        )
-                                                        .child(
-                                                            Checkbox::new("settings-show-titlebar-navigation")
-                                                                .checked(
-                                                                    self.titlebar_preferences
-                                                                        .show_navigation,
-                                                                )
-                                                                .on_click(cx.listener(
-                                                                    |this, checked: &bool, _, cx| {
-                                                                        this.set_titlebar_navigation_visible(
-                                                                            *checked,
-                                                                            cx,
-                                                                        );
-                                                                    },
-                                                                )),
-                                                        ),
-                                                )
-                                                .child(div().h(px(1.)).bg(cx.theme().border))
-                                                .child(
-                                                    div()
-                                                        .w_full()
-                                                        .flex()
-                                                        .items_start()
-                                                        .justify_between()
-                                                        .gap_3()
-                                                        .child(
-                                                            div()
-                                                                .flex_1()
-                                                                .v_flex()
-                                                                .items_start()
-                                                                .gap_1()
-                                                                .child(
-                                                                    div()
-                                                                        .text_sm()
-                                                                        .text_color(cx.theme().foreground)
-                                                                        .child(
-                                                                            i18n.settings_titlebar_zoom_label,
-                                                                        ),
-                                                                )
-                                                                .child(
-                                                                    div()
-                                                                        .text_xs()
-                                                                        .text_color(
-                                                                            cx.theme()
-                                                                                .muted_foreground,
-                                                                        )
-                                                                        .whitespace_normal()
-                                                                        .child(
-                                                                            i18n.settings_titlebar_zoom_hint,
-                                                                        ),
-                                                                ),
-                                                        )
-                                                        .child(
-                                                            Checkbox::new("settings-show-titlebar-zoom")
-                                                                .checked(self.titlebar_preferences.show_zoom)
-                                                                .on_click(cx.listener(
-                                                                    |this, checked: &bool, _, cx| {
-                                                                        this.set_titlebar_zoom_visible(
-                                                                            *checked,
-                                                                            cx,
-                                                                        );
-                                                                    },
-                                                                )),
-                                                        ),
-                                                ),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(i18n.settings_db_section),
-                                )
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .rounded_md()
-                                        .border_1()
-                                        .border_color(cx.theme().border)
-                                        .p_3()
-                                        .v_flex()
-                                        .gap_3()
-                                        .child(
-                                            div()
-                                                .w_full()
-                                                .flex()
-                                                .items_start()
-                                                .justify_between()
-                                                .gap_3()
-                                                .child(
-                                                    div()
-                                                        .flex_1()
-                                                        .v_flex()
-                                                        .items_start()
-                                                        .gap_1()
-                                                        .child(
-                                                            div()
-                                                                .text_sm()
-                                                                .text_color(cx.theme().foreground)
-                                                                .child(i18n.settings_db_usage_label),
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .text_xs()
-                                                                .text_color(cx.theme().muted_foreground)
-                                                                .whitespace_normal()
-                                                                .child(i18n.settings_db_usage_hint),
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .text_xs()
-                                                                .text_color(cx.theme().muted_foreground)
-                                                                .whitespace_normal()
-                                                                .child(format!(
-                                                                    "{}: {}",
-                                                                    i18n.settings_db_path_label, db_path_text
-                                                                )),
-                                                        ),
-                                                )
-                                                .child(
-                                                    div()
-                                                        .v_flex()
-                                                        .items_end()
-                                                        .gap_2()
-                                                        .child(
-                                                            div()
-                                                                .text_sm()
-                                                                .text_color(cx.theme().foreground)
-                                                                .child(db_usage_text),
-                                                        )
-                                                        .child(
-                                                            Button::new("settings-db-refresh")
-                                                                .small()
-                                                                .ghost()
-                                                                .label(refresh_db_label)
-                                                                .disabled(self.db_usage_refreshing)
-                                                                .on_click(cx.listener(
-                                                                    |this, _, _, cx| {
-                                                                        this.refresh_db_usage(cx);
-                                                                    },
-                                                                )),
-                                                        ),
-                                                ),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .w_full()
-                                        .flex()
-                                        .items_center()
-                                        .justify_end()
-                                        .child(
-                                            Button::new("settings-close")
-                                                .small()
-                                                .ghost()
-                                                .label(i18n.close_button)
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.close_settings_dialog(cx);
-                                                })),
-                                        ),
-                                ),
-                        ),
-                )
-                .into_any_element(),
-        )
-    }
-
-
 }
 
 #[derive(Clone)]
@@ -911,7 +392,6 @@ impl SettingsDialogSnapshot {
         }
     }
 }
-
 
 struct SettingsDialogWindow {
     viewer: Entity<PdfViewer>,
@@ -1005,6 +485,7 @@ impl Render for SettingsDialogWindow {
                     .child(div().h(px(1.)).bg(cx.theme().border))
                     .child(
                         div()
+                            .mt_2()
                             .v_flex()
                             .gap_2()
                             .child(
@@ -1105,6 +586,7 @@ impl Render for SettingsDialogWindow {
                             .gap_2()
                             .child(
                                 div()
+                                    .mt_2()
                                     .text_sm()
                                     .text_color(cx.theme().muted_foreground)
                                     .child(i18n.settings_theme_section),
@@ -1227,6 +709,7 @@ impl Render for SettingsDialogWindow {
                             .gap_2()
                             .child(
                                 div()
+                                    .mt_2()
                                     .text_sm()
                                     .text_color(cx.theme().muted_foreground)
                                     .child(i18n.settings_titlebar_section),
@@ -1331,6 +814,7 @@ impl Render for SettingsDialogWindow {
                             .gap_2()
                             .child(
                                 div()
+                                    .mt_2()
                                     .text_sm()
                                     .text_color(cx.theme().muted_foreground)
                                     .child(i18n.settings_db_section),
@@ -1410,22 +894,6 @@ impl Render for SettingsDialogWindow {
                                     ),
                             ),
                     )
-                    .child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .child(
-                                Button::new("settings-close-window")
-                                    .small()
-                                    .ghost()
-                                    .label(i18n.close_button)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.close_dialog(window, cx);
-                                    })),
-                            ),
-                    ),
             )
     }
 }
