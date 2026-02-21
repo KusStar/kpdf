@@ -617,6 +617,7 @@ impl PdfViewer {
                                 .w_full()
                                 .max_h(px(RECENT_FILES_LIST_MAX_HEIGHT))
                                 .overflow_y_scroll()
+                                .overflow_x_hidden()
                                 .track_scroll(scroll_handle)
                                 .pr(px(10.))
                                 .v_flex()
@@ -665,6 +666,8 @@ impl PdfViewer {
                                                         .child(
                                                             div()
                                                                 .flex_1()
+                                                                .min_w(px(0.))
+                                                                .overflow_x_hidden()
                                                                 .v_flex()
                                                                 .items_start()
                                                                 .gap_1()
