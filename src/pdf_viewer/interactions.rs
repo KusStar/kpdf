@@ -291,6 +291,41 @@ impl PdfViewer {
         Self::selection_anchor_from_rects(page_index, page_width_pt, page_height_pt, &rects)
     }
 
+    fn remove_markup_overlaps_for_range_complete(
+        &mut self,
+        path: &Path,
+        page_index: usize,
+        range_rects: &[TextMarkupRect],
+    ) -> bool {
+        if range_rects.is_empty() || self.text_markups.is_empty() {
+            return false;
+        }
+
+        let mut changed = false;
+        let mut rebuilt = Vec::with_capacity(self.text_markups.len());
+        for markup in self.text_markups.drain(..) {
+            if markup.path != path || markup.page_index != page_index {
+                rebuilt.push(markup);
+                continue;
+            }
+
+            let has_overlap = markup
+                .rects
+                .iter()
+                .any(|existing| range_rects.iter().any(|range| Self::rects_overlap(existing, range)));
+
+            if has_overlap {
+                changed = true;
+                continue;
+            }
+
+            rebuilt.push(markup);
+        }
+
+        self.text_markups = rebuilt;
+        changed
+    }
+
     pub(super) fn clear_text_markups_in_selection(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(path) = self.active_tab_path().cloned() else {
             return false;
@@ -308,8 +343,7 @@ impl PdfViewer {
             return false;
         }
 
-        let now = Self::now_unix_secs();
-        let changed = self.remove_markup_overlaps_for_range(&path, page_index, &normalized_rects, now);
+        let changed = self.remove_markup_overlaps_for_range_complete(&path, page_index, &normalized_rects);
         if changed {
             self.text_markups.sort_by(|a, b| {
                 b.updated_at_unix_secs
