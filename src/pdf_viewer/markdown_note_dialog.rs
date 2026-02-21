@@ -189,6 +189,28 @@ impl PdfViewer {
             return false;
         };
 
+        // 获取选区信息（如果是从文本选区创建的）
+        let (selected_text, selection_rects) = self
+            .active_text_selection_snapshot()
+            .filter(|(page_index, _, _, _, _)| *page_index == anchor.page_index)
+            .map(|(_, text, page_width, page_height, rects)| {
+                // 转换 rects 为 TextMarkupRect
+                // 注意：PDF 坐标系原点在左下角，Y 轴向上增加
+                // 屏幕坐标系原点在左上角，Y 轴向下增加
+                // 需要翻转 Y 轴
+                let selection_rects: Vec<TextMarkupRect> = rects
+                    .iter()
+                    .map(|(left, top, right, bottom)| TextMarkupRect {
+                        left_ratio: (left / page_width).clamp(0.0, 1.0),
+                        top_ratio: ((page_height - top) / page_height).clamp(0.0, 1.0),
+                        right_ratio: (right / page_width).clamp(0.0, 1.0),
+                        bottom_ratio: ((page_height - bottom) / page_height).clamp(0.0, 1.0),
+                    })
+                    .collect();
+                (text, selection_rects)
+            })
+            .unwrap_or_default();
+
         let note = MarkdownNoteEntry {
             id: self.next_markdown_note_id(),
             path: path.clone(),
@@ -198,6 +220,8 @@ impl PdfViewer {
             markdown,
             created_at_unix_secs: now,
             updated_at_unix_secs: now,
+            selected_text,
+            selection_rects,
         };
         self.upsert_markdown_note(note, cx);
 

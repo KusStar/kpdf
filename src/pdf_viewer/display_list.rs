@@ -225,6 +225,8 @@ impl PdfViewer {
         );
         let markdown_note_markers =
             self.markdown_note_markers_for_page(page_index, page_width, page_height);
+        let markdown_note_selection_rects =
+            self.markdown_note_selection_rects_for_page(page_index, page_width, page_height, scale);
 
         // Get page info for coordinate conversion
         let _page_height_pt = page.height_pt;
@@ -442,6 +444,40 @@ impl PdfViewer {
                                     .h(px(bottom - top))
                                     .bg(gpui::rgb(0x3390FF)) // Blue color
                                     .opacity(0.3)
+                                    .into_any_element()
+                            }),
+                    )
+                    // Render markdown note selection highlights
+                    .children(
+                        markdown_note_selection_rects
+                            .into_iter()
+                            .map(|(note_id, left, top, right, bottom)| {
+                                div()
+                                    .id(("note-selection-highlight", note_id))
+                                    .absolute()
+                                    .left(px(left))
+                                    .top(px(top))
+                                    .w(px(right - left))
+                                    .h(px(bottom - top))
+                                    .bg(gpui::rgb(0xF59E0B)) // Amber color for note highlights
+                                    .opacity(0.4)
+                                    .cursor_pointer()
+                                    .on_mouse_down(
+                                        gpui::MouseButton::Left,
+                                        cx.listener(move |this, _event: &gpui::MouseDownEvent, window, cx| {
+                                            this.open_markdown_note_editor_for_edit(note_id, window, cx);
+                                            cx.stop_propagation();
+                                        }),
+                                    )
+                                    .on_mouse_move(cx.listener(move |this, event: &gpui::MouseMoveEvent, _, cx| {
+                                        // 检查鼠标是否在矩形内
+                                        let mx: f32 = event.position.x.into();
+                                        let my: f32 = event.position.y.into();
+                                        if mx >= left && mx <= right && my >= top && my <= bottom {
+                                            let _ = this.set_markdown_note_hover_id(Some(note_id));
+                                            cx.notify();
+                                        }
+                                    }))
                                     .into_any_element()
                             }),
                     )
@@ -686,6 +722,31 @@ impl PdfViewer {
             let dy = marker.y - local_y;
             ((dx * dx + dy * dy) <= hit_radius * hit_radius).then_some(marker.id)
         })
+    }
+
+    fn markdown_note_selection_rects_for_page(
+        &self,
+        page_index: usize,
+        page_width_screen: f32,
+        page_height_screen: f32,
+        _scale: f32,
+    ) -> Vec<(u64, f32, f32, f32, f32)> {
+        self.active_tab_markdown_notes_for_page(page_index)
+            .into_iter()
+            .filter(|note| !note.selection_rects.is_empty())
+            .flat_map(|note| {
+                note.selection_rects
+                    .iter()
+                    .map(move |rect| {
+                        let left = rect.left_ratio * page_width_screen;
+                        let top = rect.top_ratio * page_height_screen;
+                        let right = rect.right_ratio * page_width_screen;
+                        let bottom = rect.bottom_ratio * page_height_screen;
+                        (note.id, left, top, right, bottom)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
     }
 
     fn get_selection_rects_for_page(

@@ -55,6 +55,11 @@ pub(super) struct MarkdownNoteEntry {
     pub(super) markdown: String,
     pub(super) created_at_unix_secs: u64,
     pub(super) updated_at_unix_secs: u64,
+    /// 如果是从文本选区创建的，存储选中的文本和矩形区域
+    #[serde(default)]
+    pub(super) selected_text: String,
+    #[serde(default)]
+    pub(super) selection_rects: Vec<TextMarkupRect>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
