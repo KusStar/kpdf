@@ -13,22 +13,6 @@ impl PdfViewer {
         self.tab_bar.get_active_tab_mut()
     }
 
-    #[allow(dead_code)]
-    fn with_active_tab<F, R>(&self, f: F) -> Option<R>
-    where
-        F: FnOnce(&PdfTab) -> R,
-    {
-        self.active_tab().map(f)
-    }
-
-    #[allow(dead_code)]
-    fn with_active_tab_mut<F, R>(&mut self, f: F) -> Option<R>
-    where
-        F: FnOnce(&mut PdfTab) -> R,
-    {
-        self.active_tab_mut().map(f)
-    }
-
     fn open_persistent_stores() -> (
         Option<sled::Tree>,
         Option<sled::Tree>,

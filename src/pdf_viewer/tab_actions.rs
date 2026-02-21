@@ -1,11 +1,4 @@
 impl PdfViewer {
-    #[allow(dead_code)]
-    fn create_new_tab(&mut self, cx: &mut Context<Self>) {
-        self.tab_bar.create_tab();
-        self.persist_open_tabs();
-        cx.notify();
-    }
-
     fn save_tab_position_if_needed(&self, tab_id: usize) {
         if let Some(tab) = self.tab_bar.tabs().iter().find(|t| t.id == tab_id)
             && let Some(path) = tab.path.as_ref()

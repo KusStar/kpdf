@@ -567,11 +567,6 @@ impl PdfViewer {
         self.active_tab().map(|t| t.active_page).unwrap_or(0)
     }
 
-    #[allow(dead_code)]
-    pub(super) fn active_tab_selected_page(&self) -> usize {
-        self.active_tab().map(|t| t.selected_page).unwrap_or(0)
-    }
-
     pub(super) fn active_tab_text_selection_manager(
         &self,
     ) -> Option<&std::cell::RefCell<crate::pdf_viewer::text_selection::TextSelectionManager>> {

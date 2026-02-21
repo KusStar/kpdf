@@ -191,11 +191,6 @@ impl TabBar {
         !self.tabs.is_empty()
     }
 
-    #[allow(dead_code)]
-    pub fn tab_count(&self) -> usize {
-        self.tabs.len()
-    }
-
     /// Move a tab from one index to another
     pub fn move_tab(&mut self, from_index: usize, to_index: usize) -> bool {
         if from_index >= self.tabs.len() || to_index >= self.tabs.len() {
