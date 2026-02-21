@@ -19,7 +19,6 @@ kPDF is a lightweight desktop PDF viewer built with Rust + GPUI, focused on smoo
 <img src="assets/screenshots/macos.png" alt="kPDF Screenshot on macOS" width="1024" />
 <img src="assets/screenshots/selection.png" alt="selection" width="1024" />
 <img src="assets/screenshots/settings.png" alt="kPDF Screenshot on macOS" width="1024" />
-<img src="assets/screenshots/about.png" alt="kPDF Screenshot on macOS" width="1024" />
 
 ## Features
 

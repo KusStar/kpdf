@@ -19,7 +19,6 @@ kPDF 是一个基于 Rust + GPUI 的轻量级桌面 PDF 阅读器，专注于流
 <img src="assets/screenshots/macos.png" alt="kPDF 在 macOS 上的截图" width="1024" />
 <img src="assets/screenshots/selection.png" alt="selection" width="1024" />
 <img src="assets/screenshots/settings.png" alt="kPDF Screenshot on macOS" width="1024" />
-<img src="assets/screenshots/about.png" alt="kPDF Screenshot on macOS" width="1024" />
 
 ## 功能特性
 
