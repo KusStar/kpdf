@@ -791,6 +791,7 @@ struct MarkdownNoteEditorWindow {
     is_editing: bool,
     input_state: Entity<InputState>,
     needs_focus: bool,
+    preview_visible: bool,
 }
 
 impl MarkdownNoteEditorWindow {
@@ -820,6 +821,7 @@ impl MarkdownNoteEditorWindow {
             is_editing,
             input_state,
             needs_focus: true,
+            preview_visible: true,
         }
     }
 
@@ -865,6 +867,11 @@ impl Render for MarkdownNoteEditorWindow {
         } else {
             editor_text.clone()
         };
+        let preview_toggle_label = if self.preview_visible {
+            i18n.note_hide_preview_button
+        } else {
+            i18n.note_show_preview_button
+        };
         let preview_id: SharedString =
             format!("markdown-note-preview-window-{}", self.session_id).into();
 
@@ -907,32 +914,60 @@ impl Render for MarkdownNoteEditorWindow {
                             .child(i18n.note_dialog_hint),
                     )
                     .child(
-                        div()
-                            .w_full()
-                            .h(px(MARKDOWN_NOTE_EDITOR_INPUT_HEIGHT))
-                            .child(Input::new(&self.input_state).h_full()),
+                        div().w_full().flex().justify_end().child(
+                            Button::new("markdown-note-preview-toggle-window")
+                                .small()
+                                .ghost()
+                                .label(preview_toggle_label)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.preview_visible = !this.preview_visible;
+                                    cx.notify();
+                                })),
+                        ),
                     )
                     .child(
                         div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(i18n.note_preview_label),
-                    )
-                    .child(
-                        div()
                             .w_full()
-                            .h(px(220.))
-                            .rounded_md()
-                            .border_1()
-                            .border_color(cx.theme().border)
-                            .bg(cx.theme().background)
-                            .overflow_hidden()
-                            .p_3()
+                            .flex_1()
+                            .flex()
+                            .gap_3()
                             .child(
-                                TextView::markdown(preview_id, preview_text, window, cx)
-                                    .selectable(true)
-                                    .scrollable(true),
-                            ),
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.))
+                                    .child(Input::new(&self.input_state).h_full()),
+                            )
+                            .when(self.preview_visible, |this| {
+                                this.child(
+                                    div()
+                                        .flex_1()
+                                        .min_w(px(0.))
+                                        .h_full()
+                                        .v_flex()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .w_full()
+                                                .flex_1()
+                                                .rounded_md()
+                                                .border_1()
+                                                .border_color(cx.theme().border)
+                                                .bg(cx.theme().background)
+                                                .overflow_hidden()
+                                                .p_3()
+                                                .child(
+                                                    TextView::markdown(
+                                                        preview_id,
+                                                        preview_text,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                    .selectable(true)
+                                                    .scrollable(true),
+                                                ),
+                                        ),
+                                )
+                            }),
                     )
                     .child(
                         div()
