@@ -154,11 +154,6 @@ impl PdfViewer {
                 cx.stop_propagation();
                 return;
             }
-            if key == "enter" && is_primary_modifier {
-                self.save_markdown_note_from_editor(cx);
-                cx.stop_propagation();
-                return;
-            }
             return;
         }
 

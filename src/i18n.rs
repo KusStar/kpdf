@@ -488,7 +488,11 @@ fn collect_i18n_dirs() -> Vec<PathBuf> {
 
     #[cfg(target_os = "linux")]
     {
-        push_i18n_dir(&mut candidates, &mut seen, PathBuf::from("/usr/lib/kpdf/i18n"));
+        push_i18n_dir(
+            &mut candidates,
+            &mut seen,
+            PathBuf::from("/usr/lib/kpdf/i18n"),
+        );
         push_i18n_dir(
             &mut candidates,
             &mut seen,

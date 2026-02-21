@@ -149,7 +149,11 @@ fn collect_library_dirs() -> Vec<PathBuf> {
 
     #[cfg(target_os = "linux")]
     {
-        push_library_dir(&mut candidates, &mut seen, PathBuf::from("/usr/lib/kpdf/lib"));
+        push_library_dir(
+            &mut candidates,
+            &mut seen,
+            PathBuf::from("/usr/lib/kpdf/lib"),
+        );
         push_library_dir(
             &mut candidates,
             &mut seen,

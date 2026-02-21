@@ -272,13 +272,15 @@ impl PdfViewer {
                                             window,
                                         );
 
-                                        if let Some(note_id) = this.hit_test_markdown_note_id_on_page(
-                                            page_index,
-                                            local_x,
-                                            local_y,
-                                            page_width,
-                                            page_height,
-                                        ) {
+                                        if let Some(note_id) = this
+                                            .hit_test_markdown_note_id_on_page(
+                                                page_index,
+                                                local_x,
+                                                local_y,
+                                                page_width,
+                                                page_height,
+                                            )
+                                        {
                                             let _ = this.set_markdown_note_hover_id(Some(note_id));
                                             this.open_markdown_note_editor_for_edit(
                                                 note_id, window, cx,
@@ -450,7 +452,7 @@ impl PdfViewer {
                                 )
                             })
                             .into_any_element()
-                    }))
+                    })),
             )
             .into_any_element()
     }

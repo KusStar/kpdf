@@ -81,6 +81,8 @@ pub struct PdfViewer {
     note_editor_open: bool,
     note_editor_anchor: Option<MarkdownNoteAnchor>,
     note_editor_edit_note_id: Option<u64>,
+    note_editor_window: Option<AnyWindowHandle>,
+    note_editor_session: u64,
     about_dialog_open: bool,
     settings_dialog_open: bool,
     updater_state: UpdaterUiState,
@@ -93,7 +95,6 @@ pub struct PdfViewer {
     command_panel_list_scroll: ScrollHandle,
     recent_home_list_scroll: ScrollHandle,
     command_panel_input_state: Entity<InputState>,
-    note_editor_input_state: Entity<InputState>,
     _command_panel_input_subscription: Subscription,
     theme_color_select_state: Entity<SelectState<SearchableVec<SharedString>>>,
     _theme_color_select_subscription: Subscription,
@@ -112,7 +113,6 @@ pub struct PdfViewer {
     text_hover_target: Option<(usize, usize)>, // (tab_id, page_index)
     needs_initial_focus: bool,
     command_panel_needs_focus: bool,
-    note_editor_needs_focus: bool,
     needs_root_refocus: bool,
     resize_restore_epoch: u64,
 }
@@ -176,12 +176,6 @@ impl PdfViewer {
             .unwrap_or_default();
         let command_panel_input_state = cx.new(|cx| {
             InputState::new(window, cx).placeholder(I18n::new(language).command_panel_search_hint)
-        });
-        let note_editor_input_state = cx.new(|cx| {
-            InputState::new(window, cx)
-                .multi_line(true)
-                .rows(14)
-                .placeholder(I18n::new(language).markdown_note_input_placeholder)
         });
         let command_panel_input_state_for_sub = command_panel_input_state.clone();
         let command_panel_input_subscription = cx.subscribe(
@@ -283,6 +277,8 @@ impl PdfViewer {
             note_editor_open: false,
             note_editor_anchor: None,
             note_editor_edit_note_id: None,
+            note_editor_window: None,
+            note_editor_session: 0,
             about_dialog_open: false,
             settings_dialog_open: false,
             updater_state: UpdaterUiState::Idle,
@@ -295,7 +291,6 @@ impl PdfViewer {
             command_panel_list_scroll: ScrollHandle::new(),
             recent_home_list_scroll: ScrollHandle::new(),
             command_panel_input_state,
-            note_editor_input_state,
             _command_panel_input_subscription: command_panel_input_subscription,
             theme_color_select_state,
             _theme_color_select_subscription: theme_color_select_subscription,
@@ -313,7 +308,6 @@ impl PdfViewer {
             text_hover_target: None,
             needs_initial_focus: true,
             command_panel_needs_focus: false,
-            note_editor_needs_focus: false,
             needs_root_refocus: false,
             resize_restore_epoch: 0,
         };
@@ -355,12 +349,6 @@ impl Render for PdfViewer {
             self.command_panel_needs_focus = false;
             let _ = self
                 .command_panel_input_state
-                .update(cx, |input, cx| input.focus(window, cx));
-        }
-        if self.note_editor_open && self.note_editor_needs_focus {
-            self.note_editor_needs_focus = false;
-            let _ = self
-                .note_editor_input_state
                 .update(cx, |input, cx| input.focus(window, cx));
         }
         if !self.command_panel_open && self.needs_root_refocus {
@@ -481,7 +469,6 @@ impl Render for PdfViewer {
         let command_panel = self.render_command_panel(cx);
         let about_dialog = self.render_about_dialog(cx);
         let settings_dialog = self.render_settings_dialog(cx);
-        let markdown_note_dialog = self.render_markdown_note_editor_dialog(window, cx);
 
         div()
             .size_full()
@@ -732,9 +719,6 @@ impl Render for PdfViewer {
                     })
                     .when(settings_dialog.is_some(), |this| {
                         this.child(settings_dialog.unwrap())
-                    })
-                    .when(markdown_note_dialog.is_some(), |this| {
-                        this.child(markdown_note_dialog.unwrap())
                     }),
             )
     }

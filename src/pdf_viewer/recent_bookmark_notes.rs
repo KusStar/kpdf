@@ -413,60 +413,161 @@ impl PdfViewer {
     fn open_markdown_note_editor_for_new(
         &mut self,
         anchor: MarkdownNoteAnchor,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.close_markdown_note_editor(cx);
         self.note_editor_anchor = Some(anchor);
         self.note_editor_edit_note_id = None;
-        self.note_editor_open = true;
-        self.note_editor_needs_focus = true;
-        self.needs_root_refocus = false;
-        self.note_editor_input_state.update(cx, |input, cx| {
-            input.set_value("", window, cx);
-        });
-        cx.notify();
+        self.open_markdown_note_editor_window(String::new(), false, cx);
     }
 
     fn open_markdown_note_editor_for_edit(
         &mut self,
         note_id: u64,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(note) = self.markdown_note_by_id(note_id) else {
             return;
         };
+        self.close_markdown_note_editor(cx);
         self.note_editor_anchor = None;
         self.note_editor_edit_note_id = Some(note_id);
+        self.open_markdown_note_editor_window(note.markdown, true, cx);
+    }
+
+    fn open_markdown_note_editor_window(
+        &mut self,
+        initial_markdown: String,
+        is_editing: bool,
+        cx: &mut Context<Self>,
+    ) {
         self.note_editor_open = true;
-        self.note_editor_needs_focus = true;
         self.needs_root_refocus = false;
-        self.note_editor_input_state.update(cx, |input, cx| {
-            input.set_value(note.markdown, window, cx);
-        });
-        cx.notify();
+        self.note_editor_session = self.note_editor_session.wrapping_add(1);
+        let session_id = self.note_editor_session;
+        let language = self.language;
+        let i18n = self.i18n();
+        let title: SharedString = if is_editing {
+            i18n.markdown_note_edit_dialog_title.into()
+        } else {
+            i18n.markdown_note_new_dialog_title.into()
+        };
+        let viewer = cx.entity();
+        let viewer_for_close = viewer.clone();
+
+        let window_options = WindowOptions {
+            titlebar: Some(TitlebarOptions {
+                title: Some(title),
+                ..Default::default()
+            }),
+            window_bounds: Some(WindowBounds::centered(
+                size(
+                    px(MARKDOWN_NOTE_EDITOR_WIDTH + 64.),
+                    px(MARKDOWN_NOTE_EDITOR_WINDOW_HEIGHT),
+                ),
+                cx,
+            )),
+            window_decorations: Some(WindowDecorations::Client),
+            ..WindowOptions::default()
+        };
+
+        match cx.open_window(window_options, move |window, cx| {
+            window.on_window_should_close(cx, move |_, cx| {
+                let _ = viewer_for_close.update(cx, |this, cx| {
+                    this.on_markdown_note_editor_window_closed(session_id, cx);
+                });
+                true
+            });
+            let editor = cx.new(|cx| {
+                MarkdownNoteEditorWindow::new(
+                    viewer,
+                    session_id,
+                    language,
+                    is_editing,
+                    initial_markdown,
+                    window,
+                    cx,
+                )
+            });
+            cx.new(|cx| Root::new(editor, window, cx))
+        }) {
+            Ok(handle) => {
+                self.note_editor_window = Some(handle.into());
+                cx.notify();
+            }
+            Err(err) => {
+                crate::debug_log!("[note] failed to open markdown editor window: {}", err);
+                self.on_markdown_note_editor_window_closed(session_id, cx);
+            }
+        }
+    }
+
+    fn on_markdown_note_editor_window_closed(
+        &mut self,
+        session_id: u64,
+        cx: &mut Context<Self>,
+    ) {
+        if self.note_editor_session != session_id {
+            return;
+        }
+        let mut changed = false;
+        if self.note_editor_open {
+            self.note_editor_open = false;
+            changed = true;
+        }
+        if self.note_editor_anchor.take().is_some() {
+            changed = true;
+        }
+        if self.note_editor_edit_note_id.take().is_some() {
+            changed = true;
+        }
+        if self.note_editor_window.take().is_some() {
+            changed = true;
+        }
+        if changed {
+            self.needs_root_refocus = true;
+            cx.notify();
+        }
     }
 
     fn close_markdown_note_editor(&mut self, cx: &mut Context<Self>) {
-        if !self.note_editor_open {
-            return;
+        let window_handle = self.note_editor_window.take();
+        let mut changed = false;
+        if self.note_editor_open {
+            self.note_editor_open = false;
+            changed = true;
         }
-        self.note_editor_open = false;
-        self.note_editor_anchor = None;
-        self.note_editor_edit_note_id = None;
-        self.note_editor_needs_focus = false;
-        self.needs_root_refocus = true;
-        cx.notify();
+        if self.note_editor_anchor.take().is_some() {
+            changed = true;
+        }
+        if self.note_editor_edit_note_id.take().is_some() {
+            changed = true;
+        }
+        if changed || window_handle.is_some() {
+            self.needs_root_refocus = true;
+            cx.notify();
+        }
+        if let Some(window_handle) = window_handle {
+            let _ = window_handle.update(cx, |_, window, _| {
+                window.remove_window();
+            });
+        }
     }
 
-    fn save_markdown_note_from_editor(&mut self, cx: &mut Context<Self>) {
-        if !self.note_editor_open {
-            return;
+    fn save_markdown_note_from_editor_window(
+        &mut self,
+        session_id: u64,
+        markdown: String,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.note_editor_open || self.note_editor_session != session_id {
+            return true;
         }
-        let markdown = self.note_editor_input_state.read(cx).value().to_string();
         let markdown = markdown.trim().to_string();
         if markdown.is_empty() {
-            return;
+            return false;
         }
 
         let now = Self::now_unix_secs();
@@ -476,16 +577,15 @@ impl PdfViewer {
             note.markdown = markdown;
             note.updated_at_unix_secs = now;
             self.upsert_markdown_note(note);
-            self.close_markdown_note_editor(cx);
-            cx.notify();
-            return;
+            self.on_markdown_note_editor_window_closed(session_id, cx);
+            return true;
         }
 
         let Some(path) = self.active_tab_path().cloned() else {
-            return;
+            return false;
         };
         let Some(anchor) = self.note_editor_anchor else {
-            return;
+            return false;
         };
 
         let note = MarkdownNoteEntry {
@@ -499,8 +599,8 @@ impl PdfViewer {
             updated_at_unix_secs: now,
         };
         self.upsert_markdown_note(note);
-        self.close_markdown_note_editor(cx);
-        cx.notify();
+        self.on_markdown_note_editor_window_closed(session_id, cx);
+        true
     }
 
     pub(super) fn open_page_context_menu(

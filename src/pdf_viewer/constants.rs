@@ -37,6 +37,7 @@ pub(super) const TAB_DRAG_START_DISTANCE: f32 = 4.0;
 pub(super) const ABOUT_DIALOG_WIDTH: f32 = 460.0;
 pub(super) const SETTINGS_DIALOG_WIDTH: f32 = 520.0;
 pub(super) const MARKDOWN_NOTE_EDITOR_WIDTH: f32 = 640.0;
+pub(super) const MARKDOWN_NOTE_EDITOR_WINDOW_HEIGHT: f32 = 760.0;
 pub(super) const MARKDOWN_NOTE_EDITOR_INPUT_HEIGHT: f32 = 300.0;
 pub(super) const MARKDOWN_NOTE_MARKER_RADIUS: f32 = 9.0;
 #[cfg(target_os = "macos")]
