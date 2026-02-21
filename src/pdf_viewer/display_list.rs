@@ -1288,29 +1288,47 @@ impl PdfViewer {
                                 ),
                         )
                         .child(
-                            Button::new("selection-highlight")
-                                .ghost()
-                                .xsmall()
-                                .label(i18n.text_markup_highlight_button)
+                            div()
+                                .id("selection-highlight")
+                                .px_1()
+                                .py_0()
+                                .rounded_md()
+                                .cursor_pointer()
+                                .hover(|this| this.bg(cx.theme().secondary))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     let _ = this.add_text_markup_from_selection(
                                         TextMarkupKind::Highlight,
                                         cx,
                                     );
-                                })),
+                                }))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().foreground)
+                                        .child(i18n.text_markup_highlight_button),
+                                ),
                         )
                         .child(div().h(px(16.)).w_px().bg(cx.theme().border))
                         .child(
-                            Button::new("selection-underline")
-                                .ghost()
-                                .xsmall()
-                                .label(i18n.text_markup_underline_button)
+                            div()
+                                .id("selection-underline")
+                                .px_1()
+                                .py_0()
+                                .rounded_md()
+                                .cursor_pointer()
+                                .hover(|this| this.bg(cx.theme().secondary))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     let _ = this.add_text_markup_from_selection(
                                         TextMarkupKind::Underline,
                                         cx,
                                     );
-                                })),
+                                }))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().foreground)
+                                        .child(i18n.text_markup_underline_button),
+                                ),
                         )
                         .child(div().h(px(16.)).w_px().bg(cx.theme().border))
                         .child(
@@ -1320,28 +1338,37 @@ impl PdfViewer {
                                 .py_0()
                                 .rounded_md()
                                 .cursor_pointer()
-                                .hover(|this| this.bg(cx.theme().secondary.opacity(0.8)))
+                                .hover(|this| this.bg(cx.theme().secondary))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     let _ = this
                                         .open_markdown_note_editor_for_text_selection(window, cx);
                                 }))
                                 .child(
                                     div()
-                                        .text_sm()
+                                        .text_xs()
                                         .text_color(cx.theme().foreground)
                                         .child(i18n.text_markup_add_note_button),
                                 ),
                         )
                         .child(div().h(px(16.)).w_px().bg(cx.theme().border))
-                        .when(self.has_markups_in_current_selection(), |div| {
-                            div.child(
-                                Button::new("selection-reset")
-                                    .ghost()
-                                    .xsmall()
-                                    .label(i18n.text_markup_reset_button)
+                        .when(self.has_markups_in_current_selection(), |this| {
+                            this.child(
+                                div()
+                                    .id("selection-reset")
+                                    .px_1()
+                                    .py_0()
+                                    .rounded_md()
+                                    .cursor_pointer()
+                                    .hover(|this| this.bg(cx.theme().secondary))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         let _ = this.clear_text_markups_in_selection(cx);
-                                    })),
+                                    }))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().foreground)
+                                            .child(i18n.text_markup_reset_button),
+                                    ),
                             )
                         })
                 )
@@ -1434,11 +1461,15 @@ impl PdfViewer {
                     .absolute()
                     .left(px(x))
                     .top(px(y))
-                    .w(px(220.))
-                    .v_flex()
-                    .gap_1()
-                    .popover_style(cx)
-                    .p_1()
+                    .h(px(38.))
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(cx.theme().border.opacity(0.88))
+                    .bg(cx.theme().secondary.opacity(0.94))
+                    .shadow_md()
+                    .px_1()
+                    .flex()
+                    .items_center()
                     .on_mouse_down(
                         gpui::MouseButton::Left,
                         cx.listener(|_, _: &gpui::MouseDownEvent, _, cx| {
@@ -1447,69 +1478,79 @@ impl PdfViewer {
                     )
                     .child(
                         div()
-                            .id(("note-edit", note_id))
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .hover(|this| this.bg(cx.theme().secondary.opacity(0.6)))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.close_context_menu(cx);
-                                this.open_markdown_note_editor_for_edit(note_id, window, cx);
-                            }))
+                            .w_full()
+                            .h_full()
+                            .h_flex()
+                            .items_center()
+                            .gap_1()
                             .child(
                                 div()
-                                    .text_sm()
-                                    .text_color(if note.is_none() {
-                                        cx.theme().muted_foreground
-                                    } else {
-                                        cx.theme().foreground
-                                    })
-                                    .child(i18n.edit_note_button),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id(("note-copy", note_id))
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .hover(|this| this.bg(cx.theme().secondary.opacity(0.6)))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if !is_note_empty {
-                                    let _ = super::copy_to_clipboard(&note_markdown);
-                                }
-                                this.close_context_menu(cx);
-                            }))
+                                    .id(("note-edit", note_id))
+                                    .px_1()
+                                    .py_0()
+                                    .rounded_md()
+                                    .cursor_pointer()
+                                    .hover(|this| this.bg(cx.theme().secondary))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.close_context_menu(cx);
+                                        this.open_markdown_note_editor_for_edit(note_id, window, cx);
+                                    }))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(if note.is_none() {
+                                                cx.theme().muted_foreground
+                                            } else {
+                                                cx.theme().foreground
+                                            })
+                                            .child(i18n.edit_note_button),
+                                    ),
+                            )
+                            .child(div().h(px(16.)).w_px().bg(cx.theme().border))
                             .child(
                                 div()
-                                    .text_sm()
-                                    .text_color(if is_note_empty {
-                                        cx.theme().muted_foreground
-                                    } else {
-                                        cx.theme().foreground
-                                    })
-                                    .child(i18n.copy_note_button),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .id(("note-delete", note_id))
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .hover(|this| this.bg(cx.theme().secondary.opacity(0.6)))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.delete_markdown_note_by_id(note_id, cx);
-                                this.close_context_menu(cx);
-                            }))
+                                    .id(("note-copy", note_id))
+                                    .px_1()
+                                    .py_0()
+                                    .rounded_md()
+                                    .cursor_pointer()
+                                    .hover(|this| this.bg(cx.theme().secondary))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if !is_note_empty {
+                                            let _ = super::copy_to_clipboard(&note_markdown);
+                                        }
+                                        this.close_context_menu(cx);
+                                    }))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(if is_note_empty {
+                                                cx.theme().muted_foreground
+                                            } else {
+                                                cx.theme().foreground
+                                            })
+                                            .child(i18n.copy_note_button),
+                                    ),
+                            )
+                            .child(div().h(px(16.)).w_px().bg(cx.theme().border))
                             .child(
                                 div()
-                                    .text_sm()
-                                    .text_color(cx.theme().foreground)
-                                    .child(i18n.delete_note_button),
+                                    .id(("note-delete", note_id))
+                                    .px_1()
+                                    .py_0()
+                                    .rounded_md()
+                                    .cursor_pointer()
+                                    .hover(|this| this.bg(cx.theme().secondary))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.delete_markdown_note_by_id(note_id, cx);
+                                        this.close_context_menu(cx);
+                                    }))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().foreground)
+                                            .child(i18n.delete_note_button),
+                                    ),
                             ),
                     )
                     .into_any_element(),
@@ -1524,11 +1565,15 @@ impl PdfViewer {
                 .absolute()
                 .left(px(x))
                 .top(px(y))
-                .w(px(220.))
-                .v_flex()
-                .gap_1()
-                .popover_style(cx)
-                .p_1()
+                .h(px(38.))
+                .rounded_lg()
+                .border_1()
+                .border_color(cx.theme().border.opacity(0.88))
+                .bg(cx.theme().secondary.opacity(0.94))
+                .shadow_md()
+                .px_1()
+                .flex()
+                .items_center()
                 .on_mouse_down(
                     gpui::MouseButton::Left,
                     cx.listener(|_, _: &gpui::MouseDownEvent, _, cx| {
@@ -1538,52 +1583,63 @@ impl PdfViewer {
                         cx.stop_propagation();
                     }),
                 )
-                .when(has_text_selection, |this| {
-                    this.child(
-                        div()
-                            .id("copy-text")
-                            .px_2()
-                            .py_1()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .hover(|this| this.bg(cx.theme().secondary.opacity(0.6)))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                crate::debug_log!("[context_menu] copy button clicked");
-                                this.copy_selected_text();
-                                this.close_context_menu(cx);
-                            }))
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(cx.theme().foreground)
-                                    .child(i18n.copy_button),
-                            ),
-                    )
-                })
                 .child(
                     div()
-                        .id("markdown-note-add")
-                        .px_2()
-                        .py_1()
-                        .rounded_md()
-                        .cursor_pointer()
-                        .hover(|this| this.bg(cx.theme().secondary.opacity(0.6)))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            let Some(anchor) = note_anchor else {
-                                return;
-                            };
-                            this.close_context_menu(cx);
-                            this.open_markdown_note_editor_for_new(anchor, window, cx);
-                        }))
+                        .w_full()
+                        .h_full()
+                        .h_flex()
+                        .items_center()
+                        .gap_1()
+                        .when(has_text_selection, |this| {
+                            this.child(
+                                div()
+                                    .id("copy-text")
+                                    .px_1()
+                                    .py_0()
+                                    .rounded_md()
+                                    .cursor_pointer()
+                                    .hover(|this| this.bg(cx.theme().secondary))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        crate::debug_log!("[context_menu] copy button clicked");
+                                        this.copy_selected_text();
+                                        this.close_context_menu(cx);
+                                    }))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().foreground)
+                                            .child(i18n.copy_button),
+                                    ),
+                            )
+                        })
+                        .when(has_text_selection, |this| {
+                            this.child(div().h(px(16.)).w_px().bg(cx.theme().border))
+                        })
                         .child(
                             div()
-                                .text_sm()
-                                .text_color(if note_anchor.is_none() {
-                                    cx.theme().muted_foreground
-                                } else {
-                                    cx.theme().foreground
-                                })
-                                .child(i18n.add_note_here_button),
+                                .id("markdown-note-add")
+                                .px_1()
+                                .py_0()
+                                .rounded_md()
+                                .cursor_pointer()
+                                .hover(|this| this.bg(cx.theme().secondary))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    let Some(anchor) = note_anchor else {
+                                        return;
+                                    };
+                                    this.close_context_menu(cx);
+                                    this.open_markdown_note_editor_for_new(anchor, window, cx);
+                                }))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(if note_anchor.is_none() {
+                                            cx.theme().muted_foreground
+                                        } else {
+                                            cx.theme().foreground
+                                        })
+                                        .child(i18n.add_note_here_button),
+                                ),
                         ),
                 )
                 .into_any_element(),
