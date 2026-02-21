@@ -1,4 +1,213 @@
 impl PdfViewer {
+    pub(super) fn set_text_selection_markup_color(
+        &mut self,
+        color: TextMarkupColor,
+        cx: &mut Context<Self>,
+    ) {
+        if self.text_selection_markup_color != color {
+            self.text_selection_markup_color = color;
+            cx.notify();
+        }
+    }
+
+    fn next_text_markup_id(&self) -> u64 {
+        let mut candidate = Self::now_unix_millis().saturating_mul(1000);
+        while self.text_markups.iter().any(|markup| markup.id == candidate) {
+            candidate = candidate.saturating_add(1);
+        }
+        candidate
+    }
+
+    fn clear_text_selection_hover_menu_state(&mut self) -> bool {
+        let had_state = self.text_selection_hover_menu_open
+            || self.text_selection_hover_menu_position.is_some()
+            || self.text_selection_hover_menu_anchor.is_some();
+        if had_state {
+            self.text_selection_hover_menu_open = false;
+            self.text_selection_hover_menu_position = None;
+            self.text_selection_hover_menu_anchor = None;
+        }
+        had_state
+    }
+
+    pub(super) fn close_text_selection_hover_menu(&mut self, cx: &mut Context<Self>) {
+        if self.clear_text_selection_hover_menu_state() {
+            cx.notify();
+        }
+    }
+
+    pub(super) fn open_text_selection_hover_menu(
+        &mut self,
+        position: Point<Pixels>,
+        anchor: Option<MarkdownNoteAnchor>,
+        cx: &mut Context<Self>,
+    ) {
+        self.context_menu_open = false;
+        self.context_menu_position = None;
+        self.context_menu_tab_id = None;
+        self.context_menu_note_anchor = None;
+        self.context_menu_note_id = None;
+        self.text_selection_hover_menu_open = true;
+        self.text_selection_hover_menu_position = Some(position);
+        self.text_selection_hover_menu_anchor = anchor;
+        cx.notify();
+    }
+
+    fn active_text_selection_snapshot(
+        &self,
+    ) -> Option<(usize, String, f32, f32, Vec<(f32, f32, f32, f32)>)> {
+        let tab = self.active_tab()?;
+        let manager = tab.text_selection_manager.borrow();
+        let selection = manager.current_selection()?;
+        let cache = manager.get_page_cache(selection.page_index)?;
+        let rects = cache.get_selection_bounds(&selection);
+        if rects.is_empty() {
+            return None;
+        }
+        let selected_text = cache.get_text(&selection).trim().to_string();
+        if selected_text.is_empty() {
+            return None;
+        }
+
+        Some((
+            selection.page_index,
+            selected_text,
+            cache.page_width,
+            cache.page_height,
+            rects,
+        ))
+    }
+
+    fn selection_anchor_from_rects(
+        page_index: usize,
+        page_width_pt: f32,
+        page_height_pt: f32,
+        rects: &[(f32, f32, f32, f32)],
+    ) -> Option<MarkdownNoteAnchor> {
+        if page_width_pt <= 0.0 || page_height_pt <= 0.0 || rects.is_empty() {
+            return None;
+        }
+
+        let mut min_left = f32::INFINITY;
+        let mut max_right = f32::NEG_INFINITY;
+        let mut min_bottom = f32::INFINITY;
+        let mut max_top = f32::NEG_INFINITY;
+
+        for (left, top, right, bottom) in rects.iter().copied() {
+            min_left = min_left.min(left);
+            max_right = max_right.max(right);
+            min_bottom = min_bottom.min(bottom);
+            max_top = max_top.max(top);
+        }
+
+        if !min_left.is_finite()
+            || !max_right.is_finite()
+            || !min_bottom.is_finite()
+            || !max_top.is_finite()
+        {
+            return None;
+        }
+
+        let center_x = ((min_left + max_right) * 0.5).clamp(0.0, page_width_pt);
+        let center_y = ((min_bottom + max_top) * 0.5).clamp(0.0, page_height_pt);
+        Some(MarkdownNoteAnchor {
+            page_index,
+            x_ratio: (center_x / page_width_pt).clamp(0.0, 1.0),
+            y_ratio: (center_y / page_height_pt).clamp(0.0, 1.0),
+        })
+    }
+
+    pub(super) fn active_text_selection_anchor(&self) -> Option<MarkdownNoteAnchor> {
+        let (page_index, _, page_width_pt, page_height_pt, rects) =
+            self.active_text_selection_snapshot()?;
+        Self::selection_anchor_from_rects(page_index, page_width_pt, page_height_pt, &rects)
+    }
+
+    pub(super) fn add_text_markup_from_selection(
+        &mut self,
+        kind: TextMarkupKind,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(path) = self.active_tab_path().cloned() else {
+            return false;
+        };
+
+        let Some((page_index, selected_text, page_width_pt, page_height_pt, rects)) =
+            self.active_text_selection_snapshot()
+        else {
+            return false;
+        };
+
+        let normalized_rects = rects
+            .into_iter()
+            .filter_map(|(left, top, right, bottom)| {
+                if page_width_pt <= 0.0 || page_height_pt <= 0.0 {
+                    return None;
+                }
+                let left_ratio = (left / page_width_pt).clamp(0.0, 1.0);
+                let right_ratio = (right / page_width_pt).clamp(0.0, 1.0);
+                let top_ratio = (top / page_height_pt).clamp(0.0, 1.0);
+                let bottom_ratio = (bottom / page_height_pt).clamp(0.0, 1.0);
+                let (left_ratio, right_ratio) = if left_ratio <= right_ratio {
+                    (left_ratio, right_ratio)
+                } else {
+                    (right_ratio, left_ratio)
+                };
+                let (bottom_ratio, top_ratio) = if bottom_ratio <= top_ratio {
+                    (bottom_ratio, top_ratio)
+                } else {
+                    (top_ratio, bottom_ratio)
+                };
+                Some(TextMarkupRect {
+                    left_ratio,
+                    top_ratio,
+                    right_ratio,
+                    bottom_ratio,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        if normalized_rects.is_empty() {
+            return false;
+        }
+
+        let now = Self::now_unix_secs();
+        self.text_markups.insert(
+            0,
+            TextMarkupEntry {
+                id: self.next_text_markup_id(),
+                path,
+                page_index,
+                kind,
+                color: self.text_selection_markup_color,
+                selected_text,
+                rects: normalized_rects,
+                created_at_unix_secs: now,
+                updated_at_unix_secs: now,
+            },
+        );
+        self.text_markups.sort_by(|a, b| {
+            b.updated_at_unix_secs
+                .cmp(&a.updated_at_unix_secs)
+                .then_with(|| b.id.cmp(&a.id))
+        });
+        self.persist_text_markups();
+        self.clear_text_selection(cx);
+        true
+    }
+
+    pub(super) fn active_tab_text_markups_for_page(&self, page_index: usize) -> Vec<TextMarkupEntry> {
+        let Some(path) = self.active_tab_path() else {
+            return Vec::new();
+        };
+
+        self.text_markups
+            .iter()
+            .filter(|markup| markup.path == *path && markup.page_index == page_index)
+            .cloned()
+            .collect::<Vec<_>>()
+    }
+
     pub fn copy_selected_text(&self) {
         if let Some(tab) = self.active_tab() {
             let manager = tab.text_selection_manager.borrow();
@@ -30,6 +239,7 @@ impl PdfViewer {
     }
 
     pub fn clear_text_selection(&mut self, cx: &mut Context<Self>) {
+        self.clear_text_selection_hover_menu_state();
         if let Some(tab) = self.active_tab_mut() {
             tab.text_selection_manager.borrow_mut().clear_selection();
         }
@@ -45,6 +255,7 @@ impl PdfViewer {
         if self.tab_bar.get_tab_index_by_id(tab_id).is_none() {
             return;
         }
+        self.clear_text_selection_hover_menu_state();
 
         #[cfg(target_os = "macos")]
         {
@@ -86,6 +297,7 @@ impl PdfViewer {
             self.context_menu_tab_id = Some(tab_id);
             self.context_menu_note_anchor = None;
             self.context_menu_note_id = None;
+            self.clear_text_selection_hover_menu_state();
             cx.notify();
         }
     }

@@ -468,6 +468,27 @@ impl PdfViewer {
         self.open_markdown_note_editor_window(String::new(), false, cx);
     }
 
+    pub(super) fn open_markdown_note_editor_for_text_selection(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let anchor = self
+            .text_selection_hover_menu_anchor
+            .or_else(|| self.active_text_selection_anchor());
+        let Some(anchor) = anchor else {
+            return false;
+        };
+
+        self.close_markdown_note_editor(cx);
+        self.clear_text_selection_hover_menu_state();
+        self.note_editor_anchor = Some(anchor);
+        self.note_editor_edit_note_id = None;
+        self.open_markdown_note_editor_window(String::new(), false, cx);
+        cx.notify();
+        true
+    }
+
     fn open_markdown_note_editor_for_edit(
         &mut self,
         note_id: u64,
@@ -657,6 +678,7 @@ impl PdfViewer {
         cx: &mut Context<Self>,
     ) {
         let _ = self.set_markdown_note_hover_id(note_id);
+        self.clear_text_selection_hover_menu_state();
         self.context_menu_open = true;
         self.context_menu_position = Some(position);
         self.context_menu_tab_id = None;

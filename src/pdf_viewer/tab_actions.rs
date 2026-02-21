@@ -22,6 +22,7 @@ impl PdfViewer {
         }
 
         let _ = self.set_markdown_note_hover_id(None);
+        self.clear_text_selection_hover_menu_state();
 
         for tab_id in &tab_ids {
             self.save_tab_position_if_needed(*tab_id);
@@ -80,6 +81,7 @@ impl PdfViewer {
     fn switch_to_tab(&mut self, tab_id: usize, cx: &mut Context<Self>) {
         if self.tab_bar.switch_to_tab(tab_id) {
             let _ = self.set_markdown_note_hover_id(None);
+            self.clear_text_selection_hover_menu_state();
             self.persist_open_tabs();
             self.scroll_tab_bar_to_active_tab();
             if self.load_tab_if_needed(tab_id, cx) {

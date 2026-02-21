@@ -1,7 +1,7 @@
-use super::PdfViewer;
+use super::{PdfViewer, TextMarkupColor, TextMarkupKind};
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
-use gpui_component::button::Button;
+use gpui_component::button::*;
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 use gpui_component::text::TextView;
 use gpui_component::*;
@@ -9,6 +9,7 @@ use std::rc::Rc;
 
 const MARKDOWN_NOTE_BUBBLE_OFFSET_X: f32 = 14.0;
 const MARKDOWN_NOTE_BUBBLE_PADDING: f32 = 8.0;
+const TEXT_SELECTION_HOVER_MENU_OFFSET_Y: f32 = 44.0;
 
 #[derive(Clone)]
 struct MarkdownNoteMarker {
@@ -20,7 +21,26 @@ struct MarkdownNoteMarker {
     bubble_top: f32,
 }
 
+#[derive(Clone)]
+struct TextMarkupScreenRect {
+    kind: TextMarkupKind,
+    color: TextMarkupColor,
+    left: f32,
+    top: f32,
+    right: f32,
+    bottom: f32,
+}
+
 impl PdfViewer {
+    fn text_markup_color_rgb(color: TextMarkupColor) -> gpui::Rgba {
+        match color {
+            TextMarkupColor::Yellow => gpui::rgb(0xF2C94C),
+            TextMarkupColor::Green => gpui::rgb(0x34D399),
+            TextMarkupColor::Blue => gpui::rgb(0x60A5FA),
+            TextMarkupColor::Pink => gpui::rgb(0xF472B6),
+        }
+    }
+
     pub(super) fn render_display_panel(
         &self,
         page_count: usize,
@@ -195,6 +215,14 @@ impl PdfViewer {
         let i18n = self.i18n();
         let selection_rects =
             self.get_selection_rects_for_page(page_index, page_width, page_height, scale);
+        let text_markup_rects = self.text_markup_rects_for_page(
+            page_index,
+            page.width_pt,
+            page.height_pt,
+            page_width,
+            page_height,
+            scale,
+        );
         let markdown_note_markers =
             self.markdown_note_markers_for_page(page_index, page_width, page_height);
 
@@ -263,6 +291,9 @@ impl PdfViewer {
                                         if this.context_menu_open {
                                             this.close_context_menu(cx);
                                             return;
+                                        }
+                                        if this.text_selection_hover_menu_open {
+                                            this.close_text_selection_hover_menu(cx);
                                         }
 
                                         let (local_x, local_y) = this.calculate_page_coordinates(
@@ -362,11 +393,42 @@ impl PdfViewer {
                             ))
                             .on_mouse_up(
                                 gpui::MouseButton::Left,
-                                cx.listener(move |this, _: &gpui::MouseUpEvent, _window, cx| {
-                                    this.handle_text_mouse_up(cx);
-                                }),
+                                cx.listener(
+                                    move |this, event: &gpui::MouseUpEvent, _window, cx| {
+                                        this.handle_text_mouse_up(page_index, event.position, cx);
+                                    },
+                                ),
                             ),
                     )
+                    .children(text_markup_rects.into_iter().map(|rect| {
+                        let width = (rect.right - rect.left).max(1.0);
+                        let height = (rect.bottom - rect.top).max(1.0);
+                        let color = Self::text_markup_color_rgb(rect.color);
+                        match rect.kind {
+                            TextMarkupKind::Highlight => div()
+                                .absolute()
+                                .left(px(rect.left))
+                                .top(px(rect.top))
+                                .w(px(width))
+                                .h(px(height))
+                                .bg(color)
+                                .opacity(0.36)
+                                .into_any_element(),
+                            TextMarkupKind::Underline => {
+                                let line_height = (height * 0.14).clamp(1.5, 3.0);
+                                let line_top = (rect.bottom - line_height).max(rect.top);
+                                div()
+                                    .absolute()
+                                    .left(px(rect.left))
+                                    .top(px(line_top))
+                                    .w(px(width))
+                                    .h(px(line_height))
+                                    .bg(color)
+                                    .opacity(0.92)
+                                    .into_any_element()
+                            }
+                        }
+                    }))
                     // Render selection highlights (rendered after overlay, so appear on top)
                     .children(
                         selection_rects
@@ -708,6 +770,70 @@ impl PdfViewer {
             .collect()
     }
 
+    fn text_markup_rects_for_page(
+        &self,
+        page_index: usize,
+        page_width_pt: f32,
+        page_height_pt: f32,
+        page_width_screen: f32,
+        page_height_screen: f32,
+        scale: f32,
+    ) -> Vec<TextMarkupScreenRect> {
+        if page_width_pt <= 0.0 || page_height_pt <= 0.0 {
+            return Vec::new();
+        }
+
+        let markups = self.active_tab_text_markups_for_page(page_index);
+        if markups.is_empty() {
+            return Vec::new();
+        }
+
+        let container_aspect = page_width_screen / page_height_screen;
+        let content_aspect = page_width_pt / page_height_pt;
+        let (final_width, final_height) = if content_aspect > container_aspect {
+            (page_width_screen, page_height_pt * scale)
+        } else {
+            (page_width_pt * scale, page_height_screen)
+        };
+        let x_offset = (page_width_screen - final_width) / 2.0;
+        let y_offset = (page_height_screen - final_height) / 2.0;
+
+        markups
+            .into_iter()
+            .flat_map(|markup| {
+                markup.rects.into_iter().filter_map(move |rect| {
+                    let left_pt = rect.left_ratio.clamp(0.0, 1.0) * page_width_pt;
+                    let right_pt = rect.right_ratio.clamp(0.0, 1.0) * page_width_pt;
+                    let top_pt = rect.top_ratio.clamp(0.0, 1.0) * page_height_pt;
+                    let bottom_pt = rect.bottom_ratio.clamp(0.0, 1.0) * page_height_pt;
+
+                    let screen_left = left_pt * scale + x_offset;
+                    let screen_right = right_pt * scale + x_offset;
+                    let screen_top = (page_height_pt - top_pt) * scale + y_offset;
+                    let screen_bottom = (page_height_pt - bottom_pt) * scale + y_offset;
+
+                    let left = screen_left.min(screen_right);
+                    let right = screen_left.max(screen_right);
+                    let top = screen_top.min(screen_bottom);
+                    let bottom = screen_top.max(screen_bottom);
+
+                    if (right - left) <= 0.0 || (bottom - top) <= 0.0 {
+                        return None;
+                    }
+
+                    Some(TextMarkupScreenRect {
+                        kind: markup.kind,
+                        color: markup.color,
+                        left,
+                        top,
+                        right,
+                        bottom,
+                    })
+                })
+            })
+            .collect::<Vec<_>>()
+    }
+
     /// Calculate local page coordinates from window mouse position
     ///
     /// Returns (local_x, local_y) relative to the page container (including margins due to ObjectFit::Contain).
@@ -771,6 +897,7 @@ impl PdfViewer {
         cx: &mut Context<Self>,
     ) {
         let _ = self.set_markdown_note_hover_id(None);
+        self.clear_text_selection_hover_menu_state();
 
         // Ensure text is loaded before handling mouse down
         self.ensure_page_text_loaded(page_index);
@@ -910,11 +1037,37 @@ impl PdfViewer {
         }
     }
 
-    fn handle_text_mouse_up(&mut self, cx: &mut Context<Self>) {
+    fn handle_text_mouse_up(
+        &mut self,
+        page_index: usize,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let mut was_selecting = false;
         if let Some(manager_ref) = self.active_tab_text_selection_manager() {
-            manager_ref.borrow_mut().end_selection();
+            let mut manager = manager_ref.borrow_mut();
+            was_selecting = manager.is_selecting();
+            if was_selecting {
+                manager.end_selection();
+            }
         }
-        cx.notify();
+        if !was_selecting {
+            return;
+        }
+
+        if self.has_text_selection() {
+            let anchor = self
+                .active_text_selection_anchor()
+                .filter(|anchor| anchor.page_index == page_index);
+            let x: f32 = position.x.into();
+            let y: f32 = position.y.into();
+            let menu_y = (y - TEXT_SELECTION_HOVER_MENU_OFFSET_Y)
+                .max(super::TITLE_BAR_HEIGHT + super::TAB_BAR_HEIGHT + 8.0);
+            self.open_text_selection_hover_menu(point(px(x), px(menu_y)), anchor, cx);
+        } else {
+            self.clear_text_selection_hover_menu_state();
+            cx.notify();
+        }
     }
 
     fn ensure_page_text_loaded(&self, page_index: usize) {
@@ -944,6 +1097,207 @@ impl PdfViewer {
                 }
             }
         }
+    }
+
+    pub(super) fn render_text_selection_hover_menu(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if !self.text_selection_hover_menu_open || !self.has_text_selection() {
+            return None;
+        }
+
+        let i18n = self.i18n();
+        let position = self.text_selection_hover_menu_position.unwrap_or_default();
+        let x: f32 = position.x.into();
+        let y: f32 = position.y.into();
+        let selected_color = self.text_selection_markup_color;
+
+        Some(
+            div()
+                .id("text-selection-hover-menu")
+                .absolute()
+                .left(px(x))
+                .top(px(y))
+                .h(px(38.))
+                .min_w(px(362.))
+                .rounded_lg()
+                .border_1()
+                .border_color(cx.theme().border.opacity(0.88))
+                .bg(cx.theme().secondary.opacity(0.94))
+                .shadow_md()
+                .px_1()
+                .flex()
+                .items_center()
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(|_, _: &gpui::MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                    }),
+                )
+                .on_mouse_up(
+                    gpui::MouseButton::Left,
+                    cx.listener(|_, _: &gpui::MouseUpEvent, _, cx| {
+                        cx.stop_propagation();
+                    }),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .h_full()
+                        .h_flex()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            div()
+                                .h_full()
+                                .px_1()
+                                .h_flex()
+                                .items_center()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .id("selection-color-yellow")
+                                        .w(px(14.))
+                                        .h(px(14.))
+                                        .rounded_full()
+                                        .border_1()
+                                        .border_color(
+                                            if selected_color == TextMarkupColor::Yellow {
+                                                cx.theme().foreground
+                                            } else {
+                                                cx.theme().border.opacity(0.7)
+                                            },
+                                        )
+                                        .bg(Self::text_markup_color_rgb(TextMarkupColor::Yellow))
+                                        .cursor_pointer()
+                                        .on_mouse_down(
+                                            gpui::MouseButton::Left,
+                                            cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
+                                                this.set_text_selection_markup_color(
+                                                    TextMarkupColor::Yellow,
+                                                    cx,
+                                                );
+                                                cx.stop_propagation();
+                                            }),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("selection-color-green")
+                                        .w(px(14.))
+                                        .h(px(14.))
+                                        .rounded_full()
+                                        .border_1()
+                                        .border_color(if selected_color == TextMarkupColor::Green {
+                                            cx.theme().foreground
+                                        } else {
+                                            cx.theme().border.opacity(0.7)
+                                        })
+                                        .bg(Self::text_markup_color_rgb(TextMarkupColor::Green))
+                                        .cursor_pointer()
+                                        .on_mouse_down(
+                                            gpui::MouseButton::Left,
+                                            cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
+                                                this.set_text_selection_markup_color(
+                                                    TextMarkupColor::Green,
+                                                    cx,
+                                                );
+                                                cx.stop_propagation();
+                                            }),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("selection-color-blue")
+                                        .w(px(14.))
+                                        .h(px(14.))
+                                        .rounded_full()
+                                        .border_1()
+                                        .border_color(if selected_color == TextMarkupColor::Blue {
+                                            cx.theme().foreground
+                                        } else {
+                                            cx.theme().border.opacity(0.7)
+                                        })
+                                        .bg(Self::text_markup_color_rgb(TextMarkupColor::Blue))
+                                        .cursor_pointer()
+                                        .on_mouse_down(
+                                            gpui::MouseButton::Left,
+                                            cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
+                                                this.set_text_selection_markup_color(
+                                                    TextMarkupColor::Blue,
+                                                    cx,
+                                                );
+                                                cx.stop_propagation();
+                                            }),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .id("selection-color-pink")
+                                        .w(px(14.))
+                                        .h(px(14.))
+                                        .rounded_full()
+                                        .border_1()
+                                        .border_color(if selected_color == TextMarkupColor::Pink {
+                                            cx.theme().foreground
+                                        } else {
+                                            cx.theme().border.opacity(0.7)
+                                        })
+                                        .bg(Self::text_markup_color_rgb(TextMarkupColor::Pink))
+                                        .cursor_pointer()
+                                        .on_mouse_down(
+                                            gpui::MouseButton::Left,
+                                            cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
+                                                this.set_text_selection_markup_color(
+                                                    TextMarkupColor::Pink,
+                                                    cx,
+                                                );
+                                                cx.stop_propagation();
+                                            }),
+                                        ),
+                                ),
+                        )
+                        .child(div().h(px(16.)).w_px().bg(cx.theme().border.opacity(0.7)))
+                        .child(
+                            Button::new("selection-highlight")
+                                .ghost()
+                                .xsmall()
+                                .label(i18n.text_markup_highlight_button)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let _ = this.add_text_markup_from_selection(
+                                        TextMarkupKind::Highlight,
+                                        cx,
+                                    );
+                                })),
+                        )
+                        .child(div().h(px(16.)).w_px().bg(cx.theme().border.opacity(0.7)))
+                        .child(
+                            Button::new("selection-underline")
+                                .ghost()
+                                .xsmall()
+                                .label(i18n.text_markup_underline_button)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let _ = this.add_text_markup_from_selection(
+                                        TextMarkupKind::Underline,
+                                        cx,
+                                    );
+                                })),
+                        )
+                        .child(div().h(px(16.)).w_px().bg(cx.theme().border.opacity(0.7)))
+                        .child(
+                            Button::new("selection-note")
+                                .ghost()
+                                .xsmall()
+                                .label(i18n.text_markup_add_note_button)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    let _ = this
+                                        .open_markdown_note_editor_for_text_selection(window, cx);
+                                })),
+                        ),
+                )
+                .into_any_element(),
+        )
     }
 
     pub(super) fn render_context_menu(&self, cx: &mut Context<Self>) -> Option<AnyElement> {

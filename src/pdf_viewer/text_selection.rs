@@ -362,6 +362,10 @@ impl TextSelectionManager {
         if text.is_empty() { None } else { Some(text) }
     }
 
+    pub fn current_selection(&self) -> Option<TextSelection> {
+        self.current_selection.clone()
+    }
+
     pub fn get_selection_rects(&self, page_index: usize) -> Option<Vec<(f32, f32, f32, f32)>> {
         let selection = self.current_selection.as_ref()?;
         if selection.page_index != page_index {

@@ -38,12 +38,13 @@ impl PdfViewer {
         Option<sled::Tree>,
         Option<sled::Tree>,
         Option<sled::Tree>,
+        Option<sled::Tree>,
     ) {
         let db_path = Self::local_state_db_path();
         if let Some(parent) = db_path.parent() {
             if std::fs::create_dir_all(parent).is_err() {
                 crate::debug_log!("[store] create dir failed: {}", parent.to_string_lossy());
-                return (None, None, None, None, None, None, None, None);
+                return (None, None, None, None, None, None, None, None, None);
             }
         }
 
@@ -55,7 +56,7 @@ impl PdfViewer {
                     db_path.to_string_lossy(),
                     err
                 );
-                return (None, None, None, None, None, None, None, None);
+                return (None, None, None, None, None, None, None, None, None);
             }
         };
 
@@ -127,9 +128,16 @@ impl PdfViewer {
                 None
             }
         };
+        let text_markups_store = match db.open_tree(TEXT_MARKUPS_TREE) {
+            Ok(tree) => Some(tree),
+            Err(err) => {
+                crate::debug_log!("[store] open tree failed: {} | {}", TEXT_MARKUPS_TREE, err);
+                None
+            }
+        };
 
         crate::debug_log!(
-            "[store] init recent={} positions={} window_size={} open_tabs={} titlebar_preferences={} theme_preferences={} bookmarks={} notes={} path={}",
+            "[store] init recent={} positions={} window_size={} open_tabs={} titlebar_preferences={} theme_preferences={} bookmarks={} notes={} text_markups={} path={}",
             recent_store.is_some(),
             position_store.is_some(),
             window_size_store.is_some(),
@@ -138,6 +146,7 @@ impl PdfViewer {
             theme_preferences_store.is_some(),
             bookmarks_store.is_some(),
             notes_store.is_some(),
+            text_markups_store.is_some(),
             db_path.to_string_lossy()
         );
 
@@ -150,6 +159,7 @@ impl PdfViewer {
             theme_preferences_store,
             bookmarks_store,
             notes_store,
+            text_markups_store,
         )
     }
 
@@ -260,6 +270,33 @@ impl PdfViewer {
         indexed_notes
             .into_iter()
             .map(|(_, note)| note)
+            .collect::<Vec<_>>()
+    }
+
+    fn load_text_markups_from_store(store: &sled::Tree) -> Vec<TextMarkupEntry> {
+        let mut indexed_markups = Vec::new();
+        for entry in store.iter() {
+            let (key, value) = match entry {
+                Ok(entry) => entry,
+                Err(_) => continue,
+            };
+            if key.len() != 4 {
+                continue;
+            }
+            let markup_index = u32::from_be_bytes([key[0], key[1], key[2], key[3]]) as usize;
+            let markup = match serde_json::from_slice::<TextMarkupEntry>(&value) {
+                Ok(markup) => markup,
+                Err(_) => continue,
+            };
+            if markup.rects.is_empty() {
+                continue;
+            }
+            indexed_markups.push((markup_index, markup));
+        }
+        indexed_markups.sort_by_key(|(index, _)| *index);
+        indexed_markups
+            .into_iter()
+            .map(|(_, markup)| markup)
             .collect::<Vec<_>>()
     }
 
@@ -507,6 +544,28 @@ impl PdfViewer {
         for (index, note) in self.markdown_notes.iter().enumerate() {
             let key = (index as u32).to_be_bytes();
             let Ok(value) = serde_json::to_vec(note) else {
+                continue;
+            };
+            if store.insert(key, value).is_err() {
+                return;
+            }
+        }
+
+        let _ = store.flush();
+    }
+
+    fn persist_text_markups(&self) {
+        let Some(store) = self.text_markups_store.as_ref() else {
+            return;
+        };
+
+        if store.clear().is_err() {
+            return;
+        }
+
+        for (index, markup) in self.text_markups.iter().enumerate() {
+            let key = (index as u32).to_be_bytes();
+            let Ok(value) = serde_json::to_vec(markup) else {
                 continue;
             };
             if store.insert(key, value).is_err() {

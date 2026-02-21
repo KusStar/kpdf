@@ -23,6 +23,7 @@ pub(super) const TITLEBAR_PREFERENCES_TREE: &str = "titlebar_preferences";
 pub(super) const THEME_PREFERENCES_TREE: &str = "theme_preferences";
 pub(super) const BOOKMARKS_TREE: &str = "bookmarks";
 pub(super) const NOTES_TREE: &str = "notes";
+pub(super) const TEXT_MARKUPS_TREE: &str = "text_markups";
 pub(super) const WINDOW_SIZE_KEY_WIDTH: &str = "width";
 pub(super) const WINDOW_SIZE_KEY_HEIGHT: &str = "height";
 pub(super) const OPEN_TABS_KEY_ACTIVE_INDEX: &str = "active_index";

@@ -44,6 +44,45 @@ pub(super) struct MarkdownNoteEntry {
     pub(super) updated_at_unix_secs: u64,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum TextMarkupKind {
+    Highlight,
+    Underline,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum TextMarkupColor {
+    #[default]
+    Yellow,
+    Green,
+    Blue,
+    Pink,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct TextMarkupRect {
+    pub(super) left_ratio: f32,
+    pub(super) top_ratio: f32,
+    pub(super) right_ratio: f32,
+    pub(super) bottom_ratio: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct TextMarkupEntry {
+    pub(super) id: u64,
+    pub(super) path: PathBuf,
+    pub(super) page_index: usize,
+    pub(super) kind: TextMarkupKind,
+    #[serde(default)]
+    pub(super) color: TextMarkupColor,
+    pub(super) selected_text: String,
+    pub(super) rects: Vec<TextMarkupRect>,
+    pub(super) created_at_unix_secs: u64,
+    pub(super) updated_at_unix_secs: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct MarkdownNoteAnchor {
     pub(super) page_index: usize,

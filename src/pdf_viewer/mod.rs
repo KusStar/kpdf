@@ -59,6 +59,7 @@ pub struct PdfViewer {
     theme_preferences_store: Option<sled::Tree>,
     bookmarks_store: Option<sled::Tree>,
     notes_store: Option<sled::Tree>,
+    text_markups_store: Option<sled::Tree>,
     last_window_size: Option<(f32, f32)>,
     theme_mode: ThemeMode,
     preferred_light_theme_name: Option<String>,
@@ -73,6 +74,7 @@ pub struct PdfViewer {
     recent_popup_anchor: Option<RecentPopupAnchor>,
     bookmarks: Vec<BookmarkEntry>,
     markdown_notes: Vec<MarkdownNoteEntry>,
+    text_markups: Vec<TextMarkupEntry>,
     bookmark_popup_open: bool,
     bookmark_scope: BookmarkScope,
     bookmark_popup_trigger_hovered: bool,
@@ -105,6 +107,10 @@ pub struct PdfViewer {
     context_menu_tab_id: Option<usize>,
     context_menu_note_anchor: Option<MarkdownNoteAnchor>,
     context_menu_note_id: Option<u64>,
+    text_selection_hover_menu_open: bool,
+    text_selection_hover_menu_position: Option<Point<Pixels>>,
+    text_selection_hover_menu_anchor: Option<MarkdownNoteAnchor>,
+    text_selection_markup_color: TextMarkupColor,
     hovered_markdown_note_id: Option<u64>,
     hovered_tab_id: Option<usize>,
     // 拖放相关状态
@@ -144,6 +150,7 @@ impl PdfViewer {
             theme_preferences_store,
             bookmarks_store,
             notes_store,
+            text_markups_store,
         ) = Self::open_persistent_stores();
         let recent_files = recent_store
             .as_ref()
@@ -174,6 +181,10 @@ impl PdfViewer {
         let markdown_notes = notes_store
             .as_ref()
             .map(Self::load_markdown_notes_from_store)
+            .unwrap_or_default();
+        let text_markups = text_markups_store
+            .as_ref()
+            .map(Self::load_text_markups_from_store)
             .unwrap_or_default();
         let command_panel_input_state = cx.new(|cx| {
             InputState::new(window, cx).placeholder(I18n::new(language).command_panel_search_hint)
@@ -256,6 +267,7 @@ impl PdfViewer {
             theme_preferences_store,
             bookmarks_store,
             notes_store,
+            text_markups_store,
             last_window_size: None,
             theme_mode,
             preferred_light_theme_name,
@@ -270,6 +282,7 @@ impl PdfViewer {
             recent_popup_anchor: None,
             bookmarks,
             markdown_notes,
+            text_markups,
             bookmark_popup_open: false,
             bookmark_scope: BookmarkScope::CurrentPdf,
             bookmark_popup_trigger_hovered: false,
@@ -302,6 +315,10 @@ impl PdfViewer {
             context_menu_tab_id: None,
             context_menu_note_anchor: None,
             context_menu_note_id: None,
+            text_selection_hover_menu_open: false,
+            text_selection_hover_menu_position: None,
+            text_selection_hover_menu_anchor: None,
+            text_selection_markup_color: TextMarkupColor::Yellow,
             hovered_markdown_note_id: None,
             hovered_tab_id: None,
             drag_state: DragState::None,
@@ -466,6 +483,7 @@ impl Render for PdfViewer {
             self.on_display_scroll_offset_changed(cx);
         }
 
+        let text_selection_hover_menu = self.render_text_selection_hover_menu(cx);
         let context_menu = self.render_context_menu(cx);
         let drag_tab_preview = self.render_drag_tab_preview(cx);
         let command_panel = self.render_command_panel(cx);
@@ -512,6 +530,7 @@ impl Render for PdfViewer {
                         MouseButton::Left,
                         cx.listener(|this, _, window, cx| {
                             this.close_context_menu(cx);
+                            this.close_text_selection_hover_menu(cx);
                             this.close_bookmark_popup(cx);
                             window.focus(&this.focus_handle);
                         }),
@@ -709,6 +728,9 @@ impl Render for PdfViewer {
                     )
                     .when(context_menu.is_some(), |this| {
                         this.child(context_menu.unwrap())
+                    })
+                    .when(text_selection_hover_menu.is_some(), |this| {
+                        this.child(text_selection_hover_menu.unwrap())
                     })
                     .when(drag_tab_preview.is_some(), |this| {
                         this.child(drag_tab_preview.unwrap())
