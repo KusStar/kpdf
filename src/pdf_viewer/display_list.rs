@@ -23,6 +23,7 @@ struct MarkdownNoteMarker {
 
 #[derive(Clone)]
 struct TextMarkupScreenRect {
+    id: u64,
     kind: TextMarkupKind,
     color: TextMarkupColor,
     left: f32,
@@ -406,27 +407,72 @@ impl PdfViewer {
                         let width = (rect.right - rect.left).max(1.0);
                         let height = (rect.bottom - rect.top).max(1.0);
                         let color = Self::text_markup_color_rgb(rect.color);
+                        let is_hovered = self.hovered_text_markup_id() == Some(rect.id);
+                        let markup_id = rect.id;
                         match rect.kind {
                             TextMarkupKind::Highlight => div()
+                                .id(("text-markup-highlight", markup_id))
                                 .absolute()
                                 .left(px(rect.left))
                                 .top(px(rect.top))
                                 .w(px(width))
                                 .h(px(height))
                                 .bg(color)
-                                .opacity(0.36)
+                                .opacity(if is_hovered { 0.5 } else { 0.36 })
+                                .cursor_pointer()
+                                .on_mouse_move(cx.listener(move |this, event: &gpui::MouseMoveEvent, _, cx| {
+                                    let mx: f32 = event.position.x.into();
+                                    let my: f32 = event.position.y.into();
+                                    if mx >= rect.left && mx <= rect.right && my >= rect.top && my <= rect.bottom {
+                                        let _ = this.set_text_markup_hover_id(Some(markup_id));
+                                        cx.notify();
+                                    }
+                                }))
+                                .on_mouse_down(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(move |this, _event: &gpui::MouseDownEvent, window, cx| {
+                                        this.open_text_markup_context_menu(markup_id, window, cx);
+                                        cx.stop_propagation();
+                                    }),
+                                )
                                 .into_any_element(),
                             TextMarkupKind::Underline => {
                                 let line_height = (height * 0.14).clamp(1.5, 3.0);
                                 let line_top = (rect.bottom - line_height).max(rect.top);
+                                let relative_line_top = line_top - rect.top;
                                 div()
+                                    .id(("text-markup-underline", markup_id))
                                     .absolute()
                                     .left(px(rect.left))
-                                    .top(px(line_top))
+                                    .top(px(rect.top))
                                     .w(px(width))
-                                    .h(px(line_height))
-                                    .bg(color)
-                                    .opacity(0.92)
+                                    .h(px(height))
+                                    .cursor_pointer()
+                                    .on_mouse_move(cx.listener(move |this, event: &gpui::MouseMoveEvent, _, cx| {
+                                        let mx: f32 = event.position.x.into();
+                                        let my: f32 = event.position.y.into();
+                                        if mx >= rect.left && mx <= rect.right && my >= rect.top && my <= rect.bottom {
+                                            let _ = this.set_text_markup_hover_id(Some(markup_id));
+                                            cx.notify();
+                                        }
+                                    }))
+                                    .on_mouse_down(
+                                        gpui::MouseButton::Left,
+                                        cx.listener(move |this, _event: &gpui::MouseDownEvent, window, cx| {
+                                            this.open_text_markup_context_menu(markup_id, window, cx);
+                                            cx.stop_propagation();
+                                        }),
+                                    )
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .left(px(0.))
+                                            .top(px(relative_line_top))
+                                            .w(px(width))
+                                            .h(px(line_height))
+                                            .bg(color)
+                                            .opacity(if is_hovered { 0.96 } else { 0.92 }),
+                                    )
                                     .into_any_element()
                             }
                         }
@@ -883,6 +929,7 @@ impl PdfViewer {
                     }
 
                     Some(TextMarkupScreenRect {
+                        id: markup.id,
                         kind: markup.kind,
                         color: markup.color,
                         left,
@@ -958,6 +1005,7 @@ impl PdfViewer {
         cx: &mut Context<Self>,
     ) {
         let _ = self.set_markdown_note_hover_id(None);
+        let _ = self.set_text_markup_hover_id(None);
         self.clear_text_selection_hover_menu_state();
 
         // Ensure text is loaded before handling mouse down
@@ -1611,6 +1659,88 @@ impl PdfViewer {
                                             .text_xs()
                                             .text_color(cx.theme().foreground)
                                             .child(i18n.delete_note_button),
+                                    ),
+                            ),
+                    )
+                    .into_any_element(),
+            );
+        }
+
+        if let Some(markup_id) = self.context_menu_text_markup_id {
+            let markup = self.text_markup_by_id(markup_id);
+            let selected_text = markup.as_ref().map(|m| m.selected_text.clone()).unwrap_or_default();
+            let is_text_empty = selected_text.trim().is_empty();
+            return Some(
+                div()
+                    .id(("context-menu-markup", markup_id))
+                    .absolute()
+                    .left(px(x))
+                    .top(px(y))
+                    .h(px(38.))
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(cx.theme().border.opacity(0.88))
+                    .bg(cx.theme().secondary.opacity(0.94))
+                    .shadow_md()
+                    .px_1()
+                    .flex()
+                    .items_center()
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|_, _: &gpui::MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                        }),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .h_full()
+                            .h_flex()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .id(("markup-copy", markup_id))
+                                    .px_1()
+                                    .py_0()
+                                    .rounded_md()
+                                    .cursor_pointer()
+                                    .hover(|this| this.bg(cx.theme().secondary))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        if !is_text_empty {
+                                            let _ = super::copy_to_clipboard(&selected_text);
+                                        }
+                                        this.close_context_menu(cx);
+                                    }))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(if is_text_empty {
+                                                cx.theme().muted_foreground
+                                            } else {
+                                                cx.theme().foreground
+                                            })
+                                            .child(i18n.copy_button),
+                                    ),
+                            )
+                            .child(div().h(px(16.)).w_px().bg(cx.theme().border))
+                            .child(
+                                div()
+                                    .id(("markup-delete", markup_id))
+                                    .px_1()
+                                    .py_0()
+                                    .rounded_md()
+                                    .cursor_pointer()
+                                    .hover(|this| this.bg(cx.theme().secondary))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.delete_text_markup_by_id(markup_id, cx);
+                                        this.close_context_menu(cx);
+                                    }))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().foreground)
+                                            .child(i18n.delete_highlight_button),
                                     ),
                             ),
                     )

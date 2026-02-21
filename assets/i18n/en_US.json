@@ -92,6 +92,7 @@
   "add_note_here_button": "Add Note Here",
   "edit_note_button": "Edit Note",
   "delete_note_button": "Delete Note",
+  "delete_highlight_button": "Delete Highlight",
   "copy_note_button": "Copy Note",
   "note_new_dialog_title": "New Note",
   "note_edit_dialog_title": "Edit Note",

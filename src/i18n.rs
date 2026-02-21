@@ -141,6 +141,7 @@ macro_rules! locale_message_fields {
             add_note_here_button,
             edit_note_button,
             delete_note_button,
+            delete_highlight_button,
             copy_note_button,
             note_new_dialog_title,
             note_edit_dialog_title,

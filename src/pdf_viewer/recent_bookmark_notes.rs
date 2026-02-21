@@ -443,6 +443,19 @@ impl PdfViewer {
         }
     }
 
+    pub(super) fn hovered_text_markup_id(&self) -> Option<u64> {
+        self.hovered_text_markup_id
+    }
+
+    pub(super) fn set_text_markup_hover_id(&mut self, markup_id: Option<u64>) -> bool {
+        if self.hovered_text_markup_id != markup_id {
+            self.hovered_text_markup_id = markup_id;
+            true
+        } else {
+            false
+        }
+    }
+
     fn upsert_markdown_note(&mut self, note: MarkdownNoteEntry, cx: &mut Context<Self>) {
         self.markdown_notes.retain(|item| item.id != note.id);
         self.markdown_notes.insert(0, note);
@@ -479,6 +492,24 @@ impl PdfViewer {
         self.context_menu_tab_id = None;
         self.context_menu_note_anchor = note_anchor;
         self.context_menu_note_id = note_id;
+        self.context_menu_text_markup_id = None;
+        cx.notify();
+    }
+
+    pub(super) fn open_text_markup_context_menu(
+        &mut self,
+        markup_id: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let _ = self.set_text_markup_hover_id(Some(markup_id));
+        self.clear_text_selection_hover_menu_state();
+        self.context_menu_open = true;
+        self.context_menu_tab_id = None;
+        self.context_menu_note_anchor = None;
+        self.context_menu_note_id = None;
+        self.context_menu_text_markup_id = Some(markup_id);
+        self.context_menu_position = Some(window.mouse_position());
         cx.notify();
     }
 

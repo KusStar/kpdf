@@ -417,6 +417,23 @@ impl PdfViewer {
             .collect::<Vec<_>>()
     }
 
+    pub(super) fn text_markup_by_id(&self, markup_id: u64) -> Option<TextMarkupEntry> {
+        self.text_markups
+            .iter()
+            .find(|markup| markup.id == markup_id)
+            .cloned()
+    }
+
+    pub(super) fn delete_text_markup_by_id(&mut self, markup_id: u64, cx: &mut Context<Self>) {
+        let original_len = self.text_markups.len();
+        self.text_markups.retain(|markup| markup.id != markup_id);
+        if self.text_markups.len() != original_len {
+            let _ = self.set_text_markup_hover_id(None);
+            self.persist_text_markups();
+            cx.notify();
+        }
+    }
+
     pub fn copy_selected_text(&self) {
         if let Some(tab) = self.active_tab() {
             let manager = tab.text_selection_manager.borrow();
@@ -524,6 +541,7 @@ impl PdfViewer {
         self.context_menu_tab_id = None;
         self.context_menu_note_anchor = None;
         self.context_menu_note_id = None;
+        self.context_menu_text_markup_id = None;
         cx.notify();
     }
 
