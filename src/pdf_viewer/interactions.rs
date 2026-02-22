@@ -836,7 +836,10 @@ impl PdfViewer {
     fn render_vertical_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let tabs = self.tab_bar.tabs().to_vec();
         let active_tab_id = self.tab_bar.active_tab_id();
-        let _i18n = self.i18n();
+        let recent_files_with_positions = self.recent_files_with_positions(&self.recent_files);
+        let tab_recent_popup_open = self.recent_popup_open_for(RecentPopupAnchor::TabAddButton);
+        let recent_popup_list_scroll = self.recent_popup_list_scroll.clone();
+        let i18n = self.i18n();
 
         let has_file_open = tabs.iter().any(|tab| tab.path.is_some());
         let tabs_to_show: Vec<_> = tabs
@@ -877,28 +880,7 @@ impl PdfViewer {
                             .items_center()
                             .justify_between()
                             .gap_1()
-                            .child(
-                                Button::new("new-tab-vertical")
-                                    .small()
-                                    .ghost()
-                                    .icon(
-                                        Icon::new(crate::icons::IconName::Plus)
-                                            .size_4()
-                                            .text_color(cx.theme().muted_foreground),
-                                    )
-                                    .on_hover({
-                                        let viewer = cx.entity();
-                                        move |hovered, _, cx| {
-                                            let _ = viewer.update(cx, |this, cx| {
-                                                this.set_recent_popup_trigger_hovered(
-                                                    RecentPopupAnchor::TabAddButton,
-                                                    *hovered,
-                                                    cx,
-                                                );
-                                            });
-                                        }
-                                    }),
-                            ),
+                            .child(self.render_new_tab_button(tab_recent_popup_open, recent_files_with_positions.clone(), recent_popup_list_scroll.clone(), i18n, cx)),
                     )
                     .child(
                         v_flex()
