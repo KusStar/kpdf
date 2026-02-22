@@ -794,6 +794,9 @@ impl Render for PdfViewer {
                                     )
                             )
                     )
+                    .when(self.tab_layout_mode == TabLayoutMode::Horizontal, |this| {
+                        this.child(self.render_tab_bar(cx))
+                    })
                     .child(
                         div()
                             .h_full()
