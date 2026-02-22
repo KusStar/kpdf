@@ -836,10 +836,7 @@ impl PdfViewer {
     fn render_vertical_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let tabs = self.tab_bar.tabs().to_vec();
         let active_tab_id = self.tab_bar.active_tab_id();
-        let recent_files_with_positions = self.recent_files_with_positions(&self.recent_files);
-        let tab_recent_popup_open = self.recent_popup_open_for(RecentPopupAnchor::TabAddButton);
-        let recent_popup_list_scroll = self.recent_popup_list_scroll.clone();
-        let i18n = self.i18n();
+        let _i18n = self.i18n();
 
         let has_file_open = tabs.iter().any(|tab| tab.path.is_some());
         let tabs_to_show: Vec<_> = tabs
@@ -870,20 +867,50 @@ impl PdfViewer {
             .border_r_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().secondary)
-            .v_flex()
-            .p_2()
-            .gap_1()
-            .child(self.render_new_tab_button_vertical(tab_recent_popup_open, recent_files_with_positions.clone(), recent_popup_list_scroll.clone(), i18n, cx))
             .child(
                 v_flex()
-                    .id("vertical-tab-scroll")
-                    .w_full()
-                    .flex_1()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.vertical_tab_bar_scroll)
-                    .items_center()
+                    .p_2()
                     .gap_1()
-                    .children(self.render_vertical_tab_items(&tabs_to_show, active_tab_id, insertion_indicator_pos, drag_in_progress, cx)),
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .justify_between()
+                            .gap_1()
+                            .child(
+                                Button::new("new-tab-vertical")
+                                    .small()
+                                    .ghost()
+                                    .icon(
+                                        Icon::new(crate::icons::IconName::Plus)
+                                            .size_4()
+                                            .text_color(cx.theme().muted_foreground),
+                                    )
+                                    .on_hover({
+                                        let viewer = cx.entity();
+                                        move |hovered, _, cx| {
+                                            let _ = viewer.update(cx, |this, cx| {
+                                                this.set_recent_popup_trigger_hovered(
+                                                    RecentPopupAnchor::TabAddButton,
+                                                    *hovered,
+                                                    cx,
+                                                );
+                                            });
+                                        }
+                                    }),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .id("vertical-tab-scroll")
+                            .w_full()
+                            .flex_1()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.vertical_tab_bar_scroll)
+                            .items_center()
+                            .gap_1()
+                            .children(self.render_vertical_tab_items(&tabs_to_show, active_tab_id, insertion_indicator_pos, drag_in_progress, cx)),
+                    ),
             )
     }
 
@@ -905,62 +932,6 @@ impl PdfViewer {
                 .trigger(
                     Button::new("new-tab")
                         .xsmall()
-                        .ghost()
-                        .icon(
-                            Icon::new(crate::icons::IconName::Plus)
-                                .size_4()
-                                .text_color(cx.theme().muted_foreground),
-                        )
-                        .on_hover({
-                            let viewer = viewer.clone();
-                            move |hovered, _, cx| {
-                                let _ = viewer.update(cx, |this, cx| {
-                                    this.set_recent_popup_trigger_hovered(
-                                        RecentPopupAnchor::TabAddButton,
-                                        *hovered,
-                                        cx,
-                                    );
-                                });
-                            }
-                        }),
-                )
-                .content({
-                    let viewer = viewer.clone();
-                    let recent_files_with_positions = recent_files_with_positions.clone();
-                    let i18n = i18n;
-                    move |_, _window, cx| {
-                        Self::render_recent_files_popup_panel(
-                            "new-tab-popup",
-                            1,
-                            i18n,
-                            viewer.clone(),
-                            recent_files_with_positions.clone(),
-                            &recent_popup_list_scroll,
-                            cx,
-                        )
-                    }
-                }),
-        )
-    }
-
-    fn render_new_tab_button_vertical(
-        &self,
-        tab_recent_popup_open: bool,
-        recent_files_with_positions: Vec<(PathBuf, Option<usize>)>,
-        recent_popup_list_scroll: ScrollHandle,
-        i18n: I18n,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let viewer = cx.entity();
-        div().w_full().flex_shrink_0().child(
-            Popover::new("new-tab-popover-vertical")
-                .anchor(Corner::TopLeft)
-                .appearance(false)
-                .overlay_closable(false)
-                .open(tab_recent_popup_open)
-                .trigger(
-                    Button::new("new-tab-vertical")
-                        .small()
                         .ghost()
                         .icon(
                             Icon::new(crate::icons::IconName::Plus)

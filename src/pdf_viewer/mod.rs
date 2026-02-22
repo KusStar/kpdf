@@ -71,6 +71,8 @@ pub struct PdfViewer {
     preferred_dark_theme_name: Option<String>,
     titlebar_preferences: TitleBarVisibilityPreferences,
     tab_layout_mode: TabLayoutMode,
+    vertical_tab_bar_visible: bool,
+    vertical_tab_bar_hovered: bool,
     recent_files: Vec<PathBuf>,
     recent_popup_open: bool,
     recent_popup_trigger_hovered: bool,
@@ -312,6 +314,8 @@ impl PdfViewer {
             preferred_dark_theme_name,
             titlebar_preferences,
             tab_layout_mode,
+            vertical_tab_bar_visible: true,
+            vertical_tab_bar_hovered: false,
             recent_files,
             recent_popup_open: false,
             recent_popup_trigger_hovered: false,
@@ -639,6 +643,43 @@ impl Render for PdfViewer {
                                                     .flex()
                                                     .items_center()
                                                     .gap_2()
+                                                    .when(
+                                                        self.tab_layout_mode == TabLayoutMode::Vertical,
+                                                        |this| {
+                                                            this.child(
+                                                                Button::new("vertical-tab-toggle-button")
+                                                                    .xsmall()
+                                                                    .icon(
+                                                                        Icon::new(
+                                                                            crate::icons::IconName::PanelLeftDashed,
+                                                                        )
+                                                                        .size_4()
+                                                                        .text_color(
+                                                                            if self.vertical_tab_bar_visible {
+                                                                                cx.theme().primary
+                                                                            } else {
+                                                                                cx.theme().muted_foreground
+                                                                            },
+                                                                        ),
+                                                                    )
+                                                                    .map(|this| {
+                                                                        if self.vertical_tab_bar_visible {
+                                                                            this.bg(cx.theme().primary.opacity(0.15))
+                                                                        } else {
+                                                                            this
+                                                                        }
+                                                                    })
+                                                                    .on_click(cx.listener(
+                                                                        |this, _, _, cx| {
+                                                                            this.set_vertical_tab_bar_visible(
+                                                                                !this.vertical_tab_bar_visible,
+                                                                                cx,
+                                                                            );
+                                                                        },
+                                                                    )),
+                                                            )
+                                                        },
+                                                    )
                                                     .child(self.render_menu_bar(
                                                         page_count,
                                                         current_page_num,
@@ -753,31 +794,42 @@ impl Render for PdfViewer {
                                     )
                             )
                     )
-                    .when(self.tab_layout_mode == TabLayoutMode::Horizontal, |this| {
-                        this.child(self.render_tab_bar(cx))
-                    })
                     .child(
                         div()
                             .h_full()
                             .w_full()
                             .flex()
                             .overflow_hidden()
-                            .when(self.tab_layout_mode == TabLayoutMode::Vertical, |this| {
-                                this.child(self.render_tab_bar(cx))
+                            .when(self.tab_layout_mode == TabLayoutMode::Vertical && self.vertical_tab_bar_visible, |this| {
+                                this.child(
+                                    div()
+                                        .w(px(VERTICAL_TAB_BAR_WIDTH))
+                                        .h_full()
+                                        .border_r_1()
+                                        .border_color(cx.theme().border)
+                                        .bg(cx.theme().secondary)
+                                        .child(self.render_tab_bar(cx)),
+                                )
                             })
                             .when(self.show_thumbnail_panel(), |this| {
                                 this.child(self.render_thumbnail_panel(
                                     page_count,
-                                    thumbnail_sizes,
+                                    thumbnail_sizes.clone(),
                                     cx,
                                 ))
                             })
-                            .child(self.render_display_panel(
-                                page_count,
-                                display_sizes,
-                                display_panel_width,
-                                cx,
-                            )),
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .h_full()
+                                    .overflow_hidden()
+                                    .child(self.render_display_panel(
+                                        page_count,
+                                        display_sizes,
+                                        display_panel_width,
+                                        cx,
+                                    )),
+                            ),
                     )
                     .when(context_menu.is_some(), |this| {
                         this.child(context_menu.unwrap())
@@ -790,7 +842,66 @@ impl Render for PdfViewer {
                     })
                     .when(command_panel.is_some(), |this| {
                         this.child(command_panel.unwrap())
-                    }),
+                    })
+                    .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                        // 当鼠标在主内容区域移动且垂直标签栏通过 hover 显示时，检查是否应该隐藏
+                        if this.tab_layout_mode == TabLayoutMode::Vertical
+                            && !this.vertical_tab_bar_visible
+                            && this.vertical_tab_bar_hovered
+                            && event.position.y > px(TITLE_BAR_HEIGHT)
+                            && event.position.x > px(VERTICAL_TAB_BAR_WIDTH)
+                        {
+                            this.set_vertical_tab_bar_hovered(false, cx);
+                        }
+                    })),
             )
+                    .when(
+                        self.tab_layout_mode == TabLayoutMode::Vertical
+                            && !self.vertical_tab_bar_visible,
+                        |this| {
+                            this.child(
+                                div()
+                                    .id("vertical-tab-hover-area")
+                                    .absolute()
+                                    .left_0()
+                                    .top(px(TITLE_BAR_HEIGHT))
+                                    .bottom_0()
+                                    .w(px(20.0))
+                                    .on_mouse_move(cx.listener(|this, _, _, cx| {
+                                        // 当鼠标进入 hover 区域时显示标签栏
+                                        if !this.vertical_tab_bar_hovered {
+                                            this.set_vertical_tab_bar_hovered(true, cx);
+                                        }
+                                    })),
+                            )
+                        },
+                    )
+                    .when(
+                        self.tab_layout_mode == TabLayoutMode::Vertical
+                            && !self.vertical_tab_bar_visible
+                            && self.vertical_tab_bar_hovered,
+                        |this| {
+                            this.child(
+                                div()
+                                    .absolute()
+                                    .left_0()
+                                    .top(px(TITLE_BAR_HEIGHT))
+                                    .bottom_0()
+                                    .border_r_1()
+                                    .border_color(cx.theme().border)
+                                    .bg(cx.theme().secondary)
+                                    .shadow_md()
+                                    .child(self.render_tab_bar(cx))
+                                    .with_animation(
+                                        ElementId::named_usize("vertical-tab-bar", cx.entity_id().as_u64() as usize),
+                                        Animation::new(Duration::from_secs_f32(0.15)),
+                                        |this, progress| {
+                                            this.w(px(VERTICAL_TAB_BAR_WIDTH) * progress)
+                                                .opacity(progress)
+                                        },
+                                    ),
+                            )
+                        },
+                    )
     }
 }

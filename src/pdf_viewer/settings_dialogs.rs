@@ -375,6 +375,22 @@ impl PdfViewer {
         self.persist_tab_layout_mode();
         cx.notify();
     }
+
+    fn set_vertical_tab_bar_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        if self.vertical_tab_bar_visible == visible {
+            return;
+        }
+        self.vertical_tab_bar_visible = visible;
+        cx.notify();
+    }
+
+    fn set_vertical_tab_bar_hovered(&mut self, hovered: bool, cx: &mut Context<Self>) {
+        if self.vertical_tab_bar_hovered == hovered {
+            return;
+        }
+        self.vertical_tab_bar_hovered = hovered;
+        cx.notify();
+    }
 }
 
 #[derive(Clone)]
