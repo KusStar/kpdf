@@ -16,27 +16,25 @@ kPDF is a lightweight desktop PDF viewer built with Rust + GPUI, focused on smoo
 
 ## Screenshots
 
+<details>
+<summary>MacOS</summary>
+
 <img src="assets/screenshots/macos.png" alt="kPDF Screenshot on macOS" width="1024" />
 <img src="assets/screenshots/selection.png" alt="selection" width="1024" />
 <img src="assets/screenshots/settings.png" alt="kPDF Screenshot on macOS" width="1024" />
 
+</details>
+
 ## Features
 
-- Multi-tab reading with draggable tab reordering
-- Thumbnail sidebar for quick page navigation
-- Session persistence:
-  - Recent files (up to 12)
-  - Last read page per file
-  - Open tabs and active tab restore after restart
-  - Window size restore
-- Command Panel for quick filtering across:
-  - Open file action
-  - Opened files
-  - Recent files
-- Text selection and copy (mouse selection, context menu, keyboard shortcuts)
-- Markdown notes: right-click any page position to add/edit/delete note anchors, with live preview via `TextView::markdown`
-- Bilingual UI (English and Simplified Chinese), auto-detected from system locale
-- Optional file logging, with menu toggles and quick-open logs folder
+- High performance
+- Multi-tab reading
+- Thumbnail navigation
+- Session persistence
+- Command panel
+- Text selection
+- Markdown notes
+- Multi-language support
 
 ## Tech Stack
 

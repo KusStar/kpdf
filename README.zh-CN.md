@@ -16,24 +16,25 @@ kPDF 是一个基于 Rust + GPUI 的轻量级桌面 PDF 阅读器，专注于流
 
 ## 截图展示
 
+<details>
+<summary>MacOS</summary>
+
 <img src="assets/screenshots/macos.png" alt="kPDF 在 macOS 上的截图" width="1024" />
 <img src="assets/screenshots/selection.png" alt="selection" width="1024" />
 <img src="assets/screenshots/settings.png" alt="kPDF Screenshot on macOS" width="1024" />
 
+</details>
+
 ## 功能特性
 
-- 多标签阅读：支持同时打开多个 PDF，标签可拖拽排序
-- 缩略图侧栏：左侧页面缩略图导航，右侧正文连续阅读
-- 最近文件与会话恢复：
-  - 记住最近打开文件（最多 12 个）
-  - 记住每个文件上次阅读页
-  - 重启后恢复已打开标签和活动标签
-  - 记住窗口大小
-- 命令面板：快速在“打开文件 / 已打开文件 / 最近文件”间切换和过滤
-- 文本选择与复制：支持鼠标框选文本、右键复制和快捷键复制
-- Markdown 笔记：在任意页面位置右键可添加/编辑/删除锚点笔记，预览使用 `TextView::markdown`
-- 中英文界面：自动根据系统环境选择语言，可通过环境变量覆盖
-- 可选文件日志：可在应用菜单中启用/关闭，并打开日志目录
+- 高性能
+- 多标签阅读
+- 缩略图导航
+- 会话持久化
+- 命令面板
+- 文本选择
+- Markdown 笔记
+- 多语言
 
 ## 技术栈
 
