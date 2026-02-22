@@ -366,6 +366,15 @@ impl PdfViewer {
         self.persist_titlebar_preferences();
         cx.notify();
     }
+
+    fn set_tab_layout_mode(&mut self, mode: TabLayoutMode, cx: &mut Context<Self>) {
+        if self.tab_layout_mode == mode {
+            return;
+        }
+        self.tab_layout_mode = mode;
+        self.persist_tab_layout_mode();
+        cx.notify();
+    }
 }
 
 #[derive(Clone)]
@@ -374,6 +383,7 @@ struct SettingsDialogSnapshot {
     language_preference: LanguagePreference,
     theme_mode: ThemeMode,
     titlebar_preferences: TitleBarVisibilityPreferences,
+    tab_layout_mode: TabLayoutMode,
     db_usage_refreshing: bool,
     db_usage_bytes: u64,
     db_path_text: String,
@@ -386,6 +396,7 @@ impl SettingsDialogSnapshot {
             language_preference: viewer.language_preference,
             theme_mode: viewer.theme_mode,
             titlebar_preferences: viewer.titlebar_preferences,
+            tab_layout_mode: viewer.tab_layout_mode,
             db_usage_refreshing: viewer.db_usage_refreshing,
             db_usage_bytes: viewer.db_usage_bytes,
             db_path_text: viewer.db_path.to_string_lossy().to_string(),
@@ -437,6 +448,7 @@ impl Render for SettingsDialogWindow {
         let theme_mode = self.snapshot.theme_mode;
         let language_preference = self.snapshot.language_preference;
         let titlebar_preferences = self.snapshot.titlebar_preferences;
+        let tab_layout_mode = self.snapshot.tab_layout_mode;
         let theme_color_select_state = self.theme_color_select_state.clone();
         let db_usage_refreshing = self.snapshot.db_usage_refreshing;
         let db_usage_bytes = self.snapshot.db_usage_bytes;
@@ -802,6 +814,89 @@ impl Render for SettingsDialogWindow {
                                                             let _ = this.viewer.update(cx, |viewer, cx| {
                                                                 viewer.set_titlebar_zoom_visible(*checked, cx);
                                                             });
+                                                        },
+                                                    )),
+                                            ),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .v_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .mt_2()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(i18n.settings_tab_layout_section),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(cx.theme().border)
+                                    .p_3()
+                                    .v_flex()
+                                    .gap_3()
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .flex()
+                                            .items_start()
+                                            .justify_between()
+                                            .gap_3()
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .v_flex()
+                                                    .items_start()
+                                                    .gap_1()
+                                                    .child(
+                                                        div()
+                                                            .text_sm()
+                                                            .text_color(cx.theme().foreground)
+                                                            .child(i18n.settings_tab_layout_label),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(cx.theme().muted_foreground)
+                                                            .whitespace_normal()
+                                                            .child(i18n.settings_tab_layout_hint),
+                                                    ),
+                                            )
+                                            .child(
+                                                ButtonGroup::new("settings-tab-layout-mode-window")
+                                                    .small()
+                                                    .outline()
+                                                    .child(
+                                                        Button::new("settings-tab-layout-horizontal-window")
+                                                            .label(i18n.settings_tab_layout_horizontal)
+                                                            .selected(tab_layout_mode == TabLayoutMode::Horizontal),
+                                                    )
+                                                    .child(
+                                                        Button::new("settings-tab-layout-vertical-window")
+                                                            .label(i18n.settings_tab_layout_vertical)
+                                                            .selected(tab_layout_mode == TabLayoutMode::Vertical),
+                                                    )
+                                                    .on_click(cx.listener(
+                                                        |this, selected: &Vec<usize>, _, cx| {
+                                                            let mode = if selected.first().copied()
+                                                                == Some(1)
+                                                            {
+                                                                TabLayoutMode::Vertical
+                                                            } else {
+                                                                TabLayoutMode::Horizontal
+                                                            };
+                                                            let _ =
+                                                                this.viewer.update(cx, |viewer, cx| {
+                                                                    viewer.set_tab_layout_mode(
+                                                                        mode,
+                                                                        cx,
+                                                                    );
+                                                                });
                                                         },
                                                     )),
                                             ),

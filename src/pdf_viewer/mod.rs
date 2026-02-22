@@ -64,11 +64,13 @@ pub struct PdfViewer {
     bookmarks_store: Option<sled::Tree>,
     notes_store: Option<sled::Tree>,
     text_markups_store: Option<sled::Tree>,
+    tab_layout_mode_store: Option<sled::Tree>,
     last_window_size: Option<(f32, f32)>,
     theme_mode: ThemeMode,
     preferred_light_theme_name: Option<String>,
     preferred_dark_theme_name: Option<String>,
     titlebar_preferences: TitleBarVisibilityPreferences,
+    tab_layout_mode: TabLayoutMode,
     recent_files: Vec<PathBuf>,
     recent_popup_open: bool,
     recent_popup_trigger_hovered: bool,
@@ -101,6 +103,7 @@ pub struct PdfViewer {
     command_panel_query: String,
     command_panel_selected_index: usize,
     tab_bar_scroll: ScrollHandle,
+    vertical_tab_bar_scroll: ScrollHandle,
     recent_popup_list_scroll: ScrollHandle,
     bookmark_popup_list_scroll: ScrollHandle,
     command_panel_list_scroll: ScrollHandle,
@@ -169,6 +172,7 @@ impl PdfViewer {
             bookmarks_store,
             notes_store,
             text_markups_store,
+            tab_layout_mode_store,
         ) = Self::open_persistent_stores();
         let db_path = Self::local_state_db_path();
         let db_usage_bytes = Self::directory_usage_bytes(&db_path);
@@ -210,6 +214,10 @@ impl PdfViewer {
         let text_markups = text_markups_store
             .as_ref()
             .map(Self::load_text_markups_from_store)
+            .unwrap_or_default();
+        let tab_layout_mode = tab_layout_mode_store
+            .as_ref()
+            .map(Self::load_tab_layout_mode_from_store)
             .unwrap_or_default();
         let command_panel_input_state = cx.new(|cx| {
             InputState::new(window, cx).placeholder(I18n::new(language).command_panel_search_hint)
@@ -297,11 +305,13 @@ impl PdfViewer {
             bookmarks_store,
             notes_store,
             text_markups_store,
+            tab_layout_mode_store,
             last_window_size: None,
             theme_mode,
             preferred_light_theme_name,
             preferred_dark_theme_name,
             titlebar_preferences,
+            tab_layout_mode,
             recent_files,
             recent_popup_open: false,
             recent_popup_trigger_hovered: false,
@@ -334,6 +344,7 @@ impl PdfViewer {
             command_panel_query: String::new(),
             command_panel_selected_index: 0,
             tab_bar_scroll: ScrollHandle::new(),
+            vertical_tab_bar_scroll: ScrollHandle::new(),
             recent_popup_list_scroll: ScrollHandle::new(),
             bookmark_popup_list_scroll: ScrollHandle::new(),
             command_panel_list_scroll: ScrollHandle::new(),
@@ -741,14 +752,19 @@ impl Render for PdfViewer {
                                             }),
                                     )
                             )
-                            .child(self.render_tab_bar(cx))
                     )
+                    .when(self.tab_layout_mode == TabLayoutMode::Horizontal, |this| {
+                        this.child(self.render_tab_bar(cx))
+                    })
                     .child(
                         div()
                             .h_full()
                             .w_full()
                             .flex()
                             .overflow_hidden()
+                            .when(self.tab_layout_mode == TabLayoutMode::Vertical, |this| {
+                                this.child(self.render_tab_bar(cx))
+                            })
                             .when(self.show_thumbnail_panel(), |this| {
                                 this.child(self.render_thumbnail_panel(
                                     page_count,

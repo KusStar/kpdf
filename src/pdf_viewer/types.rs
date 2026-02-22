@@ -138,3 +138,16 @@ impl Default for TitleBarVisibilityPreferences {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum TabLayoutMode {
+    Horizontal,
+    Vertical,
+}
+
+impl Default for TabLayoutMode {
+    fn default() -> Self {
+        Self::Horizontal
+    }
+}

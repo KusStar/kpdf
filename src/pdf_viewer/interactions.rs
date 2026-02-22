@@ -767,6 +767,13 @@ impl PdfViewer {
     }
 
     pub(super) fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        match self.tab_layout_mode {
+            TabLayoutMode::Horizontal => self.render_horizontal_tab_bar(cx).into_any_element(),
+            TabLayoutMode::Vertical => self.render_vertical_tab_bar(cx).into_any_element(),
+        }
+    }
+
+    fn render_horizontal_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let tabs = self.tab_bar.tabs().to_vec();
         let active_tab_id = self.tab_bar.active_tab_id();
         let recent_files_with_positions = self.recent_files_with_positions(&self.recent_files);
@@ -811,54 +818,8 @@ impl PdfViewer {
             .items_center()
             .px_3()
             .gap_1()
-            .relative() // 使子元素可以使用绝对定位
-            .child(
-                div().flex_shrink_0().child(
-                    Popover::new("new-tab-popover")
-                        .anchor(Corner::TopLeft)
-                        .appearance(false)
-                        .overlay_closable(false)
-                        .open(tab_recent_popup_open)
-                        .trigger(
-                            Button::new("new-tab")
-                                .xsmall()
-                                .ghost()
-                                .icon(
-                                    Icon::new(crate::icons::IconName::Plus)
-                                        .size_4()
-                                        .text_color(cx.theme().muted_foreground),
-                                )
-                                .on_hover({
-                                    let viewer = cx.entity();
-                                    move |hovered, _, cx| {
-                                        let _ = viewer.update(cx, |this, cx| {
-                                            this.set_recent_popup_trigger_hovered(
-                                                RecentPopupAnchor::TabAddButton,
-                                                *hovered,
-                                                cx,
-                                            );
-                                        });
-                                    }
-                                }),
-                        )
-                        .content({
-                            let viewer = cx.entity();
-                            let recent_files_with_positions = recent_files_with_positions.clone();
-                            let i18n = i18n;
-                            move |_, _window, cx| {
-                                Self::render_recent_files_popup_panel(
-                                    "new-tab-popup",
-                                    1,
-                                    i18n,
-                                    viewer.clone(),
-                                    recent_files_with_positions.clone(),
-                                    &recent_popup_list_scroll,
-                                    cx,
-                                )
-                            }
-                        }),
-                ),
-            )
+            .relative()
+            .child(self.render_new_tab_button(tab_recent_popup_open, recent_files_with_positions.clone(), recent_popup_list_scroll.clone(), i18n, cx))
             .child(
                 h_flex()
                     .id("tab-scroll")
@@ -868,184 +829,478 @@ impl PdfViewer {
                     .track_scroll(&self.tab_bar_scroll)
                     .items_center()
                     .gap_1()
-                    .children({
-                        let mut elements = Vec::new();
-
-                        for (index, tab) in tabs_to_show.iter().enumerate() {
-                            let tab_id = tab.id;
-                            let is_active = active_tab_id == Some(tab_id);
-                            let show_close_button = is_active || self.hovered_tab_id == Some(tab_id);
-                            let close_icon_color = if show_close_button {
-                                cx.theme().muted_foreground
-                            } else {
-                                cx.theme().muted_foreground.opacity(0.0)
-                            };
-                            let file_name = tab.file_name();
-                            let is_home = tab.path.is_none();
-
-                            // 在目标位置前插入垂直线指示器
-                            if insertion_indicator_pos == Some(index) {
-                                elements.push(
-                                    div()
-                                        .id(("indicator", index))
-                                        .w_px()
-                                        .flex_shrink_0()
-                                        .h_6()
-                                        .rounded_sm()
-                                        .bg(cx.theme().primary)
-                                        .into_any_element(),
-                                );
-                            }
-
-                            elements.push(
-                                div()
-                                    .id(("tab", tab_id))
-                                    .h(px(28.))
-                                    .px_2()
-                                    .flex_shrink_0()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .rounded_md()
-                                    .bg(cx.theme().secondary)
-                                    .when(is_active, |this| this.bg(cx.theme().background))
-                                    .when(!is_active, |this| {
-                                        this.hover(|this| this.bg(cx.theme().secondary.opacity(0.85)))
-                                    })
-                                    .on_hover({
-                                        let viewer = cx.entity();
-                                        move |hovered, _, cx| {
-                                            let _ = viewer.update(cx, |this, cx| {
-                                                if *hovered {
-                                                    if this.hovered_tab_id != Some(tab_id) {
-                                                        this.hovered_tab_id = Some(tab_id);
-                                                        cx.notify();
-                                                    }
-                                                } else if this.hovered_tab_id == Some(tab_id) {
-                                                    this.hovered_tab_id = None;
-                                                    if let DragState::Over {
-                                                        source_tab_id,
-                                                        target_tab_id,
-                                                    } = this.drag_state.clone()
-                                                        && target_tab_id == tab_id
-                                                    {
-                                                        this.drag_state = DragState::Started {
-                                                            source_tab_id,
-                                                        };
-                                                    }
-                                                    cx.notify();
-                                                }
-                                            });
-                                        }
-                                    })
-                                    .on_mouse_move(cx.listener(
-                                        move |this, event: &MouseMoveEvent, _, cx| {
-                                            this.update_drag_mouse_position(event.position, cx);
-                                            if let Some(source_tab_id) = this.current_drag_source_tab_id()
-                                                && tab_id != source_tab_id
-                                                && !matches!(this.drag_state, DragState::Over { source_tab_id: current_source, target_tab_id: current_target } if current_source == source_tab_id && current_target == tab_id)
-                                            {
-                                                this.drag_state = DragState::Over {
-                                                    source_tab_id,
-                                                    target_tab_id: tab_id,
-                                                };
-                                                cx.notify();
-                                            }
-                                        },
-                                    ))
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                                            if this.tab_bar.get_tab_index_by_id(tab_id).is_some() {
-                                                this.pending_drag_start =
-                                                    Some((tab_id, event.position));
-                                                this.drag_state = DragState::None;
-                                                this.drag_mouse_position = None;
-                                                cx.notify();
-                                            }
-                                        }),
-                                    )
-                                    .on_mouse_down(
-                                        MouseButton::Right,
-                                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                                            this.open_tab_context_menu(tab_id, event.position, cx);
-                                        }),
-                                    )
-                                    .on_mouse_up(
-                                        MouseButton::Left,
-                                        cx.listener(move |this, _, _, cx| {
-                                            this.finish_tab_drag(cx);
-                                        }),
-                                    )
-                                    .when(matches!(self.drag_state, DragState::Started { source_tab_id, .. } if source_tab_id == tab_id)
-                                        || matches!(self.drag_state, DragState::Over { source_tab_id, .. } if source_tab_id == tab_id), |div| {
-                                        // 如果这个标签正在被拖动，给它特殊的视觉样式
-                                        div.border_1()
-                                            .border_color(cx.theme().primary)
-                                            .bg(cx.theme().selection)
-                                            .shadow_lg()
-                                    })
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .whitespace_nowrap()
-                                            .text_color(if is_active
-                                                || matches!(self.drag_state, DragState::Started { source_tab_id, .. } if source_tab_id == tab_id)
-                                                || matches!(self.drag_state, DragState::Over { source_tab_id, .. } if source_tab_id == tab_id) {
-                                                cx.theme().foreground
-                                            } else {
-                                                cx.theme().muted_foreground
-                                            })
-                                            .child(file_name.clone())
-                                            .when(is_home, |this| {
-                                                this.text_color(if matches!(self.drag_state, DragState::Started { source_tab_id, .. } if source_tab_id == tab_id)
-                                                    || matches!(self.drag_state, DragState::Over { source_tab_id, .. } if source_tab_id == tab_id) {
-                                                    cx.theme().foreground
-                                                } else {
-                                                    cx.theme().muted_foreground.opacity(0.6)
-                                                })
-                                            }),
-                                    )
-                                    .child(
-                                        Button::new(("close-tab", tab_id))
-                                            .xsmall()
-                                            .ghost()
-                                            .icon(
-                                                Icon::new(crate::icons::IconName::WindowClose)
-                                                    .size_3()
-                                                    .text_color(close_icon_color),
-                                            )
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.close_tab(tab_id, cx);
-                                            })),
-                                    )
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        if !is_active {
-                                            this.switch_to_tab(tab_id, cx);
-                                        }
-                                    }))
-                                    .when(drag_in_progress, |this| this.cursor_grab())
-                                    .when(!drag_in_progress, |this| this.cursor_pointer())
-                                    .into_any_element(),
-                            );
-                        }
-
-                        // 处理拖动到末尾的情况
-                        if insertion_indicator_pos == Some(tabs_to_show.len()) {
-                            elements.push(
-                                div()
-                                    .id(("indicator", tabs_to_show.len()))
-                                    .w_px()
-                                    .flex_shrink_0()
-                                    .h_6()
-                                    .rounded_sm()
-                                    .bg(cx.theme().primary)
-                                    .into_any_element(),
-                            );
-                        }
-
-                        elements
-                    }),
+                    .children(self.render_tab_items(&tabs_to_show, active_tab_id, insertion_indicator_pos, drag_in_progress, cx)),
             )
+    }
+
+    fn render_vertical_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let tabs = self.tab_bar.tabs().to_vec();
+        let active_tab_id = self.tab_bar.active_tab_id();
+        let recent_files_with_positions = self.recent_files_with_positions(&self.recent_files);
+        let tab_recent_popup_open = self.recent_popup_open_for(RecentPopupAnchor::TabAddButton);
+        let recent_popup_list_scroll = self.recent_popup_list_scroll.clone();
+        let i18n = self.i18n();
+
+        let has_file_open = tabs.iter().any(|tab| tab.path.is_some());
+        let tabs_to_show: Vec<_> = tabs
+            .iter()
+            .filter(|tab| {
+                if has_file_open {
+                    tab.path.is_some()
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        let insertion_indicator_pos = match &self.drag_state {
+            DragState::Over { target_tab_id, .. } => {
+                tabs_to_show.iter().position(|tab| tab.id == *target_tab_id)
+            }
+            _ => None,
+        };
+        let drag_in_progress = matches!(
+            self.drag_state,
+            DragState::Started { .. } | DragState::Over { .. }
+        );
+
+        div()
+            .w(px(VERTICAL_TAB_BAR_WIDTH))
+            .h_full()
+            .border_r_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().secondary)
+            .v_flex()
+            .p_2()
+            .gap_1()
+            .child(self.render_new_tab_button_vertical(tab_recent_popup_open, recent_files_with_positions.clone(), recent_popup_list_scroll.clone(), i18n, cx))
+            .child(
+                v_flex()
+                    .id("vertical-tab-scroll")
+                    .w_full()
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.vertical_tab_bar_scroll)
+                    .items_center()
+                    .gap_1()
+                    .children(self.render_vertical_tab_items(&tabs_to_show, active_tab_id, insertion_indicator_pos, drag_in_progress, cx)),
+            )
+    }
+
+    fn render_new_tab_button(
+        &self,
+        tab_recent_popup_open: bool,
+        recent_files_with_positions: Vec<(PathBuf, Option<usize>)>,
+        recent_popup_list_scroll: ScrollHandle,
+        i18n: I18n,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let viewer = cx.entity();
+        div().flex_shrink_0().child(
+            Popover::new("new-tab-popover")
+                .anchor(Corner::TopLeft)
+                .appearance(false)
+                .overlay_closable(false)
+                .open(tab_recent_popup_open)
+                .trigger(
+                    Button::new("new-tab")
+                        .xsmall()
+                        .ghost()
+                        .icon(
+                            Icon::new(crate::icons::IconName::Plus)
+                                .size_4()
+                                .text_color(cx.theme().muted_foreground),
+                        )
+                        .on_hover({
+                            let viewer = viewer.clone();
+                            move |hovered, _, cx| {
+                                let _ = viewer.update(cx, |this, cx| {
+                                    this.set_recent_popup_trigger_hovered(
+                                        RecentPopupAnchor::TabAddButton,
+                                        *hovered,
+                                        cx,
+                                    );
+                                });
+                            }
+                        }),
+                )
+                .content({
+                    let viewer = viewer.clone();
+                    let recent_files_with_positions = recent_files_with_positions.clone();
+                    let i18n = i18n;
+                    move |_, _window, cx| {
+                        Self::render_recent_files_popup_panel(
+                            "new-tab-popup",
+                            1,
+                            i18n,
+                            viewer.clone(),
+                            recent_files_with_positions.clone(),
+                            &recent_popup_list_scroll,
+                            cx,
+                        )
+                    }
+                }),
+        )
+    }
+
+    fn render_new_tab_button_vertical(
+        &self,
+        tab_recent_popup_open: bool,
+        recent_files_with_positions: Vec<(PathBuf, Option<usize>)>,
+        recent_popup_list_scroll: ScrollHandle,
+        i18n: I18n,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let viewer = cx.entity();
+        div().w_full().flex_shrink_0().child(
+            Popover::new("new-tab-popover-vertical")
+                .anchor(Corner::TopLeft)
+                .appearance(false)
+                .overlay_closable(false)
+                .open(tab_recent_popup_open)
+                .trigger(
+                    Button::new("new-tab-vertical")
+                        .small()
+                        .ghost()
+                        .icon(
+                            Icon::new(crate::icons::IconName::Plus)
+                                .size_4()
+                                .text_color(cx.theme().muted_foreground),
+                        )
+                        .on_hover({
+                            let viewer = viewer.clone();
+                            move |hovered, _, cx| {
+                                let _ = viewer.update(cx, |this, cx| {
+                                    this.set_recent_popup_trigger_hovered(
+                                        RecentPopupAnchor::TabAddButton,
+                                        *hovered,
+                                        cx,
+                                    );
+                                });
+                            }
+                        }),
+                )
+                .content({
+                    let viewer = viewer.clone();
+                    let recent_files_with_positions = recent_files_with_positions.clone();
+                    let i18n = i18n;
+                    move |_, _window, cx| {
+                        Self::render_recent_files_popup_panel(
+                            "new-tab-popup",
+                            1,
+                            i18n,
+                            viewer.clone(),
+                            recent_files_with_positions.clone(),
+                            &recent_popup_list_scroll,
+                            cx,
+                        )
+                    }
+                }),
+        )
+    }
+
+    fn render_tab_items(
+        &self,
+        tabs_to_show: &[&PdfTab],
+        active_tab_id: Option<usize>,
+        insertion_indicator_pos: Option<usize>,
+        drag_in_progress: bool,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let mut elements = Vec::new();
+
+        for (index, tab) in tabs_to_show.iter().enumerate() {
+            let tab_id = tab.id;
+            let is_active = active_tab_id == Some(tab_id);
+            let show_close_button = is_active || self.hovered_tab_id == Some(tab_id);
+            let close_icon_color = if show_close_button {
+                cx.theme().muted_foreground
+            } else {
+                cx.theme().muted_foreground.opacity(0.0)
+            };
+            let file_name = tab.file_name();
+            let is_home = tab.path.is_none();
+
+            if insertion_indicator_pos == Some(index) {
+                elements.push(
+                    div()
+                        .id(("indicator", index))
+                        .w_px()
+                        .flex_shrink_0()
+                        .h_6()
+                        .rounded_sm()
+                        .bg(cx.theme().primary)
+                        .into_any_element(),
+                );
+            }
+
+            elements.push(
+                div()
+                    .id(("tab", tab_id))
+                    .h(px(28.))
+                    .px_2()
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .rounded_md()
+                    .bg(cx.theme().secondary)
+                    .when(is_active, |this| this.bg(cx.theme().background))
+                    .when(!is_active, |this| {
+                        this.hover(|this| this.bg(cx.theme().secondary.opacity(0.85)))
+                    })
+                    .on_hover({
+                        let viewer = cx.entity();
+                        move |hovered, _, cx| {
+                            let _ = viewer.update(cx, |this, cx| {
+                                if *hovered {
+                                    if this.hovered_tab_id != Some(tab_id) {
+                                        this.hovered_tab_id = Some(tab_id);
+                                        cx.notify();
+                                    }
+                                } else if this.hovered_tab_id == Some(tab_id) {
+                                    this.hovered_tab_id = None;
+                                    if let DragState::Over {
+                                        source_tab_id,
+                                        target_tab_id,
+                                    } = this.drag_state.clone()
+                                        && target_tab_id == tab_id
+                                    {
+                                        this.drag_state = DragState::Started {
+                                            source_tab_id,
+                                        };
+                                    }
+                                    cx.notify();
+                                }
+                            });
+                        }
+                    })
+                    .on_mouse_move(cx.listener(
+                        move |this, event: &MouseMoveEvent, _, cx| {
+                            this.update_drag_mouse_position(event.position, cx);
+                            if let Some(source_tab_id) = this.current_drag_source_tab_id()
+                                && tab_id != source_tab_id
+                                && !matches!(this.drag_state, DragState::Over { source_tab_id: current_source, target_tab_id: current_target } if current_source == source_tab_id && current_target == tab_id)
+                            {
+                                this.drag_state = DragState::Over {
+                                    source_tab_id,
+                                    target_tab_id: tab_id,
+                                };
+                                cx.notify();
+                            }
+                        },
+                    ))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                            if this.tab_bar.get_tab_index_by_id(tab_id).is_some() {
+                                this.pending_drag_start =
+                                    Some((tab_id, event.position));
+                                this.drag_state = DragState::None;
+                                this.drag_mouse_position = None;
+                                cx.notify();
+                            }
+                        }),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                            this.open_tab_context_menu(tab_id, event.position, cx);
+                        }),
+                    )
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            this.finish_tab_drag(cx);
+                        }),
+                    )
+                    .when(matches!(self.drag_state, DragState::Started { source_tab_id, .. } if source_tab_id == tab_id)
+                        || matches!(self.drag_state, DragState::Over { source_tab_id, .. } if source_tab_id == tab_id), |div| {
+                        div.border_1()
+                            .border_color(cx.theme().primary)
+                            .bg(cx.theme().selection)
+                            .shadow_lg()
+                    })
+                    .child(
+                        div()
+                            .text_sm()
+                            .whitespace_nowrap()
+                            .text_color(if is_active
+                                || matches!(self.drag_state, DragState::Started { source_tab_id, .. } if source_tab_id == tab_id)
+                                || matches!(self.drag_state, DragState::Over { source_tab_id, .. } if source_tab_id == tab_id) {
+                                cx.theme().foreground
+                            } else {
+                                cx.theme().muted_foreground
+                            })
+                            .child(file_name.clone())
+                            .when(is_home, |this| {
+                                this.text_color(if matches!(self.drag_state, DragState::Started { source_tab_id, .. } if source_tab_id == tab_id)
+                                    || matches!(self.drag_state, DragState::Over { source_tab_id, .. } if source_tab_id == tab_id) {
+                                    cx.theme().foreground
+                                } else {
+                                    cx.theme().muted_foreground.opacity(0.6)
+                                })
+                            }),
+                    )
+                    .child(
+                        Button::new(("close-tab", tab_id))
+                            .xsmall()
+                            .ghost()
+                            .icon(
+                                Icon::new(crate::icons::IconName::WindowClose)
+                                    .size_3()
+                                    .text_color(close_icon_color),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.close_tab(tab_id, cx);
+                            })),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !is_active {
+                            this.switch_to_tab(tab_id, cx);
+                        }
+                    }))
+                    .when(drag_in_progress, |this| this.cursor_grab())
+                    .when(!drag_in_progress, |this| this.cursor_pointer())
+                    .into_any_element(),
+            );
+        }
+
+        if insertion_indicator_pos == Some(tabs_to_show.len()) {
+            elements.push(
+                div()
+                    .id(("indicator", tabs_to_show.len()))
+                    .w_px()
+                    .flex_shrink_0()
+                    .h_6()
+                    .rounded_sm()
+                    .bg(cx.theme().primary)
+                    .into_any_element(),
+            );
+        }
+
+        elements
+    }
+
+    fn render_vertical_tab_items(
+        &self,
+        tabs_to_show: &[&PdfTab],
+        active_tab_id: Option<usize>,
+        insertion_indicator_pos: Option<usize>,
+        drag_in_progress: bool,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let mut elements = Vec::new();
+
+        for (index, tab) in tabs_to_show.iter().enumerate() {
+            let tab_id = tab.id;
+            let is_active = active_tab_id == Some(tab_id);
+            let show_close_button = is_active || self.hovered_tab_id == Some(tab_id);
+            let close_icon_color = if show_close_button {
+                cx.theme().muted_foreground
+            } else {
+                cx.theme().muted_foreground.opacity(0.0)
+            };
+            let file_name = tab.file_name();
+
+            if insertion_indicator_pos == Some(index) {
+                elements.push(
+                    div()
+                        .id(("indicator-h", index))
+                        .h_px()
+                        .w_full()
+                        .flex_shrink_0()
+                        .rounded_sm()
+                        .bg(cx.theme().primary)
+                        .into_any_element(),
+                );
+            }
+
+            elements.push(
+                div()
+                    .id(("tab-v", tab_id))
+                    .w_full()
+                    .h(px(36.))
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .rounded_md()
+                    .bg(cx.theme().secondary)
+                    .when(is_active, |this| this.bg(cx.theme().background))
+                    .when(!is_active, |this| {
+                        this.hover(|this| this.bg(cx.theme().secondary.opacity(0.85)))
+                    })
+                    .on_hover({
+                        let viewer = cx.entity();
+                        move |hovered, _, cx| {
+                            let _ = viewer.update(cx, |this, cx| {
+                                if *hovered {
+                                    if this.hovered_tab_id != Some(tab_id) {
+                                        this.hovered_tab_id = Some(tab_id);
+                                        cx.notify();
+                                    }
+                                } else if this.hovered_tab_id == Some(tab_id) {
+                                    this.hovered_tab_id = None;
+                                    cx.notify();
+                                }
+                            });
+                        }
+                    })
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                            this.open_tab_context_menu(tab_id, event.position, cx);
+                        }),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .truncate()
+                            .text_color(if is_active {
+                                cx.theme().foreground
+                            } else {
+                                cx.theme().muted_foreground
+                            })
+                            .child(file_name.clone()),
+                    )
+                    .child(
+                        Button::new(("close-tab-v", tab_id))
+                            .xsmall()
+                            .ghost()
+                            .icon(
+                                Icon::new(crate::icons::IconName::WindowClose)
+                                    .size_3()
+                                    .text_color(close_icon_color),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.close_tab(tab_id, cx);
+                            })),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !is_active {
+                            this.switch_to_tab(tab_id, cx);
+                        }
+                    }))
+                    .when(drag_in_progress, |this| this.cursor_grab())
+                    .when(!drag_in_progress, |this| this.cursor_pointer())
+                    .into_any_element(),
+            );
+        }
+
+        if insertion_indicator_pos == Some(tabs_to_show.len()) {
+            elements.push(
+                div()
+                    .id(("indicator-h", tabs_to_show.len()))
+                    .h_px()
+                    .w_full()
+                    .flex_shrink_0()
+                    .rounded_sm()
+                    .bg(cx.theme().primary)
+                    .into_any_element(),
+            );
+        }
+
+        elements
     }
 }
