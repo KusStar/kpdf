@@ -1,4 +1,4 @@
-use super::{PdfViewer, TextMarkupColor, TextMarkupKind};
+use super::{PdfViewer, TabLayoutMode, TextMarkupColor, TextMarkupKind};
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::button::*;
@@ -55,6 +55,7 @@ impl PdfViewer {
         let recent_files_with_positions = self.recent_files_with_positions(&self.recent_files);
 
         div()
+            .id("display-panel")
             .h_full()
             .flex_1()
             .v_flex()
@@ -975,18 +976,23 @@ impl PdfViewer {
         let display_panel_width = self.display_panel_width(window, zoom);
         let horizontal_offset = (display_panel_width - page_width) / 2.0;
 
-        // Keep this aligned with the actual top-bar layout in `pdf_viewer/mod.rs`.
-        let content_offset_y = super::TITLE_BAR_HEIGHT + super::TAB_BAR_HEIGHT;
-        let sidebar_width = if self.show_thumbnail_panel() {
-            super::SIDEBAR_WIDTH
+        // Calculate display panel offset based on current layout state
+        // This mirrors the actual render layout structure in mod.rs
+        let mut display_panel_left = 0.0;
+        if self.tab_layout_mode == TabLayoutMode::Vertical && self.vertical_tab_bar_visible {
+            display_panel_left += super::VERTICAL_TAB_BAR_WIDTH;
+        }
+        if self.show_thumbnail_panel() {
+            display_panel_left += super::SIDEBAR_WIDTH;
+        }
+        let content_offset_y = if self.tab_layout_mode == TabLayoutMode::Vertical {
+            super::TITLE_BAR_HEIGHT
         } else {
-            0.0
+            super::TITLE_BAR_HEIGHT + super::TAB_BAR_HEIGHT
         };
 
         // Convert window coordinates to local page container coordinates
-        // Note: Do NOT subtract content centering offset here.
-        // find_char_at_screen_position handles ObjectFit::Contain centering internally.
-        let local_x = f32::from(window_pos.x) - sidebar_width - horizontal_offset;
+        let local_x = f32::from(window_pos.x) - display_panel_left - horizontal_offset;
         let local_y = f32::from(window_pos.y)
             - content_offset_y
             - cumulative_height
