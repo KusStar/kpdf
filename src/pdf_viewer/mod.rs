@@ -900,7 +900,20 @@ impl Render for PdfViewer {
                                     .border_color(cx.theme().border)
                                     .bg(cx.theme().secondary)
                                     .shadow_md()
+                                    .cursor_default()
                                     .child(self.render_tab_bar(cx))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|_, _, _, cx| {
+                                            cx.stop_propagation();
+                                        }),
+                                    )
+                                    .on_mouse_down(
+                                        MouseButton::Right,
+                                        cx.listener(|_, _, _, cx| {
+                                            cx.stop_propagation();
+                                        }),
+                                    )
                                     .with_animation(
                                         ElementId::named_usize("vertical-tab-bar", cx.entity_id().as_u64() as usize),
                                         Animation::new(Duration::from_secs_f32(0.15)),
