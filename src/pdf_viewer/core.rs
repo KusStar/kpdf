@@ -24,12 +24,13 @@ impl PdfViewer {
         Option<sled::Tree>,
         Option<sled::Tree>,
         Option<sled::Tree>,
+        Option<sled::Tree>,
     ) {
         let db_path = Self::local_state_db_path();
         if let Some(parent) = db_path.parent() {
             if std::fs::create_dir_all(parent).is_err() {
                 crate::debug_log!("[store] create dir failed: {}", parent.to_string_lossy());
-                return (None, None, None, None, None, None, None, None, None, None);
+                return (None, None, None, None, None, None, None, None, None, None, None);
             }
         }
 
@@ -41,7 +42,7 @@ impl PdfViewer {
                     db_path.to_string_lossy(),
                     err
                 );
-                return (None, None, None, None, None, None, None, None, None, None);
+                return (None, None, None, None, None, None, None, None, None, None, None);
             }
         };
 
@@ -131,9 +132,20 @@ impl PdfViewer {
                 None
             }
         };
+        let vertical_tab_bar_visible_store = match db.open_tree(VERTICAL_TAB_BAR_VISIBLE_TREE) {
+            Ok(tree) => Some(tree),
+            Err(err) => {
+                crate::debug_log!(
+                    "[store] open tree failed: {} | {}",
+                    VERTICAL_TAB_BAR_VISIBLE_TREE,
+                    err
+                );
+                None
+            }
+        };
 
         crate::debug_log!(
-            "[store] init recent={} positions={} window_size={} open_tabs={} titlebar_preferences={} theme_preferences={} bookmarks={} notes={} text_markups={} tab_layout_mode={} path={}",
+            "[store] init recent={} positions={} window_size={} open_tabs={} titlebar_preferences={} theme_preferences={} bookmarks={} notes={} text_markups={} tab_layout_mode={} vertical_tab_bar_visible={} path={}",
             recent_store.is_some(),
             position_store.is_some(),
             window_size_store.is_some(),
@@ -144,6 +156,7 @@ impl PdfViewer {
             notes_store.is_some(),
             text_markups_store.is_some(),
             tab_layout_mode_store.is_some(),
+            vertical_tab_bar_visible_store.is_some(),
             db_path.to_string_lossy()
         );
 
@@ -158,6 +171,7 @@ impl PdfViewer {
             notes_store,
             text_markups_store,
             tab_layout_mode_store,
+            vertical_tab_bar_visible_store,
         )
     }
 
@@ -536,6 +550,24 @@ impl PdfViewer {
             TabLayoutMode::Vertical => b"vertical".as_slice(),
         };
         if store.insert(TAB_LAYOUT_MODE_KEY, stored_value).is_err() {
+            return;
+        }
+
+        let _ = store.flush();
+    }
+
+    fn persist_vertical_tab_bar_visible(&self) {
+        let Some(store) = self.vertical_tab_bar_visible_store.as_ref() else {
+            return;
+        };
+
+        if store
+            .insert(
+                VERTICAL_TAB_BAR_VISIBLE_KEY,
+                [u8::from(self.vertical_tab_bar_visible)].as_slice(),
+            )
+            .is_err()
+        {
             return;
         }
 

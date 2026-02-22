@@ -381,6 +381,7 @@ impl PdfViewer {
             return;
         }
         self.vertical_tab_bar_visible = visible;
+        self.persist_vertical_tab_bar_visible();
         cx.notify();
     }
 

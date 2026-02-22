@@ -65,6 +65,7 @@ pub struct PdfViewer {
     notes_store: Option<sled::Tree>,
     text_markups_store: Option<sled::Tree>,
     tab_layout_mode_store: Option<sled::Tree>,
+    vertical_tab_bar_visible_store: Option<sled::Tree>,
     last_window_size: Option<(f32, f32)>,
     theme_mode: ThemeMode,
     preferred_light_theme_name: Option<String>,
@@ -175,6 +176,7 @@ impl PdfViewer {
             notes_store,
             text_markups_store,
             tab_layout_mode_store,
+            vertical_tab_bar_visible_store,
         ) = Self::open_persistent_stores();
         let db_path = Self::local_state_db_path();
         let db_usage_bytes = Self::directory_usage_bytes(&db_path);
@@ -308,13 +310,17 @@ impl PdfViewer {
             notes_store,
             text_markups_store,
             tab_layout_mode_store,
+            vertical_tab_bar_visible_store: vertical_tab_bar_visible_store.clone(),
             last_window_size: None,
             theme_mode,
             preferred_light_theme_name,
             preferred_dark_theme_name,
             titlebar_preferences,
             tab_layout_mode,
-            vertical_tab_bar_visible: true,
+            vertical_tab_bar_visible: vertical_tab_bar_visible_store
+                .as_ref()
+                .map(|store| PdfViewer::decode_stored_bool(store.get(VERTICAL_TAB_BAR_VISIBLE_KEY).ok().flatten(), true))
+                .unwrap_or(true),
             vertical_tab_bar_hovered: false,
             recent_files,
             recent_popup_open: false,
