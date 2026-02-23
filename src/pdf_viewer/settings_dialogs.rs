@@ -463,7 +463,10 @@ impl SettingsDialogWindow {
         }
     }
 
-    fn close_dialog(&mut self, window: &mut Window, _cx: &mut Context<Self>) {
+    fn close_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let _ = self.viewer.update(cx, |viewer, cx| {
+            viewer.close_settings_dialog(cx);
+        });
         window.remove_window();
     }
 }
