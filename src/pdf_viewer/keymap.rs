@@ -12,8 +12,7 @@ pub(super) struct KeymapWindow {
 }
 
 impl KeymapWindow {
-    pub(super) fn new(viewer: Entity<PdfViewer>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let i18n = viewer.read(cx).i18n();
+    pub(super) fn new(viewer: Entity<PdfViewer>, i18n: I18n, _window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
             _viewer: viewer,
             keymap_scroll: ScrollHandle::new(),
@@ -299,6 +298,7 @@ impl PdfViewer {
         self.keymap_dialog_session = self.keymap_dialog_session.wrapping_add(1);
         let session_id = self.keymap_dialog_session;
 
+        let i18n = self.i18n();
         let viewer = cx.entity();
         let viewer_for_close = viewer.clone();
         let window_options = WindowOptions {
@@ -318,7 +318,7 @@ impl PdfViewer {
                 });
                 true
             });
-            let dialog = cx.new(|cx| KeymapWindow::new(viewer, window, cx));
+            let dialog = cx.new(|cx| KeymapWindow::new(viewer, i18n, window, cx));
             let dialog_focus = dialog.read(cx).focus_handle.clone();
             let root = cx.new(|cx| Root::new(dialog, window, cx));
             window.focus(&dialog_focus);
@@ -346,9 +346,12 @@ impl PdfViewer {
             self.needs_root_refocus = true;
             cx.notify();
         }
+        // Defer window removal to avoid borrow conflicts during event handling
         if let Some(window_handle) = window_handle {
-            let _ = window_handle.update(cx, |_, window, _| {
-                window.remove_window();
+            cx.defer(move |cx| {
+                let _ = window_handle.update(cx, |_, window, _| {
+                    window.remove_window();
+                });
             });
         }
     }

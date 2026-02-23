@@ -77,9 +77,12 @@ impl PdfViewer {
             self.needs_root_refocus = true;
             cx.notify();
         }
+        // Defer window removal to avoid borrow conflicts during event handling
         if let Some(window_handle) = window_handle {
-            let _ = window_handle.update(cx, |_, window, _| {
-                window.remove_window();
+            cx.defer(move |cx| {
+                let _ = window_handle.update(cx, |_, window, _| {
+                    window.remove_window();
+                });
             });
         }
     }
