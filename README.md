@@ -43,6 +43,7 @@ kPDF is a lightweight desktop PDF viewer built with Rust + GPUI, focused on smoo
 - [pdfium-render](https://crates.io/crates/pdfium-render) for PDF rendering
 - [pdfium-binaries](https://github.com/bblanchon/pdfium-binaries/releases)
 - [sled](https://crates.io/crates/sled) for local state persistence
+- [lucide-icons](https://github.com/lucide-icons/lucide) for icons
 
 ## Requirements
 

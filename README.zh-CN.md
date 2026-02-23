@@ -42,6 +42,7 @@ kPDF 是一个基于 Rust + GPUI 的轻量级桌面 PDF 阅读器，专注于流
 - [gpui](https://crates.io/crates/gpui) / [gpui-component](https://crates.io/crates/gpui-component)
 - [pdfium-render](https://crates.io/crates/pdfium-render)（PDF 渲染）
 - [sled](https://crates.io/crates/sled)（本地状态存储）
+- [lucide](https://lucide.dev/)（图标）
 
 ## 运行要求
 
