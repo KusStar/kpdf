@@ -6,21 +6,23 @@ use gpui_component::*;
 pub(super) struct KeymapWindow {
     _viewer: Entity<PdfViewer>,
     keymap_scroll: ScrollHandle,
+    focus_handle: FocusHandle,
 }
 
 impl KeymapWindow {
-    pub(super) fn new(viewer: Entity<PdfViewer>, _cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(viewer: Entity<PdfViewer>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
             _viewer: viewer,
             keymap_scroll: ScrollHandle::new(),
+            focus_handle: cx.focus_handle(),
         }
     }
 
     fn close_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let _ = window;
         let _ = self._viewer.update(cx, |viewer, cx| {
             viewer.close_keymap_dialog(cx);
         });
+        window.remove_window();
     }
 
     fn keymap_entries() -> Vec<(&'static str, Vec<Keystroke>)> {
@@ -112,9 +114,12 @@ impl Render for KeymapWindow {
         window.set_window_title("Keyboard Shortcuts kPDF");
 
         div()
+            .id("keymap-window")
             .size_full()
             .v_flex()
             .bg(cx.theme().background)
+            .focusable()
+            .track_focus(&self.focus_handle)
             .capture_key_down(cx.listener(
                 |this, event: &KeyDownEvent, window, cx| {
                     if event.keystroke.key.as_str() == "escape" {
@@ -281,8 +286,11 @@ impl PdfViewer {
                 });
                 true
             });
-            let dialog = cx.new(|cx| KeymapWindow::new(viewer, cx));
-            cx.new(|cx| Root::new(dialog, window, cx))
+            let dialog = cx.new(|cx| KeymapWindow::new(viewer, window, cx));
+            let dialog_focus = dialog.read(cx).focus_handle.clone();
+            let root = cx.new(|cx| Root::new(dialog, window, cx));
+            window.focus(&dialog_focus);
+            root
         }) {
             Ok(handle) => {
                 self.keymap_dialog_window = Some(handle.into());

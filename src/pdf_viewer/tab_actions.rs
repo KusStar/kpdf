@@ -166,6 +166,26 @@ impl PdfViewer {
             return;
         }
 
+        // Handle ESC to close bookmark popup
+        if self.bookmark_popup_open {
+            if key == "escape" {
+                self.close_bookmark_popup(cx);
+                cx.stop_propagation();
+                return;
+            }
+            return;
+        }
+
+        // Handle ESC to close recent files popup
+        if self.recent_popup_open {
+            if key == "escape" {
+                self.close_recent_popup(cx);
+                cx.stop_propagation();
+                return;
+            }
+            return;
+        }
+
         // Handle Cmd/Ctrl+C for copy
         if key == "c" && is_primary_modifier {
             self.copy_selected_text();

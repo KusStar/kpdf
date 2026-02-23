@@ -49,8 +49,11 @@ impl PdfViewer {
                 });
                 true
             });
-            let dialog = cx.new(|cx| AboutDialogWindow::new(viewer, initial_snapshot_for_window, cx));
-            cx.new(|cx| Root::new(dialog, window, cx))
+            let dialog = cx.new(|cx| AboutDialogWindow::new(viewer, initial_snapshot_for_window, window, cx));
+            let dialog_focus = dialog.read(cx).focus_handle.clone();
+            let root = cx.new(|cx| Root::new(dialog, window, cx));
+            window.focus(&dialog_focus);
+            root
         }) {
             Ok(handle) => {
                 self.about_dialog_window = Some(handle.into());
@@ -128,10 +131,11 @@ struct AboutDialogWindow {
     viewer: Entity<PdfViewer>,
     snapshot: AboutDialogSnapshot,
     _viewer_observation: Subscription,
+    focus_handle: FocusHandle,
 }
 
 impl AboutDialogWindow {
-    fn new(viewer: Entity<PdfViewer>, snapshot: AboutDialogSnapshot, cx: &mut Context<Self>) -> Self {
+    fn new(viewer: Entity<PdfViewer>, snapshot: AboutDialogSnapshot, _window: &mut Window, cx: &mut Context<Self>) -> Self {
         let viewer_for_observe = viewer.clone();
         let viewer_observation = cx.observe(&viewer_for_observe, |this, viewer, cx| {
             this.snapshot = {
@@ -144,14 +148,15 @@ impl AboutDialogWindow {
             viewer,
             snapshot,
             _viewer_observation: viewer_observation,
+            focus_handle: cx.focus_handle(),
         }
     }
 
     fn close_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let _ = window;
         let _ = self.viewer.update(cx, |viewer, cx| {
             viewer.close_about_dialog(cx);
         });
+        window.remove_window();
     }
 }
 
@@ -166,9 +171,12 @@ impl Render for AboutDialogWindow {
         window.set_window_title(&format!("{} kPDF", i18n.about_dialog_title));
 
         div()
+            .id("about-dialog-window")
             .size_full()
             .v_flex()
             .bg(cx.theme().background)
+            .focusable()
+            .track_focus(&self.focus_handle)
             .capture_key_down(cx.listener(
                 |this, event: &KeyDownEvent, window, cx| {
                     if event.keystroke.key.as_str() == "escape" {

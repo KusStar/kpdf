@@ -1,3 +1,4 @@
+
 impl PdfViewer {
     fn format_storage_size(bytes: u64) -> String {
         const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
@@ -172,10 +173,14 @@ impl PdfViewer {
                     viewer,
                     theme_color_select_state_for_window,
                     initial_snapshot_for_window,
+                    window,
                     cx,
                 )
             });
-            cx.new(|cx| Root::new(dialog, window, cx))
+            let dialog_focus = dialog.read(cx).focus_handle.clone();
+            let root = cx.new(|cx| Root::new(dialog, window, cx));
+            window.focus(&dialog_focus);
+            root
         }) {
             Ok(handle) => {
                 self.settings_dialog_window = Some(handle.into());
@@ -430,6 +435,7 @@ struct SettingsDialogWindow {
     theme_color_select_state: Entity<SelectState<SearchableVec<SharedString>>>,
     snapshot: SettingsDialogSnapshot,
     _viewer_observation: Subscription,
+    focus_handle: FocusHandle,
 }
 
 impl SettingsDialogWindow {
@@ -437,6 +443,7 @@ impl SettingsDialogWindow {
         viewer: Entity<PdfViewer>,
         theme_color_select_state: Entity<SelectState<SearchableVec<SharedString>>>,
         snapshot: SettingsDialogSnapshot,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let viewer_for_observe = viewer.clone();
@@ -452,14 +459,12 @@ impl SettingsDialogWindow {
             theme_color_select_state,
             snapshot,
             _viewer_observation: viewer_observation,
+            focus_handle: cx.focus_handle(),
         }
     }
 
     fn close_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let _ = window;
-        let _ = self.viewer.update(cx, |viewer, cx| {
-            viewer.close_settings_dialog(cx);
-        });
+        window.remove_window();
     }
 }
 
@@ -488,9 +493,12 @@ impl Render for SettingsDialogWindow {
         window.set_window_title(i18n.settings_dialog_title);
 
         div()
+            .id("settings-dialog-window")
             .size_full()
             .v_flex()
             .bg(cx.theme().background)
+            .focusable()
+            .track_focus(&self.focus_handle)
             .capture_key_down(cx.listener(
                 |this, event: &KeyDownEvent, window, cx| {
                     if event.keystroke.key.as_str() == "escape" {
