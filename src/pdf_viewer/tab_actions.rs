@@ -196,6 +196,11 @@ impl PdfViewer {
             self.open_pdf_dialog(window, cx);
             cx.stop_propagation();
         }
+        // Handle Cmd/Ctrl+/ to open keyboard shortcuts (keymap)
+        else if key == "/" && is_primary_modifier {
+            self.open_keymap_dialog(cx);
+            cx.stop_propagation();
+        }
         // Handle Cmd/Ctrl+Shift+[ to switch to previous tab
         else if key == "[" && is_primary_modifier && event.keystroke.modifiers.shift {
             self.switch_visible_tab_by_offset(-1, cx);
@@ -204,6 +209,56 @@ impl PdfViewer {
         // Handle Cmd/Ctrl+Shift+] to switch to next tab
         else if key == "]" && is_primary_modifier && event.keystroke.modifiers.shift {
             self.switch_visible_tab_by_offset(1, cx);
+            cx.stop_propagation();
+        }
+        // Handle Cmd/Ctrl+B to toggle vertical tab bar (auto hide sidebar)
+        else if key == "b" && is_primary_modifier && !event.keystroke.modifiers.shift {
+            self.set_vertical_tab_bar_visible(!self.vertical_tab_bar_visible, cx);
+            cx.stop_propagation();
+        }
+        // Handle Cmd/Ctrl+Plus to zoom in
+        else if key == "=" && is_primary_modifier {
+            self.zoom_in(cx);
+            cx.stop_propagation();
+        }
+        // Handle Cmd/Ctrl+Minus to zoom out
+        else if key == "-" && is_primary_modifier {
+            self.zoom_out(cx);
+            cx.stop_propagation();
+        }
+        // Handle Cmd/Ctrl+0 to reset zoom
+        else if key == "0" && is_primary_modifier {
+            self.zoom_reset(cx);
+            cx.stop_propagation();
+        }
+        // Handle Page Up / Fn+Up Arrow to go to previous page
+        else if key == "pageup" {
+            self.prev_page(cx);
+            cx.stop_propagation();
+        }
+        // Handle Page Down / Fn+Down Arrow to go to next page
+        else if key == "pagedown" {
+            self.next_page(cx);
+            cx.stop_propagation();
+        }
+        // Handle Home to go to first page
+        else if key == "home" {
+            self.first_page(cx);
+            cx.stop_propagation();
+        }
+        // Handle End to go to last page
+        else if key == "end" {
+            self.last_page(cx);
+            cx.stop_propagation();
+        }
+        // Handle Cmd/Ctrl+Left Arrow to go to previous page
+        else if key == "left" && is_primary_modifier {
+            self.prev_page(cx);
+            cx.stop_propagation();
+        }
+        // Handle Cmd/Ctrl+Right Arrow to go to next page
+        else if key == "right" && is_primary_modifier {
+            self.next_page(cx);
             cx.stop_propagation();
         }
         // Handle Cmd/Ctrl+1..9 to switch tabs

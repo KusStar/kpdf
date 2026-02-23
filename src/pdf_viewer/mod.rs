@@ -2,6 +2,7 @@ mod command_panel;
 mod display_list;
 #[cfg(target_os = "macos")]
 mod macos_context_menu;
+mod keymap;
 mod menu_bar;
 pub mod tab;
 mod text_selection;
@@ -101,6 +102,9 @@ pub struct PdfViewer {
     settings_dialog_open: bool,
     settings_dialog_window: Option<AnyWindowHandle>,
     settings_dialog_session: u64,
+    keymap_dialog_open: bool,
+    keymap_dialog_window: Option<AnyWindowHandle>,
+    keymap_dialog_session: u64,
     updater_state: UpdaterUiState,
     command_panel_open: bool,
     command_panel_query: String,
@@ -349,6 +353,9 @@ impl PdfViewer {
             settings_dialog_open: false,
             settings_dialog_window: None,
             settings_dialog_session: 0,
+            keymap_dialog_open: false,
+            keymap_dialog_window: None,
+            keymap_dialog_session: 0,
             updater_state: UpdaterUiState::Idle,
             command_panel_open: false,
             command_panel_query: String::new(),

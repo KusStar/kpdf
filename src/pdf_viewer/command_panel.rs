@@ -35,6 +35,10 @@ enum CommandPanelMenuAction {
     OpenLogs,
     EnableLogging,
     DisableLogging,
+    ToggleVerticalTabBar,
+    ShowBookmarks,
+    ShowRecentFiles,
+    ShowKeymap,
 }
 
 const COMMAND_PANEL_WIDTH: f32 = 560.0;
@@ -62,6 +66,10 @@ impl PdfViewer {
         }
         if self.note_editor_open {
             self.close_markdown_note_editor(cx);
+            changed = true;
+        }
+        if self.keymap_dialog_open {
+            self.close_keymap_dialog(cx);
             changed = true;
         }
         self.command_panel_input_state.update(cx, |input, cx| {
@@ -199,6 +207,27 @@ impl PdfViewer {
             );
         }
 
+        push_menu_item(
+            CommandPanelMenuAction::ToggleVerticalTabBar,
+            i18n.command_panel_toggle_vertical_tab_bar.to_string(),
+            i18n.command_panel_toggle_vertical_tab_bar_hint.to_string(),
+        );
+        push_menu_item(
+            CommandPanelMenuAction::ShowBookmarks,
+            i18n.add_bookmark_button.to_string(),
+            i18n.command_panel_show_bookmarks_hint.to_string(),
+        );
+        push_menu_item(
+            CommandPanelMenuAction::ShowRecentFiles,
+            i18n.command_panel_recent_files.to_string(),
+            i18n.command_panel_show_recent_files_hint.to_string(),
+        );
+        push_menu_item(
+            CommandPanelMenuAction::ShowKeymap,
+            "Keyboard Shortcuts".to_string(),
+            "Show keyboard shortcuts reference".to_string(),
+        );
+
         items
     }
 
@@ -268,6 +297,18 @@ impl PdfViewer {
                     CommandPanelMenuAction::DisableLogging => {
                         crate::logger::disable_file_logging();
                         crate::configure_app_menus(cx, self.i18n());
+                    }
+                    CommandPanelMenuAction::ToggleVerticalTabBar => {
+                        self.toggle_vertical_tab_bar(cx);
+                    }
+                    CommandPanelMenuAction::ShowBookmarks => {
+                        self.toggle_bookmark_popup(cx);
+                    }
+                    CommandPanelMenuAction::ShowRecentFiles => {
+                        self.toggle_recent_popup(cx);
+                    }
+                    CommandPanelMenuAction::ShowKeymap => {
+                        self.open_keymap_dialog(cx);
                     }
                 }
             }

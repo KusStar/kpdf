@@ -11,7 +11,7 @@ impl PdfViewer {
         }
     }
 
-    fn prev_page(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn prev_page(&mut self, cx: &mut Context<Self>) {
         if let Some(tab) = self.active_tab() {
             if tab.active_page > 0 {
                 let new_page = tab.active_page - 1;
@@ -20,7 +20,7 @@ impl PdfViewer {
         }
     }
 
-    fn next_page(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn next_page(&mut self, cx: &mut Context<Self>) {
         if let Some(tab) = self.active_tab() {
             if tab.active_page + 1 < tab.pages.len() {
                 let new_page = tab.active_page + 1;
@@ -29,21 +29,38 @@ impl PdfViewer {
         }
     }
 
-    fn zoom_in(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn first_page(&mut self, cx: &mut Context<Self>) {
+        if let Some(tab) = self.active_tab() {
+            if !tab.pages.is_empty() {
+                self.select_page(0, cx);
+            }
+        }
+    }
+
+    pub(super) fn last_page(&mut self, cx: &mut Context<Self>) {
+        if let Some(tab) = self.active_tab() {
+            if !tab.pages.is_empty() {
+                let last_index = tab.pages.len() - 1;
+                self.select_page(last_index, cx);
+            }
+        }
+    }
+
+    pub(super) fn zoom_in(&mut self, cx: &mut Context<Self>) {
         if let Some(tab) = self.active_tab_mut() {
             tab.zoom = (tab.zoom + ZOOM_STEP).clamp(ZOOM_MIN, ZOOM_MAX);
             cx.notify();
         }
     }
 
-    fn zoom_out(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn zoom_out(&mut self, cx: &mut Context<Self>) {
         if let Some(tab) = self.active_tab_mut() {
             tab.zoom = (tab.zoom - ZOOM_STEP).clamp(ZOOM_MIN, ZOOM_MAX);
             cx.notify();
         }
     }
 
-    fn zoom_reset(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn zoom_reset(&mut self, cx: &mut Context<Self>) {
         if let Some(tab) = self.active_tab_mut() {
             tab.zoom = 1.0;
             cx.notify();

@@ -131,6 +131,21 @@ impl PdfViewer {
         }
     }
 
+    pub(super) fn toggle_recent_popup(&mut self, cx: &mut Context<Self>) {
+        if self.recent_popup_open {
+            self.close_recent_popup(cx);
+        } else {
+            if self.bookmark_popup_open {
+                self.close_bookmark_popup(cx);
+            }
+            self.recent_popup_hover_epoch = self.recent_popup_hover_epoch.wrapping_add(1);
+            self.recent_popup_anchor = Some(RecentPopupAnchor::OpenButton);
+            self.recent_popup_list_scroll.scroll_to_item(0);
+            self.recent_popup_open = true;
+            cx.notify();
+        }
+    }
+
     fn recent_files_with_positions(
         &self,
         recent_files: &[PathBuf],
@@ -214,6 +229,26 @@ impl PdfViewer {
             has_changed = true;
         }
         if has_changed {
+            cx.notify();
+        }
+    }
+
+    pub(super) fn toggle_bookmark_popup(&mut self, cx: &mut Context<Self>) {
+        if self.bookmark_popup_open {
+            self.close_bookmark_popup(cx);
+        } else {
+            if self.recent_popup_open {
+                self.close_recent_popup(cx);
+            }
+            self.bookmark_scope = if self.active_tab_path().is_some() {
+                BookmarkScope::CurrentPdf
+            } else {
+                BookmarkScope::All
+            };
+            self.bookmark_popup_list_scroll.scroll_to_item(0);
+            self.bookmark_popup_hover_epoch = self.bookmark_popup_hover_epoch.wrapping_add(1);
+            self.bookmark_popup_expanded_notes = None;
+            self.bookmark_popup_open = true;
             cx.notify();
         }
     }

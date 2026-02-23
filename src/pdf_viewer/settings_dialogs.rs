@@ -385,6 +385,10 @@ impl PdfViewer {
         cx.notify();
     }
 
+    pub(super) fn toggle_vertical_tab_bar(&mut self, cx: &mut Context<Self>) {
+        self.set_vertical_tab_bar_visible(!self.vertical_tab_bar_visible, cx);
+    }
+
     fn set_vertical_tab_bar_hovered(&mut self, hovered: bool, cx: &mut Context<Self>) {
         if self.vertical_tab_bar_hovered == hovered {
             return;
