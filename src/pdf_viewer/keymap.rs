@@ -1,4 +1,5 @@
 use crate::pdf_viewer::PdfViewer;
+use crate::i18n::I18n;
 use gpui::*;
 use gpui_component::kbd::Kbd;
 use gpui_component::*;
@@ -7,14 +8,17 @@ pub(super) struct KeymapWindow {
     _viewer: Entity<PdfViewer>,
     keymap_scroll: ScrollHandle,
     focus_handle: FocusHandle,
+    i18n: I18n,
 }
 
 impl KeymapWindow {
     pub(super) fn new(viewer: Entity<PdfViewer>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let i18n = viewer.read(cx).i18n();
         Self {
             _viewer: viewer,
             keymap_scroll: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
+            i18n,
         }
     }
 
@@ -25,17 +29,17 @@ impl KeymapWindow {
         window.remove_window();
     }
 
-    fn keymap_sections() -> Vec<(&'static str, Vec<(&'static str, Vec<Keystroke>)>)> {
+    fn keymap_sections(i18n: I18n) -> Vec<(&'static str, Vec<(&'static str, Vec<Keystroke>)>)> {
         vec![
             (
-                "Command Panel",
+                &i18n.keymap_section_command_panel,
                 vec![
                     ("command_panel_toggle", vec![Keystroke::parse("cmd-t").unwrap()]),
                     ("show_keymap", vec![Keystroke::parse("cmd-/").unwrap()]),
                 ],
             ),
             (
-                "File & Tabs",
+                &i18n.keymap_section_file_and_tabs,
                 vec![
                     ("open_file", vec![Keystroke::parse("cmd-o").unwrap()]),
                     ("close_tab", vec![Keystroke::parse("cmd-w").unwrap()]),
@@ -53,14 +57,14 @@ impl KeymapWindow {
                 ],
             ),
             (
-                "Sidebar & Thumbnail",
+                &i18n.keymap_section_sidebar_and_thumbnail,
                 vec![
                     ("toggle_sidebar", vec![Keystroke::parse("cmd-b").unwrap()]),
                     ("toggle_thumbnail_panel", vec![Keystroke::parse("cmd-shift-t").unwrap()]),
                 ],
             ),
             (
-                "Zoom",
+                &i18n.keymap_section_zoom,
                 vec![
                     ("zoom_in", vec![Keystroke::parse("cmd-=").unwrap()]),
                     ("zoom_out", vec![Keystroke::parse("cmd--").unwrap()]),
@@ -68,7 +72,7 @@ impl KeymapWindow {
                 ],
             ),
             (
-                "Page Navigation",
+                &i18n.keymap_section_page_navigation,
                 vec![
                     ("previous_page", vec![
                         Keystroke::parse("cmd-left").unwrap(),
@@ -83,7 +87,7 @@ impl KeymapWindow {
                 ],
             ),
             (
-                "Text Selection",
+                &i18n.keymap_section_text_selection,
                 vec![
                     ("copy", vec![Keystroke::parse("cmd-c").unwrap()]),
                     ("select_all", vec![Keystroke::parse("cmd-a").unwrap()]),
@@ -91,7 +95,7 @@ impl KeymapWindow {
                 ],
             ),
             (
-                "Panels",
+                &i18n.keymap_section_panels,
                 vec![
                     ("toggle_bookmarks", vec![Keystroke::parse("cmd-shift-b").unwrap()]),
                     ("toggle_recent_files", vec![Keystroke::parse("cmd-shift-r").unwrap()]),
@@ -100,37 +104,37 @@ impl KeymapWindow {
         ]
     }
 
-    fn action_label(action: &str) -> String {
+    fn action_label(action: &str, i18n: I18n) -> String {
         match action {
-            "command_panel_toggle" => "Toggle Command Panel".to_string(),
-            "show_keymap" => "Show Keyboard Shortcuts".to_string(),
-            "open_file" => "Open File".to_string(),
-            "close_tab" => "Close Current Tab".to_string(),
-            "switch_to_next_tab" => "Switch to Next Tab".to_string(),
-            "switch_to_previous_tab" => "Switch to Previous Tab".to_string(),
-            "switch_to_tab_1" => "Switch to Tab 1".to_string(),
-            "switch_to_tab_2" => "Switch to Tab 2".to_string(),
-            "switch_to_tab_3" => "Switch to Tab 3".to_string(),
-            "switch_to_tab_4" => "Switch to Tab 4".to_string(),
-            "switch_to_tab_5" => "Switch to Tab 5".to_string(),
-            "switch_to_tab_6" => "Switch to Tab 6".to_string(),
-            "switch_to_tab_7" => "Switch to Tab 7".to_string(),
-            "switch_to_tab_8" => "Switch to Tab 8".to_string(),
-            "switch_to_last_tab" => "Switch to Last Tab".to_string(),
-            "toggle_sidebar" => "Toggle Sidebar (Auto Hide)".to_string(),
-            "toggle_thumbnail_panel" => "Toggle Thumbnail Panel".to_string(),
-            "zoom_in" => "Zoom In".to_string(),
-            "zoom_out" => "Zoom Out".to_string(),
-            "zoom_reset" => "Reset Zoom".to_string(),
-            "previous_page" => "Previous Page".to_string(),
-            "next_page" => "Next Page".to_string(),
-            "first_page" => "First Page".to_string(),
-            "last_page" => "Last Page".to_string(),
-            "copy" => "Copy Selected Text".to_string(),
-            "select_all" => "Select All on Page".to_string(),
-            "clear_selection" => "Clear Selection".to_string(),
-            "toggle_bookmarks" => "Toggle Bookmarks Panel".to_string(),
-            "toggle_recent_files" => "Toggle Recent Files Panel".to_string(),
+            "command_panel_toggle" => i18n.command_panel_toggle.to_string(),
+            "show_keymap" => i18n.command_panel_show_keymap.to_string(),
+            "open_file" => i18n.action_open_file.to_string(),
+            "close_tab" => i18n.action_close_tab.to_string(),
+            "switch_to_next_tab" => i18n.action_switch_to_next_tab.to_string(),
+            "switch_to_previous_tab" => i18n.action_switch_to_previous_tab.to_string(),
+            "switch_to_tab_1" => i18n.action_switch_to_tab_1.to_string(),
+            "switch_to_tab_2" => i18n.action_switch_to_tab_2.to_string(),
+            "switch_to_tab_3" => i18n.action_switch_to_tab_3.to_string(),
+            "switch_to_tab_4" => i18n.action_switch_to_tab_4.to_string(),
+            "switch_to_tab_5" => i18n.action_switch_to_tab_5.to_string(),
+            "switch_to_tab_6" => i18n.action_switch_to_tab_6.to_string(),
+            "switch_to_tab_7" => i18n.action_switch_to_tab_7.to_string(),
+            "switch_to_tab_8" => i18n.action_switch_to_tab_8.to_string(),
+            "switch_to_last_tab" => i18n.action_switch_to_last_tab.to_string(),
+            "toggle_sidebar" => i18n.action_toggle_sidebar.to_string(),
+            "toggle_thumbnail_panel" => i18n.action_toggle_thumbnail_panel.to_string(),
+            "zoom_in" => i18n.action_zoom_in.to_string(),
+            "zoom_out" => i18n.action_zoom_out.to_string(),
+            "zoom_reset" => i18n.action_zoom_reset.to_string(),
+            "previous_page" => i18n.action_previous_page.to_string(),
+            "next_page" => i18n.action_next_page.to_string(),
+            "first_page" => i18n.action_first_page.to_string(),
+            "last_page" => i18n.action_last_page.to_string(),
+            "copy" => i18n.action_copy.to_string(),
+            "select_all" => i18n.action_select_all.to_string(),
+            "clear_selection" => i18n.action_clear_selection.to_string(),
+            "toggle_bookmarks" => i18n.action_toggle_bookmarks.to_string(),
+            "toggle_recent_files" => i18n.action_toggle_recent_files.to_string(),
             _ => action.to_string(),
         }
     }
@@ -138,9 +142,9 @@ impl KeymapWindow {
 
 impl Render for KeymapWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let sections = Self::keymap_sections();
+        let sections = Self::keymap_sections(self.i18n);
 
-        window.set_window_title("Keyboard Shortcuts kPDF");
+        window.set_window_title(&format!("{} - kPDF", self.i18n.keymap_dialog_title));
 
         div()
             .id("keymap-window")
@@ -173,13 +177,13 @@ impl Render for KeymapWindow {
                                 div()
                                     .text_lg()
                                     .text_color(cx.theme().foreground)
-                                    .child("Keyboard Shortcuts"),
+                                    .child(self.i18n.keymap_dialog_title.to_string()),
                             )
                             .child(
                                 div()
                                     .text_sm()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child("Quick reference for common keyboard shortcuts"),
+                                    .child(self.i18n.keymap_dialog_hint.to_string()),
                             ),
                     )
                     .child(
@@ -195,7 +199,7 @@ impl Render for KeymapWindow {
                                     .gap_4()
                                     .children(
                                         sections.into_iter().map(|(title, entries)| {
-                                            Self::render_keymap_section(title, &entries, cx)
+                                            Self::render_keymap_section(title, &entries, self.i18n, cx)
                                         }),
                                     ),
                             ),
@@ -208,13 +212,14 @@ impl KeymapWindow {
     fn render_keymap_section(
         title: &str,
         entries: &[(&'static str, Vec<Keystroke>)],
+        i18n: I18n,
         cx: &mut Context<Self>,
     ) -> Div {
         let title_label = title.to_string();
         let items: Vec<_> = entries
             .iter()
             .map(|(action, keystrokes)| {
-                let label = Self::action_label(action);
+                let label = Self::action_label(action, i18n);
                 let kbd_items: Vec<_> = keystrokes
                     .iter()
                     .map(|keystroke| Kbd::new(keystroke.clone()))

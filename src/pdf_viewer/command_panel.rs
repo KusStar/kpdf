@@ -107,6 +107,8 @@ impl PdfViewer {
 
     fn command_panel_items(&self) -> Vec<CommandPanelItem> {
         let i18n = self.i18n();
+        // Create English i18n for search fallback
+        let i18n_en = crate::i18n::I18n::new(crate::i18n::Language::EnUs);
         let query = self.command_panel_query.trim().to_ascii_lowercase();
         let query_matches_text = |text: &str| {
             if query.is_empty() {
@@ -123,10 +125,17 @@ impl PdfViewer {
             file_name.contains(&query) || path_text.contains(&query)
         };
 
+        let query_matches_text_or_en = |display_text: &str, en_text: &str| {
+            if query.is_empty() {
+                return true;
+            }
+            query_matches_text(display_text) || query_matches_text(en_text)
+        };
+
         let mut items = Vec::new();
         if !query.is_empty()
-            && (query_matches_text(i18n.choose_file_button)
-                || query_matches_text(i18n.open_pdf_prompt))
+            && (query_matches_text_or_en(i18n.choose_file_button, i18n_en.choose_file_button)
+                || query_matches_text_or_en(i18n.open_pdf_prompt, i18n_en.open_pdf_prompt))
         {
             items.push(CommandPanelItem::OpenFile);
         }
@@ -163,8 +172,9 @@ impl PdfViewer {
         );
 
         let mut push_menu_item =
-            |action: CommandPanelMenuAction, title: String, subtitle: String| {
-                if query_matches_text(&title) || query_matches_text(&subtitle) {
+            |action: CommandPanelMenuAction, title: String, subtitle: String, title_en: &str, subtitle_en: &str| {
+                if query_matches_text(&title) || query_matches_text(&subtitle)
+                    || query_matches_text(title_en) || query_matches_text(subtitle_en) {
                     items.push(CommandPanelItem::MenuCommand {
                         action,
                         title,
@@ -177,33 +187,45 @@ impl PdfViewer {
             CommandPanelMenuAction::ShowAbout,
             i18n.about_button.to_string(),
             i18n.command_panel_open_about_hint.to_string(),
+            &i18n_en.about_button,
+            &i18n_en.command_panel_open_about_hint,
         );
         push_menu_item(
             CommandPanelMenuAction::CheckForUpdates,
             i18n.check_updates_button.to_string(),
             i18n.command_panel_check_updates_hint.to_string(),
+            &i18n_en.check_updates_button,
+            &i18n_en.command_panel_check_updates_hint,
         );
         push_menu_item(
             CommandPanelMenuAction::ShowSettings,
             i18n.settings_button.to_string(),
             i18n.command_panel_open_settings_hint.to_string(),
+            &i18n_en.settings_button,
+            &i18n_en.command_panel_open_settings_hint,
         );
         if crate::logger::file_logging_enabled() {
             push_menu_item(
                 CommandPanelMenuAction::OpenLogs,
                 i18n.open_logs_button.to_string(),
                 i18n.command_panel_open_logs_hint.to_string(),
+                &i18n_en.open_logs_button,
+                &i18n_en.command_panel_open_logs_hint,
             );
             push_menu_item(
                 CommandPanelMenuAction::DisableLogging,
                 i18n.disable_logging_button.to_string(),
                 i18n.command_panel_disable_logging_hint.to_string(),
+                &i18n_en.disable_logging_button,
+                &i18n_en.command_panel_disable_logging_hint,
             );
         } else {
             push_menu_item(
                 CommandPanelMenuAction::EnableLogging,
                 i18n.enable_logging_button.to_string(),
                 i18n.command_panel_enable_logging_hint.to_string(),
+                &i18n_en.enable_logging_button,
+                &i18n_en.command_panel_enable_logging_hint,
             );
         }
 
@@ -211,21 +233,29 @@ impl PdfViewer {
             CommandPanelMenuAction::ToggleVerticalTabBar,
             i18n.command_panel_toggle_vertical_tab_bar.to_string(),
             i18n.command_panel_toggle_vertical_tab_bar_hint.to_string(),
+            &i18n_en.command_panel_toggle_vertical_tab_bar,
+            &i18n_en.command_panel_toggle_vertical_tab_bar_hint,
         );
         push_menu_item(
             CommandPanelMenuAction::ShowBookmarks,
             i18n.add_bookmark_button.to_string(),
             i18n.command_panel_show_bookmarks_hint.to_string(),
+            &i18n_en.add_bookmark_button,
+            &i18n_en.command_panel_show_bookmarks_hint,
         );
         push_menu_item(
             CommandPanelMenuAction::ShowRecentFiles,
             i18n.command_panel_recent_files.to_string(),
             i18n.command_panel_show_recent_files_hint.to_string(),
+            &i18n_en.command_panel_recent_files,
+            &i18n_en.command_panel_show_recent_files_hint,
         );
         push_menu_item(
             CommandPanelMenuAction::ShowKeymap,
-            "Keyboard Shortcuts".to_string(),
-            "Show keyboard shortcuts reference".to_string(),
+            i18n.command_panel_show_keymap.to_string(),
+            i18n.command_panel_show_keymap_hint.to_string(),
+            &i18n_en.command_panel_show_keymap,
+            &i18n_en.command_panel_show_keymap_hint,
         );
 
         items

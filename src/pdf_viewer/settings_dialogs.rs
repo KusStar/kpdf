@@ -463,7 +463,7 @@ impl SettingsDialogWindow {
         }
     }
 
-    fn close_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn close_dialog(&mut self, window: &mut Window, _cx: &mut Context<Self>) {
         window.remove_window();
     }
 }
