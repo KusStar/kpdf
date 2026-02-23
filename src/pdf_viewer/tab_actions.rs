@@ -236,6 +236,11 @@ impl PdfViewer {
             self.set_vertical_tab_bar_visible(!self.vertical_tab_bar_visible, cx);
             cx.stop_propagation();
         }
+        // Handle Cmd/Ctrl+Shift+T to toggle thumbnail panel
+        else if key == "t" && is_primary_modifier && event.keystroke.modifiers.shift {
+            self.toggle_thumbnail_panel(cx);
+            cx.stop_propagation();
+        }
         // Handle Cmd/Ctrl+Plus to zoom in
         else if key == "=" && is_primary_modifier {
             self.zoom_in(cx);

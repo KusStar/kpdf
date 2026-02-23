@@ -67,6 +67,7 @@ pub struct PdfViewer {
     text_markups_store: Option<sled::Tree>,
     tab_layout_mode_store: Option<sled::Tree>,
     vertical_tab_bar_visible_store: Option<sled::Tree>,
+    thumbnail_panel_visible_store: Option<sled::Tree>,
     last_window_size: Option<(f32, f32)>,
     theme_mode: ThemeMode,
     preferred_light_theme_name: Option<String>,
@@ -75,6 +76,7 @@ pub struct PdfViewer {
     tab_layout_mode: TabLayoutMode,
     vertical_tab_bar_visible: bool,
     vertical_tab_bar_hovered: bool,
+    thumbnail_panel_visible: bool,
     recent_files: Vec<PathBuf>,
     recent_popup_open: bool,
     recent_popup_trigger_hovered: bool,
@@ -181,6 +183,7 @@ impl PdfViewer {
             text_markups_store,
             tab_layout_mode_store,
             vertical_tab_bar_visible_store,
+            thumbnail_panel_visible_store,
         ) = Self::open_persistent_stores();
         let db_path = Self::local_state_db_path();
         let db_usage_bytes = Self::directory_usage_bytes(&db_path);
@@ -315,6 +318,7 @@ impl PdfViewer {
             text_markups_store,
             tab_layout_mode_store,
             vertical_tab_bar_visible_store: vertical_tab_bar_visible_store.clone(),
+            thumbnail_panel_visible_store: thumbnail_panel_visible_store.clone(),
             last_window_size: None,
             theme_mode,
             preferred_light_theme_name,
@@ -326,6 +330,10 @@ impl PdfViewer {
                 .map(|store| PdfViewer::decode_stored_bool(store.get(VERTICAL_TAB_BAR_VISIBLE_KEY).ok().flatten(), true))
                 .unwrap_or(true),
             vertical_tab_bar_hovered: false,
+            thumbnail_panel_visible: thumbnail_panel_visible_store
+                .as_ref()
+                .map(|store| PdfViewer::decode_stored_bool(store.get(THUMBNAIL_PANEL_VISIBLE_KEY).ok().flatten(), true))
+                .unwrap_or(true),
             recent_files,
             recent_popup_open: false,
             recent_popup_trigger_hovered: false,
@@ -692,6 +700,35 @@ impl Render for PdfViewer {
                                                                     )),
                                                             )
                                                         },
+                                                    )
+                                                    .child(
+                                                        Button::new("thumbnail-panel-toggle-button")
+                                                            .xsmall()
+                                                            .icon(
+                                                                Icon::new(
+                                                                    crate::icons::IconName::ScanEye,
+                                                                )
+                                                                .size_4()
+                                                                .text_color(
+                                                                    if self.thumbnail_panel_visible {
+                                                                        cx.theme().primary
+                                                                    } else {
+                                                                        cx.theme().muted_foreground
+                                                                    },
+                                                                ),
+                                                            )
+                                                            .map(|this| {
+                                                                if self.thumbnail_panel_visible {
+                                                                    this.bg(cx.theme().primary.opacity(0.15))
+                                                                } else {
+                                                                    this
+                                                                }
+                                                            })
+                                                            .on_click(cx.listener(
+                                                                |this, _, _, cx| {
+                                                                    this.toggle_thumbnail_panel(cx);
+                                                                },
+                                                            )),
                                                     )
                                                     .child(self.render_menu_bar(
                                                         page_count,

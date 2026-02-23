@@ -25,50 +25,78 @@ impl KeymapWindow {
         window.remove_window();
     }
 
-    fn keymap_entries() -> Vec<(&'static str, Vec<Keystroke>)> {
+    fn keymap_sections() -> Vec<(&'static str, Vec<(&'static str, Vec<Keystroke>)>)> {
         vec![
-            // Command Panel
-            ("command_panel_toggle", vec![Keystroke::parse("cmd-t").unwrap()]),
-            ("show_keymap", vec![Keystroke::parse("cmd-/").unwrap()]),
-            // File Operations
-            ("open_file", vec![Keystroke::parse("cmd-o").unwrap()]),
-            ("close_tab", vec![Keystroke::parse("cmd-w").unwrap()]),
-            // Tab Switching
-            ("switch_to_next_tab", vec![Keystroke::parse("cmd-shift-]").unwrap()]),
-            ("switch_to_previous_tab", vec![Keystroke::parse("cmd-shift-[").unwrap()]),
-            ("switch_to_tab_1", vec![Keystroke::parse("cmd-1").unwrap()]),
-            ("switch_to_tab_2", vec![Keystroke::parse("cmd-2").unwrap()]),
-            ("switch_to_tab_3", vec![Keystroke::parse("cmd-3").unwrap()]),
-            ("switch_to_tab_4", vec![Keystroke::parse("cmd-4").unwrap()]),
-            ("switch_to_tab_5", vec![Keystroke::parse("cmd-5").unwrap()]),
-            ("switch_to_tab_6", vec![Keystroke::parse("cmd-6").unwrap()]),
-            ("switch_to_tab_7", vec![Keystroke::parse("cmd-7").unwrap()]),
-            ("switch_to_tab_8", vec![Keystroke::parse("cmd-8").unwrap()]),
-            ("switch_to_last_tab", vec![Keystroke::parse("cmd-9").unwrap()]),
-            // Sidebar / Vertical Tab Bar
-            ("toggle_sidebar", vec![Keystroke::parse("cmd-b").unwrap()]),
-            // Zoom
-            ("zoom_in", vec![Keystroke::parse("cmd-=").unwrap()]),
-            ("zoom_out", vec![Keystroke::parse("cmd--").unwrap()]),
-            ("zoom_reset", vec![Keystroke::parse("cmd-0").unwrap()]),
-            // Page Navigation
-            ("previous_page", vec![
-                Keystroke::parse("cmd-left").unwrap(),
-                Keystroke::parse("pageup").unwrap(),
-            ]),
-            ("next_page", vec![
-                Keystroke::parse("cmd-right").unwrap(),
-                Keystroke::parse("pagedown").unwrap(),
-            ]),
-            ("first_page", vec![Keystroke::parse("home").unwrap()]),
-            ("last_page", vec![Keystroke::parse("end").unwrap()]),
-            // Text Selection
-            ("copy", vec![Keystroke::parse("cmd-c").unwrap()]),
-            ("select_all", vec![Keystroke::parse("cmd-a").unwrap()]),
-            ("clear_selection", vec![Keystroke::parse("escape").unwrap()]),
-            // Bookmarks & Recent Files
-            ("toggle_bookmarks", vec![Keystroke::parse("cmd-shift-b").unwrap()]),
-            ("toggle_recent_files", vec![Keystroke::parse("cmd-shift-r").unwrap()]),
+            (
+                "Command Panel",
+                vec![
+                    ("command_panel_toggle", vec![Keystroke::parse("cmd-t").unwrap()]),
+                    ("show_keymap", vec![Keystroke::parse("cmd-/").unwrap()]),
+                ],
+            ),
+            (
+                "File & Tabs",
+                vec![
+                    ("open_file", vec![Keystroke::parse("cmd-o").unwrap()]),
+                    ("close_tab", vec![Keystroke::parse("cmd-w").unwrap()]),
+                    ("switch_to_next_tab", vec![Keystroke::parse("cmd-shift-]").unwrap()]),
+                    ("switch_to_previous_tab", vec![Keystroke::parse("cmd-shift-[").unwrap()]),
+                    ("switch_to_tab_1", vec![Keystroke::parse("cmd-1").unwrap()]),
+                    ("switch_to_tab_2", vec![Keystroke::parse("cmd-2").unwrap()]),
+                    ("switch_to_tab_3", vec![Keystroke::parse("cmd-3").unwrap()]),
+                    ("switch_to_tab_4", vec![Keystroke::parse("cmd-4").unwrap()]),
+                    ("switch_to_tab_5", vec![Keystroke::parse("cmd-5").unwrap()]),
+                    ("switch_to_tab_6", vec![Keystroke::parse("cmd-6").unwrap()]),
+                    ("switch_to_tab_7", vec![Keystroke::parse("cmd-7").unwrap()]),
+                    ("switch_to_tab_8", vec![Keystroke::parse("cmd-8").unwrap()]),
+                    ("switch_to_last_tab", vec![Keystroke::parse("cmd-9").unwrap()]),
+                ],
+            ),
+            (
+                "Sidebar & Thumbnail",
+                vec![
+                    ("toggle_sidebar", vec![Keystroke::parse("cmd-b").unwrap()]),
+                    ("toggle_thumbnail_panel", vec![Keystroke::parse("cmd-shift-t").unwrap()]),
+                ],
+            ),
+            (
+                "Zoom",
+                vec![
+                    ("zoom_in", vec![Keystroke::parse("cmd-=").unwrap()]),
+                    ("zoom_out", vec![Keystroke::parse("cmd--").unwrap()]),
+                    ("zoom_reset", vec![Keystroke::parse("cmd-0").unwrap()]),
+                ],
+            ),
+            (
+                "Page Navigation",
+                vec![
+                    ("previous_page", vec![
+                        Keystroke::parse("cmd-left").unwrap(),
+                        Keystroke::parse("pageup").unwrap(),
+                    ]),
+                    ("next_page", vec![
+                        Keystroke::parse("cmd-right").unwrap(),
+                        Keystroke::parse("pagedown").unwrap(),
+                    ]),
+                    ("first_page", vec![Keystroke::parse("home").unwrap()]),
+                    ("last_page", vec![Keystroke::parse("end").unwrap()]),
+                ],
+            ),
+            (
+                "Text Selection",
+                vec![
+                    ("copy", vec![Keystroke::parse("cmd-c").unwrap()]),
+                    ("select_all", vec![Keystroke::parse("cmd-a").unwrap()]),
+                    ("clear_selection", vec![Keystroke::parse("escape").unwrap()]),
+                ],
+            ),
+            (
+                "Panels",
+                vec![
+                    ("toggle_bookmarks", vec![Keystroke::parse("cmd-shift-b").unwrap()]),
+                    ("toggle_recent_files", vec![Keystroke::parse("cmd-shift-r").unwrap()]),
+                ],
+            ),
         ]
     }
 
@@ -90,6 +118,7 @@ impl KeymapWindow {
             "switch_to_tab_8" => "Switch to Tab 8".to_string(),
             "switch_to_last_tab" => "Switch to Last Tab".to_string(),
             "toggle_sidebar" => "Toggle Sidebar (Auto Hide)".to_string(),
+            "toggle_thumbnail_panel" => "Toggle Thumbnail Panel".to_string(),
             "zoom_in" => "Zoom In".to_string(),
             "zoom_out" => "Zoom Out".to_string(),
             "zoom_reset" => "Reset Zoom".to_string(),
@@ -109,7 +138,7 @@ impl KeymapWindow {
 
 impl Render for KeymapWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let entries = Self::keymap_entries();
+        let sections = Self::keymap_sections();
 
         window.set_window_title("Keyboard Shortcuts kPDF");
 
@@ -164,12 +193,11 @@ impl Render for KeymapWindow {
                                 div()
                                     .v_flex()
                                     .gap_4()
-                                    .child(self.render_keymap_section("Command Panel", &entries[0..2], cx))
-                                    .child(self.render_keymap_section("File & Tabs", &entries[2..16], cx))
-                                    .child(self.render_keymap_section("Sidebar & Zoom", &entries[16..20], cx))
-                                    .child(self.render_keymap_section("Page Navigation", &entries[20..24], cx))
-                                    .child(self.render_keymap_section("Text Selection", &entries[24..27], cx))
-                                    .child(self.render_keymap_section("Panels", &entries[27..28], cx)),
+                                    .children(
+                                        sections.into_iter().map(|(title, entries)| {
+                                            Self::render_keymap_section(title, &entries, cx)
+                                        }),
+                                    ),
                             ),
                     ),
             )
@@ -178,11 +206,10 @@ impl Render for KeymapWindow {
 
 impl KeymapWindow {
     fn render_keymap_section(
-        &self,
         title: &str,
         entries: &[(&'static str, Vec<Keystroke>)],
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> Div {
         let title_label = title.to_string();
         let items: Vec<_> = entries
             .iter()

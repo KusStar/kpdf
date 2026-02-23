@@ -630,7 +630,19 @@ impl PdfViewer {
     }
 
     fn show_thumbnail_panel(&self) -> bool {
-        self.active_tab_path().is_some()
+        self.active_tab_path().is_some() && self.thumbnail_panel_visible
+    }
+
+    pub(super) fn set_thumbnail_panel_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        if self.thumbnail_panel_visible != visible {
+            self.thumbnail_panel_visible = visible;
+            self.persist_thumbnail_panel_visible();
+            cx.notify();
+        }
+    }
+
+    pub(super) fn toggle_thumbnail_panel(&mut self, cx: &mut Context<Self>) {
+        self.set_thumbnail_panel_visible(!self.thumbnail_panel_visible, cx);
     }
 
     fn current_drag_source_tab_id(&self) -> Option<usize> {

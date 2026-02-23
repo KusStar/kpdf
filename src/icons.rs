@@ -48,6 +48,7 @@ pub enum IconName {
     BookmarkMinus,
     BookmarkCheck,
     PanelLeftDashed,
+    ScanEye,
 }
 
 impl IconNamed for IconName {
@@ -71,6 +72,7 @@ impl IconNamed for IconName {
             Self::BookmarkMinus => "icons/bookmark-minus.svg",
             Self::BookmarkCheck => "icons/bookmark-check.svg",
             Self::PanelLeftDashed => "icons/panel-left-dashed.svg",
+            Self::ScanEye => "icons/scan-eye.svg",
         }
         .into()
     }
